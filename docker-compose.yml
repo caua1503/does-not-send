@@ -1,0 +1,27 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Porta vinculada à interface ou IP LAN desejado (padrão 0.0.0.0 ou IP específico)
+    ports:
+      - "${LAN_IP:-0.0.0.0}:${PORT:-3000}:3000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://127.0.0.1:3000}
+      - TEMP_DIR=/tmp/uploads
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-5368709120}
+      - MAX_FILES_PER_SESSION=${MAX_FILES_PER_SESSION:-50}
+      - SESSION_IDLE_TIMEOUT=${SESSION_IDLE_TIMEOUT:-1800000}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+    # Armazenamento em RAM volátil (tmpfs) dedicado para arquivos temporários
+    tmpfs:
+      - /tmp/uploads:rw,noexec,nosuid,size=2G,uid=1001,gid=1001,mode=0700
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

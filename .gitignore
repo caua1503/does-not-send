@@ -111,3 +111,8 @@ dist
 
 # TernJS port file
 .tern-port
+
+# AI Agents configuration
+AGENTS.md
+.agents/
+
