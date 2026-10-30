@@ -233,7 +233,7 @@ export async function downloadRoutes(
     const zipFilename = `session-${sessionId.slice(0, 8)}.zip`;
 
     void reply.header("Content-Type", "application/zip");
-    void reply.header("Content-Disposition", `attachment; filename="${zipFilename}"`);
+    void reply.header("Content-Disposition", rfc5987(zipFilename));
     // No Content-Length — streaming, unknown size
 
     const { Zip, ZipPassThrough } = await import("fflate");

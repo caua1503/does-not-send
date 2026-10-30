@@ -157,6 +157,10 @@ bun run smoke
 - **Falha no upload de arquivos grandes no telefone:**
   - Dispositivos móveis podem suspender o navegador em segundo plano. Mantenha a aba aberta durante a transferência.
 
+- **Janela "Salvar como" não aparece ao baixar arquivos:**
+  - Aplicações web não podem forçar nativamente a abertura da caixa de diálogo "Salvar como" no navegador do usuário por restrições de segurança do sandbox web. O arquivo é baixado usando o mecanismo nativo de downloads (`Content-Disposition: attachment` e atributo `download`).
+  - Para escolher a pasta de destino e o nome de cada arquivo antes de salvar, ative nas configurações do navegador a opção **"Perguntar onde salvar cada arquivo antes de fazer download"** (Chrome/Edge/Brave: *Configurações > Downloads > Perguntar onde salvar cada arquivo antes de fazer download*; Firefox: *Configurações > Geral > Arquivos e Aplicativos > Sempre perguntar onde salvar arquivos*).
+
 ---
 
 ## Limitações Conhecidas
