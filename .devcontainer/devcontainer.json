@@ -1,0 +1,11 @@
+{
+  "name": "does-not-send",
+  "portsAttributes": {
+    "3000": {
+      "label": "Application",
+      "onAutoForward": "notify",
+      "visibility": "public"
+    }
+  },
+  "forwardPorts": [3000]
+}
