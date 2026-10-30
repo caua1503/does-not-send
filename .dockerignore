@@ -1,0 +1,11 @@
+node_modules
+web/node_modules
+web/dist
+.env
+tmp
+*.test.ts
+tests
+scripts
+docs
+spike
+.git
