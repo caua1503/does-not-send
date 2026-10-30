@@ -18,6 +18,11 @@ export interface Session {
   id: string;
   ownerToken: string;
   uploadToken: string;
+  shortId: string;
+  qrToken: string | null;
+  isPaired: boolean;
+  pairedAt?: string;
+  phoneDisconnectedAt?: string;
   state: SessionState;
   createdAt: string;
   lastActivity: string;

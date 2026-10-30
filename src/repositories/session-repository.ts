@@ -11,6 +11,15 @@ export class SessionRepository {
     return this.sessions.get(id);
   }
 
+  getByShortId(shortId: string): Session | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.shortId === shortId) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
   update(session: Session): void {
     if (!this.sessions.has(session.id)) {
       throw new Error(`Session not found: ${session.id}`);
