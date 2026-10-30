@@ -1,6 +1,23 @@
-import { vi, it, expect, describe } from "vitest";
+import { vi, it, expect, describe, beforeAll } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { SessionCard } from "../../pages/computer/SessionCard.tsx";
+
+// jsdom não implementa canvas — mock mínimo para QRCodeCanvas não quebrar
+beforeAll(() => {
+  HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
+    fillStyle: "",
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+    scale: vi.fn(),
+    fill: vi.fn(),
+    drawImage: vi.fn(),
+    clearRect: vi.fn(),
+    globalAlpha: 1,
+  }) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.toDataURL = vi
+    .fn()
+    .mockReturnValue("data:image/png;base64,FAKEPNG");
+});
 
 vi.mock("../../hooks/useSessionEvents.ts", () => ({
   useSessionEvents: vi.fn().mockReturnValue({ files: [], connected: true }),
@@ -16,7 +33,7 @@ describe("SessionCard QR Code zoom", () => {
     uploadToken: "test-upload-token",
   };
 
-  it("abre e fecha modal de QR Code ampliado", () => {
+  it("abre e fecha overlay de QR Code ampliado", () => {
     render(
       <SessionCard
         session={session}
@@ -30,7 +47,7 @@ describe("SessionCard QR Code zoom", () => {
     const zoomButton = screen.getByRole("button", { name: /ampliar qr code/i });
     expect(zoomButton).toBeInTheDocument();
 
-    // Modal começa fechado
+    // Overlay começa fechado
     expect(
       screen.queryByRole("heading", { name: /qr code para envio de arquivos/i })
     ).not.toBeInTheDocument();
@@ -41,7 +58,7 @@ describe("SessionCard QR Code zoom", () => {
       screen.getByRole("heading", { name: /qr code para envio de arquivos/i })
     ).toBeInTheDocument();
 
-    // Fecha modal clicando no botão Fechar
+    // Fecha clicando no botão Fechar
     const closeBtn = screen.getByRole("button", { name: /fechar/i });
     fireEvent.click(closeBtn);
     expect(
@@ -49,7 +66,7 @@ describe("SessionCard QR Code zoom", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("fecha modal de QR Code ampliado com tecla Esc", () => {
+  it("fecha overlay de QR Code ampliado com tecla Esc", () => {
     render(
       <SessionCard
         session={session}
