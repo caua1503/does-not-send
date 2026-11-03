@@ -25,10 +25,15 @@ export class FileService {
     mimeType: string,
     stream: Readable,
     declaredSize?: number,
+    signal?: AbortSignal,
   ): Promise<UploadResult> {
+    if (signal?.aborted) {
+      throw Object.assign(new Error("Upload aborted"), { statusCode: 499 });
+    }
+
     const session = this.repository.getById(sessionId);
     if (!session || session.state === "CLOSED") {
-      throw Object.assign(new Error("Session not available"), { statusCode: 404 });
+      throw Object.assign(new Error("Session not available"), { statusCode: 410 });
     }
 
     // Check file count limit
@@ -75,6 +80,20 @@ export class FileService {
       await new Promise<void>((resolve, reject) => {
         const ws = writeStream!;
 
+        const onAbort = () => {
+          stream.destroy();
+          ws.destroy();
+          reject(Object.assign(new Error("Upload aborted"), { statusCode: 499 }));
+        };
+
+        if (signal) {
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+
         stream.on("data", (chunk: Buffer) => {
           bytesReceived += chunk.length;
 
@@ -115,6 +134,15 @@ export class FileService {
           reject(err);
         });
       });
+
+      // Reverificar se sessão não foi fechada no meio
+      const currentSession = this.repository.getById(sessionId);
+      if (!currentSession || currentSession.state === "CLOSED") {
+        try {
+          await rm(filePath, { force: true });
+        } catch {}
+        throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
+      }
 
       // Get actual file size from disk
       const fileStat = await stat(filePath);

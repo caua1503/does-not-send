@@ -66,6 +66,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     startUpload(session);
     ctx.sessionService.touchActivity(session.id);
 
+    const abortController = new AbortController();
+    const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
+      session.id,
+      abortController,
+    );
+
     try {
       const parts = request.parts();
       const results: Array<{ id: string; originalName: string; size: number }> = [];
@@ -80,6 +86,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             part.mimetype,
             part.file,
             undefined,
+            abortController.signal,
           );
 
           results.push({
@@ -95,12 +102,19 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               statusCode: 413,
             });
           }
+          if (error.statusCode === 410) {
+            return reply.status(410).send({
+              error: "Session closed during upload",
+              statusCode: 410,
+            });
+          }
           throw err;
         }
       }
 
       return reply.status(201).send({ files: results });
     } finally {
+      unregisterUpload();
       endUpload(session);
       ctx.sessionRepository.update(session);
     }

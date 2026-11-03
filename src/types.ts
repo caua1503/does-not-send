@@ -3,6 +3,7 @@
 import type { SessionState } from "./session/states.js";
 
 export type { SessionState } from "./session/states.js";
+export type { SessionRole } from "./session/auth.js";
 export type FileState = "receiving" | "completed" | "failed";
 
 export interface SessionFile {
@@ -34,4 +35,11 @@ export interface Session {
   createdAt: string;
   lastActivity: string;
   files: SessionFile[];
+  lastSeen: {
+    computer: number | null;
+    phone: number | null;
+  };
+  phoneLostAt: number | null;
+  computerLostAt: number | null;
+  closedReason?: string | null;
 }

@@ -158,12 +158,15 @@ export async function sessionRoutes(
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
 
-    const session = ctx.sessionRepository.getById(auth.sessionId)!;
+    const session = ctx.sessionStore.getById(auth.sessionId)!;
     return {
       id: session.id,
+      state: session.state,
+      phonePresent: ctx.sessionStore.isPhonePresent(session.id),
+      computerPresent: ctx.sessionStore.isComputerPresent(session.id),
+      activeUploads: session.activeUploads ?? 0,
       visualId: session.visualId,
       shortId: session.shortId,
-      state: session.state,
       createdAt: session.createdAt,
       lastActivity: session.lastActivity,
       fileCount: session.files.length,
@@ -175,16 +178,22 @@ export async function sessionRoutes(
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
 
-    await ctx.sessionService.close(auth.sessionId);
+    await ctx.sessionStore.closeSession(auth.sessionId, "user_closed");
     return reply.status(204).send();
   });
 
-  // Heartbeat (owner/computer only)
+  // Heartbeat (HTTP backup for computer/phone)
   app.post<{ Params: { id: string } }>("/sessions/:id/heartbeat", async (request, reply) => {
-    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+    const auth = await authorize(request, reply, ctx, request.params.id, [
+      "owner",
+      "computer",
+      "phone",
+      "upload",
+    ]);
     if (!auth) return;
 
-    ctx.sessionService.heartbeat(auth.sessionId);
+    const role = auth.role === "phone" || auth.role === "upload" ? "phone" : "computer";
+    ctx.sessionStore.recordHeartbeat(auth.sessionId, role);
     return { ok: true };
   });
 }

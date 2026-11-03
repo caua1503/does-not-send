@@ -96,6 +96,9 @@ export interface SessionInfo {
   visualId?: string;
   shortId?: string;
   state: "WAITING" | "PAIRED" | "TRANSFERRING" | "DISCONNECTED" | "CLOSED" | string;
+  phonePresent?: boolean;
+  computerPresent?: boolean;
+  activeUploads?: number;
   createdAt: string;
   lastActivity?: string;
   fileCount: number;
@@ -106,7 +109,10 @@ export async function getSession(id: string, token: string): Promise<SessionInfo
   const res = await apiFetch(`/api/sessions/${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new Error(`Failed to get session: ${res.status}`);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to get session: ${res.status}`, res.status, data.code);
+  }
   return res.json() as Promise<SessionInfo>;
 }
 

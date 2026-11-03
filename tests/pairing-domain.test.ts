@@ -57,6 +57,9 @@ describe("pairing domain", () => {
         createdAt: "2026-10-30T12:00:00.000Z",
         lastActivity: "2026-10-30T12:00:00.000Z",
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
 
       expect(session.shortId).toBe("A7K92F");
@@ -101,6 +104,9 @@ describe("pairing domain", () => {
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
 
       repo.create(session);
@@ -127,6 +133,9 @@ describe("pairing domain", () => {
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
 
       repo.create(session);
@@ -155,6 +164,9 @@ describe("pairing domain", () => {
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
       const s2: Session = {
         id: "sess-2",
@@ -170,6 +182,9 @@ describe("pairing domain", () => {
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
 
       repo.create(s1);
@@ -195,6 +210,9 @@ describe("pairing domain", () => {
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
+        lastSeen: { computer: null, phone: null },
+        phoneLostAt: null,
+        computerLostAt: null,
       };
 
       repo.create(session);
