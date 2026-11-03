@@ -15,6 +15,11 @@ services:
       - MAX_FILES_PER_SESSION=${MAX_FILES_PER_SESSION:-50}
       - SESSION_IDLE_TIMEOUT=${SESSION_IDLE_TIMEOUT:-1800000}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      # Heartbeat / reconexão (opcionais — defaults já sensatos)
+      - HEARTBEAT_TIMEOUT_MS=${HEARTBEAT_TIMEOUT_MS:-25000}
+      - COMPUTER_GRACE_MS=${COMPUTER_GRACE_MS:-30000}
+      - PHONE_GRACE_MS=${PHONE_GRACE_MS:-30000}
+      - WS_AUTH_TIMEOUT_MS=${WS_AUTH_TIMEOUT_MS:-5000}
     # Armazenamento em RAM volátil (tmpfs) dedicado para arquivos temporários
     tmpfs:
       - /tmp/uploads:rw,noexec,nosuid,size=2G,uid=1001,gid=1001,mode=0700

@@ -1,9 +1,12 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
+import { Badge } from "../../components/ui/Badge.tsx";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
+import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
+import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 
 declare const __BASE_URL__: string;
 const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
@@ -11,22 +14,173 @@ const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
 interface PhonePageProps {
   sessionId?: string;
   token?: string;
+  qrToken?: string;
 }
 
-export default function PhonePage({ sessionId: propSessionId, token: propToken }: PhonePageProps) {
+interface StoredSession {
+  phoneCredential?: string;
+  visualId?: string;
+}
+
+function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
+  if (!id) return { phoneCredential: null, visualId: null };
+  try {
+    const raw = sessionStorage.getItem(`dns_phone_cred_${id}`);
+    if (!raw) return { phoneCredential: null, visualId: null };
+    try {
+      const parsed = JSON.parse(raw) as StoredSession;
+      if (parsed && typeof parsed === "object") {
+        return {
+          phoneCredential: parsed.phoneCredential || null,
+          visualId: parsed.visualId || null,
+        };
+      }
+      return { phoneCredential: raw, visualId: null };
+    } catch {
+      return { phoneCredential: raw, visualId: null };
+    }
+  } catch {
+    return { phoneCredential: null, visualId: null };
+  }
+}
+
+export default function PhonePage({
+  sessionId: propSessionId,
+  token: propToken,
+  qrToken: propQrToken,
+}: PhonePageProps) {
   // Extract from props or URL
   const pathParts = window.location.pathname.split("/");
   const urlSessionId = propSessionId || pathParts[2] || "";
   const searchParams = new URLSearchParams(window.location.search);
-  const token = propToken || searchParams.get("token") || "";
+  const qrToken = propQrToken || searchParams.get("qrToken") || "";
+  const legacyToken = propToken || searchParams.get("token") || "";
+
+  const storageKey = urlSessionId ? `dns_phone_cred_${urlSessionId}` : "";
+  const initialStored = readStoredSession(urlSessionId);
+
+  const [credential, setCredential] = useState<string | null>(
+    initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
+  );
+  const [visualId, setVisualId] = useState<string | null>(initialStored.visualId);
+  const [isPairing, setIsPairing] = useState<boolean>(() => {
+    return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
+  });
+  const [sessionError, setSessionError] = useState<string | null>(() => {
+    if (!urlSessionId) return "Sessão inválida ou link expirado.";
+    if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
+      return "Sessão inválida ou link expirado.";
+    }
+    return null;
+  });
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
-  const [sessionError, setSessionError] = useState<string | null>(
-    !urlSessionId || !token ? "Sessão inválida ou link expirado." : null
-  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // (a) Cliente WS para o telefone: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
+  const {
+    connected: wsConnected,
+    sessionClosed: wsSessionClosed,
+    closedReason: wsClosedReason,
+    reconnecting: wsReconnecting,
+  } = useSessionEvents(urlSessionId, credential, {
+    role: "phone",
+    reconnectInterval: 2000,
+  });
+
+  const [remoteSession, setRemoteSession] = useState<SessionInfo | null>(null);
+
+  // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
+  useEffect(() => {
+    if (!urlSessionId || !credential || wsSessionClosed) return;
+
+    let active = true;
+
+    async function check() {
+      try {
+        const data = await getSession(urlSessionId, credential!);
+        if (!active) return;
+        setRemoteSession(data);
+      } catch {
+        // Ignora erros transitórios
+      }
+    }
+
+    const id = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [urlSessionId, credential, wsSessionClosed]);
+
+  // Estados derivados
+  const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
+  const isReconnecting =
+    !isSessionClosed &&
+    (wsReconnecting || remoteSession?.state === "DISCONNECTED");
+  const isComputerDisconnected =
+    !isSessionClosed &&
+    !isReconnecting &&
+    (remoteSession?.computerPresent === false || wsClosedReason === "computer_lost");
+
+  useEffect(() => {
+    if (credential || sessionError || !urlSessionId || !qrToken) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function doPair() {
+      setIsPairing(true);
+      try {
+        const data = await pairSession(urlSessionId, qrToken);
+        if (isCancelled) return;
+        const cred = data.phoneCredential;
+        const vId = data.visualId || data.shortId || null;
+
+        if (storageKey) {
+          try {
+            sessionStorage.setItem(
+              storageKey,
+              JSON.stringify({ phoneCredential: cred, visualId: vId })
+            );
+          } catch {
+            // Ignore sessionStorage quota error
+          }
+        }
+
+        setCredential(cred);
+        setVisualId(vId);
+        setIsPairing(false);
+      } catch (err: any) {
+        if (isCancelled) return;
+        setIsPairing(false);
+        const status = err?.status;
+        const code = err?.code;
+        if (status === 401) {
+          setSessionError("Sessão inválida ou QR code expirado.");
+        } else if (status === 410) {
+          setSessionError("Sessão encerrada pelo computador.");
+        } else if (status === 409 || code === "ALREADY_CONSUMED") {
+          setSessionError("QR code já utilizado por outro aparelho.");
+        } else if (status === 404) {
+          setSessionError("Sessão não encontrada.");
+        } else {
+          setSessionError(err?.message || "Erro ao conectar à sessão.");
+        }
+      }
+    }
+
+    doPair();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
+
   const uploadSingleFile = (item: PhoneUploadItem) => {
+    if (isSessionClosed) return;
+
     setItems((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", progress: 0, error: undefined } : i))
     );
@@ -55,6 +209,20 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão expirada" } : i))
         );
+      } else if (xhr.status === 410) {
+        setSessionError("Sessão encerrada pelo computador.");
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
+        );
+      } else if (xhr.status === 404) {
+        setSessionError("Sessão não encontrada.");
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Não encontrada" } : i))
+        );
+      } else if (xhr.status === 409) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
+        );
       } else if (xhr.status === 413) {
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Arquivo muito grande ou limite excedido" } : i))
@@ -73,11 +241,14 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
     };
 
     xhr.open("POST", `${BASE}/api/sessions/${urlSessionId}/files`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    if (credential) {
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+    }
     xhr.send(formData);
   };
 
   const handleFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isSessionClosed) return;
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
@@ -125,18 +296,84 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
     );
   }
 
+  if (isPairing) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
+        <Card className="max-w-md w-full p-8 text-center space-y-4">
+          <div className="animate-spin w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full mx-auto" />
+          <p className="text-sm font-medium text-[var(--color-text-muted)]">
+            Conectando ao computador...
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto">
       {/* Header */}
       <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-2">
-          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)]" />
-          <span className="font-semibold text-sm tracking-tight">Enviar para Computador</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-semibold text-sm tracking-tight truncate">Enviar para Computador</span>
+            {visualId && (
+              <span
+                data-testid="phone-visual-id"
+                className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-[var(--color-accent-light)] text-[var(--color-accent)] shrink-0"
+              >
+                ID: {visualId}
+              </span>
+            )}
+          </div>
         </div>
-        <span className="text-xs text-[var(--color-text-muted)] tabular">
+        <span className="text-xs text-[var(--color-text-muted)] tabular shrink-0 ml-2">
           {completedFiles}/{totalFiles} enviados
         </span>
       </header>
+
+      {/* Status banners */}
+      {isSessionClosed && (
+        <div
+          data-testid="status-session-closed"
+          role="alert"
+          className="bg-red-500/10 border-b border-red-500/20 px-4 py-3 text-center space-y-1"
+        >
+          <div className="flex items-center justify-center gap-1.5 text-sm font-semibold text-[var(--color-error)]">
+            <AlertCircle size={16} />
+            <span>Sessão encerrada</span>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {wsClosedReason === "computer_lost"
+              ? "Computador desconectado — a sessão foi encerrada."
+              : wsClosedReason === "user_closed"
+              ? "Sessão encerrada pelo computador."
+              : "Sessão encerrada."}
+          </p>
+        </div>
+      )}
+
+      {isReconnecting && (
+        <div
+          data-testid="status-reconnecting"
+          role="status"
+          className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center justify-center gap-2"
+        >
+          <div className="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full" />
+          <span>Reconectando...</span>
+        </div>
+      )}
+
+      {isComputerDisconnected && (
+        <div
+          data-testid="status-computer-disconnected"
+          role="status"
+          className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs font-medium text-[var(--color-error)] flex items-center justify-center gap-2"
+        >
+          <AlertCircle size={14} />
+          <span>Computador desconectado</span>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="flex-1 p-4 flex flex-col gap-4">
@@ -145,28 +382,36 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
           ref={fileInputRef}
           type="file"
           multiple
+          disabled={isSessionClosed}
           className="hidden"
           id="phone-file-input"
           onChange={handleFilesChosen}
         />
 
         <label
-          htmlFor="phone-file-input"
+          htmlFor={isSessionClosed ? undefined : "phone-file-input"}
           className={[
-            "border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-accent)]",
-            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 cursor-pointer",
-            "bg-[var(--color-surface)] active:scale-[0.99] transition-all min-h-[160px]",
+            "border-2 border-dashed border-[var(--color-border)]",
+            isSessionClosed
+              ? "opacity-50 cursor-not-allowed bg-[var(--color-surface)]"
+              : "hover:border-[var(--color-accent)] cursor-pointer bg-[var(--color-surface)] active:scale-[0.99]",
+            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 transition-all min-h-[160px]",
           ].join(" ")}
+          onClick={(e) => {
+            if (isSessionClosed) {
+              e.preventDefault();
+            }
+          }}
         >
           <div className="w-12 h-12 rounded-full bg-[var(--color-accent-light)] flex items-center justify-center text-[var(--color-accent)]">
             <Upload size={24} strokeWidth={1.75} />
           </div>
           <div className="text-center">
             <span className="font-semibold text-base text-[var(--color-text)]">
-              Escolher arquivos
+              {isSessionClosed ? "Sessão encerrada" : "Escolher arquivos"}
             </span>
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-              Fotos, vídeos e documentos
+              {isSessionClosed ? "Envio bloqueado" : "Fotos, vídeos e documentos"}
             </p>
           </div>
         </label>
@@ -196,10 +441,15 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
               variant="primary"
               size="lg"
               className="w-full shadow-lg"
-              onClick={() => fileInputRef.current?.click()}
+              disabled={isSessionClosed}
+              onClick={() => {
+                if (!isSessionClosed) {
+                  fileInputRef.current?.click();
+                }
+              }}
             >
               <Plus size={18} strokeWidth={2} />
-              Enviar mais arquivos
+              {isSessionClosed ? "Sessão encerrada" : "Enviar mais arquivos"}
             </Button>
           </div>
         )}

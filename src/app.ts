@@ -9,19 +9,34 @@ import { fileRoutes } from "./controllers/files.js";
 import { downloadRoutes } from "./controllers/download.js";
 import { websocketRoutes } from "./controllers/websocket.js";
 import { staticRoutes } from "./controllers/static.js";
-import { SessionRepository } from "./repositories/session-repository.js";
+import { SessionStore } from "./session/store.js";
 import { SessionService } from "./services/session-service.js";
 import { FileService } from "./services/file-service.js";
 import { cleanOrphans } from "./services/cleanup-service.js";
+import { type Clock, SystemClock } from "./session/clock.js";
 
 export interface AppContext {
   config: Config;
-  sessionRepository: SessionRepository;
+  clock: Clock;
+  store: SessionStore;
+  sessionStore: SessionStore;
+  sessionRepository: SessionStore;
   sessionService: SessionService;
   fileService: FileService;
 }
 
-export async function buildApp(config: Config): Promise<FastifyInstance> {
+export interface BuildAppOptions {
+  clock?: Clock;
+  startSweeper?: boolean;
+  sweeperInterval?: number;
+}
+
+export async function buildApp(
+  config: Config,
+  options?: BuildAppOptions,
+): Promise<FastifyInstance> {
+  const clock = options?.clock ?? new SystemClock();
+
   const app = Fastify({
     logger: {
       level: "info",
@@ -45,7 +60,6 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     void reply.header("X-Content-Type-Options", "nosniff");
     void reply.header("X-Frame-Options", "DENY");
     void reply.header("X-XSS-Protection", "0");
-    // Allow per-route override of CSP (e.g., preview uses "sandbox")
     if (!reply.hasHeader("Content-Security-Policy")) {
       const isApiOrHealth = request.url.startsWith("/api") || request.url.startsWith("/health");
       if (isApiOrHealth) {
@@ -65,19 +79,40 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   app.setErrorHandler(errorHandler);
 
   // Services
-  const sessionRepository = new SessionRepository();
-  const sessionService = new SessionService(sessionRepository, config);
-  const fileService = new FileService(config, sessionRepository);
+  const sessionStore = new SessionStore({
+    clock,
+    tempDir: config.tempDir,
+    sessionIdleTimeout: config.sessionIdleTimeout,
+    timingConfig: {
+      heartbeatTimeoutMs: config.heartbeatTimeoutMs,
+      computerGraceMs: config.computerGraceMs,
+      phoneGraceMs: config.phoneGraceMs,
+      wsAuthTimeoutMs: config.wsAuthTimeoutMs,
+    },
+  });
+  const sessionService = new SessionService(sessionStore, config, clock);
+  const fileService = new FileService(config, sessionStore);
 
   const ctx: AppContext = {
     config,
-    sessionRepository,
+    clock,
+    store: sessionStore,
+    sessionStore,
+    sessionRepository: sessionStore,
     sessionService,
     fileService,
   };
 
+  if (options?.startSweeper ?? true) {
+    sessionStore.startSweeper(options?.sweeperInterval ?? 1000);
+  }
+
+  app.addHook("onClose", async () => {
+    sessionStore.shutdown();
+  });
+
   // Clean orphan files from previous runs
-  await cleanOrphans(config.tempDir, sessionRepository);
+  await cleanOrphans(config.tempDir, sessionStore);
 
   // Routes
   await app.register(healthRoute);

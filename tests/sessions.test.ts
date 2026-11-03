@@ -36,7 +36,7 @@ describe("sessions", () => {
 
   describe("get session", () => {
     it("returns session info with owner token", async () => {
-      const session = await createSession(ctx.app);
+      const session = await createSession(ctx.app, false);
       const res = await ctx.app.inject({
         method: "GET",
         url: `/api/sessions/${session.id}`,
@@ -45,7 +45,7 @@ describe("sessions", () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.id).toBe(session.id);
-      expect(body.state).toBe("active");
+      expect(body.state).toBe("WAITING");
     });
   });
 
