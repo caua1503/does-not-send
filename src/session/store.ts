@@ -225,6 +225,9 @@ export class SessionStore {
     conn[role] = socket;
     this.activeSockets.set(sessionId, conn);
 
+    // Registra presença imediata na autenticação WebSocket
+    this.recordHeartbeat(sessionId, role);
+
     return { ok: true };
   }
 

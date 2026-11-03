@@ -209,6 +209,57 @@ describe("PhonePage", () => {
     });
   });
 
+  it("trata erro de rede no pareamento com 'sem conexão com o servidor'", async () => {
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/session-test-id",
+        search: "?qrToken=network-err-qr",
+      },
+      writable: true,
+    });
+
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    render(<PhonePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/sem conexão com o servidor/i)
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("trata erro HTTP 500 no pareamento com 'servidor temporariamente indisponível'", async () => {
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/session-test-id",
+        search: "?qrToken=500-qr",
+      },
+      writable: true,
+    });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        error: "Internal Server Error",
+        statusCode: 500,
+      }),
+    });
+
+    render(<PhonePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/servidor temporariamente indisponível/i)
+      ).toBeInTheDocument();
+    });
+  });
+
   it("envia header Authorization com Bearer phoneCredential no upload via XHR", async () => {
     sessionStorage.setItem(
       "dns_phone_cred_session-test-id",
