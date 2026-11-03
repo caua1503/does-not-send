@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../app.js";
-import { safeCompare } from "../utils/safe-compare.js";
+import { authorize as domainAuthorize } from "../session/auth.js";
 import { fileEvents, type FileEvent, type FileEventType } from "../utils/events.js";
 
 /** Close codes */
@@ -22,14 +22,11 @@ export async function websocketRoutes(
       const sessionId = request.params.id;
       const token = request.query.token ?? "";
 
-      // Authenticate: owner token only
+      // Authenticate: owner / computer token
       const session = ctx.sessionRepository.getById(sessionId);
-      const isValid =
-        session && session.state !== "CLOSED" && safeCompare(token, session.ownerToken);
+      const auth = domainAuthorize(session, "computer", token);
 
-      if (!isValid) {
-        // Constant-time dummy compare to avoid timing leak when no session
-        if (!session) safeCompare(token, "0".repeat(64));
+      if (!auth.ok) {
         socket.close(WS_CLOSE_UNAUTHORIZED, "Unauthorized");
         return;
       }

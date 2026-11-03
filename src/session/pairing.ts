@@ -8,11 +8,12 @@ export interface PairableSession {
   state: SessionState;
   qrTokenHash: string | null;
   qrConsumedAt: string | null;
-  pairedAt: string | null;
+  pairedAt?: string | null;
+  phoneCredentialHash?: string | null;
 }
 
 export type PairingResult =
-  | { ok: true; pairedAt: string }
+  | { ok: true; pairedAt: string; phoneCredential: string }
   | { ok: false; error: PairingError };
 
 export function hashToken(raw: string): string {
@@ -59,10 +60,13 @@ export function consumePairing(
     return { ok: false, error: new PairingError("INVALID") };
   }
 
+  const rawPhoneCredential = randomBytes(32).toString("base64url");
+  session.phoneCredentialHash = hashToken(rawPhoneCredential);
+
   const now = new Date().toISOString();
   session.qrConsumedAt = now;
   transition(session, "PAIRED");
   session.pairedAt = now;
 
-  return { ok: true, pairedAt: now };
+  return { ok: true, pairedAt: now, phoneCredential: rawPhoneCredential };
 }

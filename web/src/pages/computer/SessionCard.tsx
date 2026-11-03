@@ -12,7 +12,11 @@ import type { FileEntry } from "../../lib/api.ts";
 interface ActiveSession {
   id: string;
   ownerToken: string;
-  uploadToken: string;
+  computerToken?: string;
+  uploadToken?: string;
+  qrToken?: string;
+  visualId?: string;
+  shortId?: string;
 }
 
 interface SessionCardProps {
@@ -48,7 +52,11 @@ export function SessionCard({
   const files = externalFiles ?? localFiles;
   const connected = externalConnected ?? localConnected;
 
-  const uploadUrl = `${publicBaseUrl}/enviar/${session.id}?token=${encodeURIComponent(session.uploadToken)}`;
+  const visualId = session.visualId || session.shortId;
+  const qrToken = session.qrToken || session.uploadToken || "";
+  const uploadUrl = qrToken
+    ? `${publicBaseUrl}/enviar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
+    : `${publicBaseUrl}/enviar/${session.id}`;
 
   // Fecha com Esc
   useEffect(() => {
@@ -101,24 +109,34 @@ export function SessionCard({
         onClick={onSelect}
       >
         <div className="p-4 flex items-start gap-4">
-          {/* QR Code — always white background */}
-          <button
-            type="button"
-            onClick={openQr}
-            className="group relative flex-shrink-0 bg-white p-2 rounded-xl border border-[var(--color-border)] hover:ring-2 hover:ring-[var(--color-accent)] transition-all cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
-            aria-label="Ampliar QR Code"
-            title="Clique para ampliar o QR Code"
-          >
-            <QRCodeSVG
-              value={uploadUrl}
-              size={100}
-              marginSize={2}
-              level="M"
-            />
-            <div className="absolute inset-0 bg-black/30 rounded-xl opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 flex items-center justify-center transition-opacity text-white pointer-events-none">
-              <Maximize2 size={22} strokeWidth={2} />
-            </div>
-          </button>
+          {/* QR Code + visual ID */}
+          <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+            <button
+              type="button"
+              onClick={openQr}
+              className="group relative flex-shrink-0 bg-white p-2 rounded-xl border border-[var(--color-border)] hover:ring-2 hover:ring-[var(--color-accent)] transition-all cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
+              aria-label="Ampliar QR Code"
+              title="Clique para ampliar o QR Code"
+            >
+              <QRCodeSVG
+                value={uploadUrl}
+                size={100}
+                marginSize={2}
+                level="M"
+              />
+              <div className="absolute inset-0 bg-black/30 rounded-xl opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 flex items-center justify-center transition-opacity text-white pointer-events-none">
+                <Maximize2 size={22} strokeWidth={2} />
+              </div>
+            </button>
+            {visualId && (
+              <span
+                data-testid="session-visual-id"
+                className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-[var(--color-accent-light)] text-[var(--color-accent)] tracking-wider"
+              >
+                ID: {visualId}
+              </span>
+            )}
+          </div>
 
           {/* Session info */}
           <div className="flex-1 min-w-0">
@@ -184,6 +202,15 @@ export function SessionCard({
             <h2 className="text-sm font-semibold text-gray-800">
               QR Code para envio de arquivos
             </h2>
+
+            {visualId && (
+              <div
+                data-testid="session-modal-visual-id"
+                className="font-mono font-bold text-base px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 tracking-widest border border-indigo-100"
+              >
+                ID: {visualId}
+              </div>
+            )}
 
             {qrDataUrl ? (
               <img

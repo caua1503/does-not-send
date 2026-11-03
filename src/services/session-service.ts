@@ -1,18 +1,18 @@
 import type { Config } from "../utils/config.js";
 import type { Session } from "../types.js";
 import type { SessionRepository } from "../repositories/session-repository.js";
-import {
-  generateSessionId,
-  generateToken,
-  generateShortId,
-} from "../utils/crypto.js";
-import { generateQrToken, hashToken } from "../session/pairing.js";
+import { generateSessionId } from "../utils/crypto.js";
+import { generateSecret } from "../session/auth.js";
+import { generateVisualId } from "../session/visual-id.js";
+import { hashToken, consumePairing, type PairingResult } from "../session/pairing.js";
+import { PairingError } from "../session/errors.js";
 import { transition } from "../session/states.js";
 import { rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileEvents } from "../utils/events.js";
 
-export interface SessionWithQrToken extends Session {
+export interface SessionWithSecrets extends Session {
+  rawComputerToken: string;
   rawQrToken: string;
 }
 
@@ -24,17 +24,23 @@ export class SessionService {
     private config: Config,
   ) {}
 
-  async create(): Promise<SessionWithQrToken> {
-    const rawQrToken = generateQrToken();
+  async create(): Promise<SessionWithSecrets> {
+    const rawComputerToken = generateSecret();
+    const rawQrToken = generateSecret();
+    const activeVisualIds = this.repository.getActiveVisualIds();
+    const visualId = generateVisualId(activeVisualIds);
+
     const session: Session = {
       id: generateSessionId(),
-      ownerToken: generateToken(),
-      uploadToken: generateToken(),
-      shortId: generateShortId(),
+      computerTokenHash: hashToken(rawComputerToken),
+      phoneCredentialHash: null,
+      visualId,
+      shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
       qrConsumedAt: null,
       isPaired: false,
       state: "WAITING",
+      activeUploads: 0,
       createdAt: new Date().toISOString(),
       lastActivity: new Date().toISOString(),
       files: [],
@@ -51,8 +57,24 @@ export class SessionService {
 
     return {
       ...session,
+      rawComputerToken,
       rawQrToken,
     };
+  }
+
+  pair(id: string, qrToken: string): PairingResult {
+    const session = this.repository.getById(id);
+    if (!session) {
+      return { ok: false, error: new PairingError("NOT_FOUND") };
+    }
+
+    const result = consumePairing(session, qrToken);
+    if (result.ok) {
+      session.isPaired = true;
+      this.repository.update(session);
+      this.touchActivity(id);
+    }
+    return result;
   }
 
   getById(id: string): Session | undefined {

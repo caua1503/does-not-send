@@ -10,9 +10,40 @@ const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
 
 export interface Session {
   id: string;
+  computerToken?: string;
   ownerToken: string;
-  uploadToken: string;
+  uploadToken?: string;
+  qrToken?: string;
+  visualId?: string;
+  shortId?: string;
   createdAt: string;
+}
+
+export interface PairResponse {
+  success: boolean;
+  phoneCredential: string;
+  visualId?: string;
+  shortId?: string;
+  state: "WAITING" | "PAIRED" | "TRANSFERRING" | "DISCONNECTED" | "CLOSED" | string;
+  pairedAt: string;
+}
+
+export interface PairErrorBody {
+  error?: string;
+  code?: string;
+  statusCode?: number;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
 }
 
 export interface FileEntry {
@@ -30,7 +61,12 @@ interface FileListResponse {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const base =
+    BASE ||
+    (typeof window !== "undefined" && window.location && window.location.origin && window.location.origin !== "null"
+      ? window.location.origin
+      : "http://localhost");
+  const res = await fetch(`${base}${path}`, init);
   return res;
 }
 
@@ -39,6 +75,39 @@ export async function createSession(): Promise<Session> {
   const res = await apiFetch("/api/sessions", { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
   return res.json() as Promise<Session>;
+}
+
+/** POST /api/sessions/:id/pair */
+export async function pairSession(id: string, qrToken: string): Promise<PairResponse> {
+  const res = await apiFetch(`/api/sessions/${id}/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ qrToken }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to pair: ${res.status}`, res.status, data.code);
+  }
+  return res.json() as Promise<PairResponse>;
+}
+
+export interface SessionInfo {
+  id: string;
+  visualId?: string;
+  shortId?: string;
+  state: "WAITING" | "PAIRED" | "TRANSFERRING" | "DISCONNECTED" | "CLOSED" | string;
+  createdAt: string;
+  lastActivity?: string;
+  fileCount: number;
+}
+
+/** GET /api/sessions/:id */
+export async function getSession(id: string, token: string): Promise<SessionInfo> {
+  const res = await apiFetch(`/api/sessions/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Failed to get session: ${res.status}`);
+  return res.json() as Promise<SessionInfo>;
 }
 
 /** DELETE /api/sessions/:id (ownerToken via query param for sendBeacon compat) */
