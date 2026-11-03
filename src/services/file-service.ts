@@ -27,7 +27,7 @@ export class FileService {
     declaredSize?: number,
   ): Promise<UploadResult> {
     const session = this.repository.getById(sessionId);
-    if (!session || session.state !== "active") {
+    if (!session || session.state === "CLOSED") {
       throw Object.assign(new Error("Session not available"), { statusCode: 404 });
     }
 

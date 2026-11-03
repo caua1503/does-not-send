@@ -1,10 +1,20 @@
 import type { Config } from "../utils/config.js";
 import type { Session } from "../types.js";
 import type { SessionRepository } from "../repositories/session-repository.js";
-import { generateSessionId, generateToken } from "../utils/crypto.js";
+import {
+  generateSessionId,
+  generateToken,
+  generateShortId,
+} from "../utils/crypto.js";
+import { generateQrToken, hashToken } from "../session/pairing.js";
+import { transition } from "../session/states.js";
 import { rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileEvents } from "../utils/events.js";
+
+export interface SessionWithQrToken extends Session {
+  rawQrToken: string;
+}
 
 export class SessionService {
   private timers: Map<string, ReturnType<typeof setTimeout>> = new Map();
@@ -14,12 +24,17 @@ export class SessionService {
     private config: Config,
   ) {}
 
-  async create(): Promise<Session> {
+  async create(): Promise<SessionWithQrToken> {
+    const rawQrToken = generateQrToken();
     const session: Session = {
       id: generateSessionId(),
       ownerToken: generateToken(),
       uploadToken: generateToken(),
-      state: "active",
+      shortId: generateShortId(),
+      qrTokenHash: hashToken(rawQrToken),
+      qrConsumedAt: null,
+      isPaired: false,
+      state: "WAITING",
       createdAt: new Date().toISOString(),
       lastActivity: new Date().toISOString(),
       files: [],
@@ -34,7 +49,10 @@ export class SessionService {
     // Start inactivity timer
     this.resetTimer(session.id);
 
-    return session;
+    return {
+      ...session,
+      rawQrToken,
+    };
   }
 
   getById(id: string): Session | undefined {
@@ -43,9 +61,9 @@ export class SessionService {
 
   async close(id: string): Promise<void> {
     const session = this.repository.getById(id);
-    if (!session) return;
+    if (!session || session.state === "CLOSED") return;
 
-    session.state = "closed";
+    transition(session, "CLOSED");
     this.repository.update(session);
 
     this.clearTimer(id);
@@ -55,7 +73,7 @@ export class SessionService {
 
   heartbeat(id: string): boolean {
     const session = this.repository.getById(id);
-    if (!session || session.state !== "active") return false;
+    if (!session || session.state === "CLOSED") return false;
 
     session.lastActivity = new Date().toISOString();
     this.repository.update(session);
@@ -65,7 +83,7 @@ export class SessionService {
 
   touchActivity(id: string): void {
     const session = this.repository.getById(id);
-    if (!session || session.state !== "active") return;
+    if (!session || session.state === "CLOSED") return;
 
     session.lastActivity = new Date().toISOString();
     this.repository.update(session);
@@ -94,9 +112,9 @@ export class SessionService {
 
   private async expire(id: string): Promise<void> {
     const session = this.repository.getById(id);
-    if (!session || session.state !== "active") return;
+    if (!session || session.state === "CLOSED") return;
 
-    session.state = "closed";
+    transition(session, "CLOSED");
     this.repository.update(session);
     this.clearTimer(id);
     fileEvents.emitSessionClosed(id);
