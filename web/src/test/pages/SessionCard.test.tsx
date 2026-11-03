@@ -87,4 +87,34 @@ describe("SessionCard QR Code zoom", () => {
       screen.queryByRole("heading", { name: /qr code para envio de arquivos/i })
     ).not.toBeInTheDocument();
   });
+
+  it("exibe o visualId em destaque no card e no modal ampliado", () => {
+    const sessionWithVisualId = {
+      id: "test-session-id",
+      ownerToken: "test-owner-token",
+      qrToken: "test-qr-token",
+      visualId: "A7K92F",
+    };
+
+    render(
+      <SessionCard
+        session={sessionWithVisualId}
+        publicBaseUrl="http://192.168.1.100:3000"
+        onClose={vi.fn()}
+        selected={false}
+        onSelect={vi.fn()}
+      />
+    );
+
+    // ID exibido no card
+    const cardId = screen.getByTestId("session-visual-id");
+    expect(cardId).toBeInTheDocument();
+    expect(cardId).toHaveTextContent("ID: A7K92F");
+
+    // Abre modal ampliado
+    fireEvent.click(screen.getByRole("button", { name: /ampliar qr code/i }));
+    const modalId = screen.getByTestId("session-modal-visual-id");
+    expect(modalId).toBeInTheDocument();
+    expect(modalId).toHaveTextContent("ID: A7K92F");
+  });
 });

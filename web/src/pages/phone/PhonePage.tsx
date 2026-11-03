@@ -1,9 +1,10 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
+import { pairSession } from "../../lib/api.ts";
 
 declare const __BASE_URL__: string;
 const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
@@ -11,20 +12,123 @@ const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
 interface PhonePageProps {
   sessionId?: string;
   token?: string;
+  qrToken?: string;
 }
 
-export default function PhonePage({ sessionId: propSessionId, token: propToken }: PhonePageProps) {
+interface StoredSession {
+  phoneCredential?: string;
+  visualId?: string;
+}
+
+function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
+  if (!id) return { phoneCredential: null, visualId: null };
+  try {
+    const raw = sessionStorage.getItem(`dns_phone_cred_${id}`);
+    if (!raw) return { phoneCredential: null, visualId: null };
+    try {
+      const parsed = JSON.parse(raw) as StoredSession;
+      if (parsed && typeof parsed === "object") {
+        return {
+          phoneCredential: parsed.phoneCredential || null,
+          visualId: parsed.visualId || null,
+        };
+      }
+      return { phoneCredential: raw, visualId: null };
+    } catch {
+      return { phoneCredential: raw, visualId: null };
+    }
+  } catch {
+    return { phoneCredential: null, visualId: null };
+  }
+}
+
+export default function PhonePage({
+  sessionId: propSessionId,
+  token: propToken,
+  qrToken: propQrToken,
+}: PhonePageProps) {
   // Extract from props or URL
   const pathParts = window.location.pathname.split("/");
   const urlSessionId = propSessionId || pathParts[2] || "";
   const searchParams = new URLSearchParams(window.location.search);
-  const token = propToken || searchParams.get("token") || "";
+  const qrToken = propQrToken || searchParams.get("qrToken") || "";
+  const legacyToken = propToken || searchParams.get("token") || "";
+
+  const storageKey = urlSessionId ? `dns_phone_cred_${urlSessionId}` : "";
+  const initialStored = readStoredSession(urlSessionId);
+
+  const [credential, setCredential] = useState<string | null>(
+    initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
+  );
+  const [visualId, setVisualId] = useState<string | null>(initialStored.visualId);
+  const [isPairing, setIsPairing] = useState<boolean>(() => {
+    return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
+  });
+  const [sessionError, setSessionError] = useState<string | null>(() => {
+    if (!urlSessionId) return "Sessão inválida ou link expirado.";
+    if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
+      return "Sessão inválida ou link expirado.";
+    }
+    return null;
+  });
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
-  const [sessionError, setSessionError] = useState<string | null>(
-    !urlSessionId || !token ? "Sessão inválida ou link expirado." : null
-  );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (credential || sessionError || !urlSessionId || !qrToken) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function doPair() {
+      setIsPairing(true);
+      try {
+        const data = await pairSession(urlSessionId, qrToken);
+        if (isCancelled) return;
+        const cred = data.phoneCredential;
+        const vId = data.visualId || data.shortId || null;
+
+        if (storageKey) {
+          try {
+            sessionStorage.setItem(
+              storageKey,
+              JSON.stringify({ phoneCredential: cred, visualId: vId })
+            );
+          } catch {
+            // Ignore sessionStorage quota error
+          }
+        }
+
+        setCredential(cred);
+        setVisualId(vId);
+        setIsPairing(false);
+      } catch (err: any) {
+        if (isCancelled) return;
+        setIsPairing(false);
+        const status = err?.status;
+        const code = err?.code;
+        if (status === 401) {
+          setSessionError("Sessão inválida ou QR code expirado.");
+        } else if (status === 410) {
+          setSessionError("Sessão encerrada pelo computador.");
+        } else if (status === 409 || code === "ALREADY_CONSUMED") {
+          setSessionError("QR code já utilizado por outro aparelho.");
+        } else if (status === 404) {
+          setSessionError("Sessão não encontrada.");
+        } else {
+          setSessionError(err?.message || "Erro ao conectar à sessão.");
+        }
+      }
+    }
+
+    doPair();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
 
   const uploadSingleFile = (item: PhoneUploadItem) => {
     setItems((prev) =>
@@ -55,6 +159,20 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão expirada" } : i))
         );
+      } else if (xhr.status === 410) {
+        setSessionError("Sessão encerrada pelo computador.");
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
+        );
+      } else if (xhr.status === 404) {
+        setSessionError("Sessão não encontrada.");
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Não encontrada" } : i))
+        );
+      } else if (xhr.status === 409) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
+        );
       } else if (xhr.status === 413) {
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Arquivo muito grande ou limite excedido" } : i))
@@ -73,7 +191,9 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
     };
 
     xhr.open("POST", `${BASE}/api/sessions/${urlSessionId}/files`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    if (credential) {
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+    }
     xhr.send(formData);
   };
 
@@ -125,15 +245,38 @@ export default function PhonePage({ sessionId: propSessionId, token: propToken }
     );
   }
 
+  if (isPairing) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
+        <Card className="max-w-md w-full p-8 text-center space-y-4">
+          <div className="animate-spin w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full mx-auto" />
+          <p className="text-sm font-medium text-[var(--color-text-muted)]">
+            Conectando ao computador...
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto">
       {/* Header */}
       <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-2">
-          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)]" />
-          <span className="font-semibold text-sm tracking-tight">Enviar para Computador</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-semibold text-sm tracking-tight truncate">Enviar para Computador</span>
+            {visualId && (
+              <span
+                data-testid="phone-visual-id"
+                className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-[var(--color-accent-light)] text-[var(--color-accent)] shrink-0"
+              >
+                ID: {visualId}
+              </span>
+            )}
+          </div>
         </div>
-        <span className="text-xs text-[var(--color-text-muted)] tabular">
+        <span className="text-xs text-[var(--color-text-muted)] tabular shrink-0 ml-2">
           {completedFiles}/{totalFiles} enviados
         </span>
       </header>
