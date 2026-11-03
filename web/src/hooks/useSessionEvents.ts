@@ -166,9 +166,13 @@ export function useSessionEvents(
           }
 
           if (event.code === 4001) {
-            // Unauthorized / Auth timeout — do not reconnect
+            // Unauthorized / Auth timeout — reconecta com credencial existente
+            // (4001 pode ser auth timeout do servidor, não necessariamente token inválido)
             setConnected(false);
-            setReconnecting(false);
+            setReconnecting(true);
+            retryRef.current = setTimeout(() => {
+              if (!stopped && mountedRef.current) connect();
+            }, reconnectDelay);
             return;
           }
 

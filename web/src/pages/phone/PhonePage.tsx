@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
-import { Badge } from "../../components/ui/Badge.tsx";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
 import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
@@ -76,10 +75,10 @@ export default function PhonePage({
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pairingInProgressRef = useRef<boolean>(false);
 
   // (a) Cliente WS para o telefone: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
   const {
-    connected: wsConnected,
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
@@ -89,29 +88,6 @@ export default function PhonePage({
   });
 
   const [remoteSession, setRemoteSession] = useState<SessionInfo | null>(null);
-
-  // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
-  useEffect(() => {
-    if (!urlSessionId || !credential || wsSessionClosed) return;
-
-    let active = true;
-
-    async function check() {
-      try {
-        const data = await getSession(urlSessionId, credential!);
-        if (!active) return;
-        setRemoteSession(data);
-      } catch {
-        // Ignora erros transitórios
-      }
-    }
-
-    const id = setInterval(check, 3000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [urlSessionId, credential, wsSessionClosed]);
 
   // Estados derivados
   const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
@@ -123,18 +99,47 @@ export default function PhonePage({
     !isReconnecting &&
     (remoteSession?.computerPresent === false || wsClosedReason === "computer_lost");
 
+  // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
+  useEffect(() => {
+    if (!urlSessionId || !credential || isSessionClosed) return;
+
+    let active = true;
+
+    async function check() {
+      try {
+        const data = await getSession(urlSessionId, credential!);
+        if (!active) return;
+        setRemoteSession(data);
+      } catch (err: any) {
+        if (!active) return;
+        if (err?.status === 410) {
+          setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+        }
+      }
+    }
+
+    const id = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [urlSessionId, credential, isSessionClosed]);
+
   useEffect(() => {
     if (credential || sessionError || !urlSessionId || !qrToken) {
       return;
     }
+    if (pairingInProgressRef.current) {
+      return;
+    }
 
+    pairingInProgressRef.current = true;
     let isCancelled = false;
 
     async function doPair() {
       setIsPairing(true);
       try {
         const data = await pairSession(urlSessionId, qrToken);
-        if (isCancelled) return;
         const cred = data.phoneCredential;
         const vId = data.visualId || data.shortId || null;
 
@@ -149,22 +154,35 @@ export default function PhonePage({
           }
         }
 
+        if (isCancelled) return;
         setCredential(cred);
         setVisualId(vId);
         setIsPairing(false);
       } catch (err: any) {
+        pairingInProgressRef.current = false;
         if (isCancelled) return;
         setIsPairing(false);
         const status = err?.status;
         const code = err?.code;
-        if (status === 401) {
-          setSessionError("Sessão inválida ou QR code expirado.");
-        } else if (status === 410) {
-          setSessionError("Sessão encerrada pelo computador.");
-        } else if (status === 409 || code === "ALREADY_CONSUMED") {
+
+        if (status === 409 || code === "ALREADY_CONSUMED") {
+          const stored = readStoredSession(urlSessionId);
+          if (stored.phoneCredential) {
+            setCredential(stored.phoneCredential);
+            setVisualId(stored.visualId);
+            return;
+          }
           setSessionError("QR code já utilizado por outro aparelho.");
-        } else if (status === 404) {
+        } else if (status === 410 || code === "CLOSED") {
+          setSessionError("Sessão encerrada pelo computador.");
+        } else if (status === 401 || code === "INVALID") {
+          setSessionError("Credencial inválida: sessão inválida ou QR code expirado.");
+        } else if (status === 404 || code === "NOT_FOUND") {
           setSessionError("Sessão não encontrada.");
+        } else if (status >= 500 && status < 600) {
+          setSessionError("Servidor temporariamente indisponível.");
+        } else if (!status || err?.name === "TypeError" || err?.message?.includes("fetch")) {
+          setSessionError("Sem conexão com o servidor.");
         } else {
           setSessionError(err?.message || "Erro ao conectar à sessão.");
         }
@@ -205,12 +223,12 @@ export default function PhonePage({
           prev.map((i) => (i.id === item.id ? { ...i, state: "completed", progress: 1 } : i))
         );
       } else if (xhr.status === 401) {
-        setSessionError("Sessão inválida ou já encerrada pelo computador.");
+        setSessionError("Credencial inválida.");
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão expirada" } : i))
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Credencial inválida" } : i))
         );
       } else if (xhr.status === 410) {
-        setSessionError("Sessão encerrada pelo computador.");
+        setSessionError("Sessão encerrada.");
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
         );
@@ -221,11 +239,15 @@ export default function PhonePage({
         );
       } else if (xhr.status === 409) {
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "QR já utilizado ou sessão não aceita envios" } : i))
         );
       } else if (xhr.status === 413) {
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Arquivo muito grande ou limite excedido" } : i))
+        );
+      } else if (xhr.status >= 500 && xhr.status < 600) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Servidor temporariamente indisponível" } : i))
         );
       } else {
         setItems((prev) =>
@@ -236,7 +258,7 @@ export default function PhonePage({
 
     xhr.onerror = () => {
       setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Falha de rede" } : i))
+        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sem conexão com o servidor" } : i))
       );
     };
 

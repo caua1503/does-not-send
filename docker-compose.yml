@@ -1,4 +1,30 @@
+networks:
+  web:
+  data:
+    internal: true
+
+volumes:
+  postgres-data:
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-doesnotsend}
+      POSTGRES_USER: ${POSTGRES_USER:-doesnotsend}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Database password required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-doesnotsend}"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
   app:
     build:
       context: .
@@ -20,9 +46,18 @@ services:
       - COMPUTER_GRACE_MS=${COMPUTER_GRACE_MS:-30000}
       - PHONE_GRACE_MS=${PHONE_GRACE_MS:-30000}
       - WS_AUTH_TIMEOUT_MS=${WS_AUTH_TIMEOUT_MS:-5000}
+      # Database
+      - DATABASE_URL=postgres://${POSTGRES_USER:-doesnotsend}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-doesnotsend}
+      - DB_POOL_MAX=${DB_POOL_MAX:-10}
+    networks:
+      - web
+      - data
     # Armazenamento em RAM volátil (tmpfs) dedicado para arquivos temporários
     tmpfs:
       - /tmp/uploads:rw,noexec,nosuid,size=2G,uid=1001,gid=1001,mode=0700
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\""]
