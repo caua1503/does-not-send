@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import PhonePage from "../../pages/phone/PhonePage.tsx";
 
 describe("PhonePage", () => {
@@ -256,5 +256,122 @@ describe("PhonePage", () => {
     );
 
     vi.unstubAllGlobals();
+  });
+
+  describe("Estados de conectividade e avisos", () => {
+    let mockSockets: any[] = [];
+
+    class MockWebSocket {
+      static OPEN = 1;
+      static CLOSED = 3;
+      readyState = MockWebSocket.OPEN;
+      url: string;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: ((event: { code: number; reason?: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      sentMessages: string[] = [];
+
+      constructor(url: string) {
+        this.url = url;
+        mockSockets.push(this);
+        setTimeout(() => {
+          if (this.onopen) this.onopen();
+        }, 0);
+      }
+
+      send(data: string) {
+        this.sentMessages.push(data);
+      }
+
+      close(code = 1000, reason = "") {
+        this.readyState = MockWebSocket.CLOSED;
+        if (this.onclose) this.onclose({ code, reason });
+      }
+
+      receiveMessage(data: Record<string, unknown>) {
+        if (this.onmessage) {
+          this.onmessage({ data: JSON.stringify(data) });
+        }
+      }
+    }
+
+    beforeEach(() => {
+      mockSockets = [];
+      vi.stubGlobal("WebSocket", MockWebSocket);
+      sessionStorage.setItem(
+        "dns_phone_cred_session-test-id",
+        JSON.stringify({
+          phoneCredential: "phone-secret-cred-123",
+          visualId: "X9K22",
+        })
+      );
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("exibe aviso 'reconectando...' quando conexão WS é perdida", async () => {
+      render(<PhonePage />);
+
+      await waitFor(() => {
+        expect(mockSockets.length).toBeGreaterThanOrEqual(1);
+      });
+
+      const ws = mockSockets[0];
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "phone" });
+        // Simula desconexão anormal
+        ws.close(1006, "Abnormal closure");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("status-reconnecting")).toBeInTheDocument();
+        expect(screen.getByText(/reconectando\.\.\./i)).toBeInTheDocument();
+      });
+    });
+
+    it("exibe aviso 'sessão encerrada' ao receber session_closed e bloqueia botão de envio", async () => {
+      render(<PhonePage />);
+
+      await waitFor(() => {
+        expect(mockSockets.length).toBeGreaterThanOrEqual(1);
+      });
+
+      const ws = mockSockets[0];
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "phone" });
+        ws.receiveMessage({ type: "session_closed", reason: "user_closed" });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("status-session-closed")).toBeInTheDocument();
+        expect(screen.getAllByText(/sessão encerrada/i).length).toBeGreaterThanOrEqual(1);
+      });
+
+      const input = document.getElementById("phone-file-input") as HTMLInputElement;
+      expect(input).toBeDisabled();
+      expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
+    });
+
+    it("exibe aviso 'computador desconectado' no aviso de encerramento quando reason é computer_lost", async () => {
+      render(<PhonePage />);
+
+      await waitFor(() => {
+        expect(mockSockets.length).toBeGreaterThanOrEqual(1);
+      });
+
+      const ws = mockSockets[0];
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "phone" });
+        ws.receiveMessage({ type: "session_closed", reason: "computer_lost" });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("status-session-closed")).toBeInTheDocument();
+        expect(screen.getByText(/computador desconectado/i)).toBeInTheDocument();
+      });
+    });
   });
 });

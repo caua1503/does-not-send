@@ -2,9 +2,11 @@ import { useRef, useState, useEffect } from "react";
 import { QRCodeSVG, QRCodeCanvas } from "qrcode.react";
 import { X, Files, Maximize2 } from "lucide-react";
 import { Card } from "../../components/ui/Card.tsx";
+import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
+import { getSession, type SessionInfo } from "../../lib/api.ts";
 import { FileList } from "./FileList.tsx";
 import { createPortal } from "react-dom";
 import type { FileEntry } from "../../lib/api.ts";
@@ -46,8 +48,29 @@ export function SessionCard({
   const { files: localFiles, connected: localConnected } = useSessionEvents(
     session.id,
     session.ownerToken,
+    { role: "computer" },
   );
   useHeartbeat(session.id, session.ownerToken);
+
+  const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function check() {
+      try {
+        const info = await getSession(session.id, session.ownerToken);
+        if (active) setSessionInfo(info);
+      } catch {
+        // Ignora erros transitórios
+      }
+    }
+    check();
+    const id = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [session.id, session.ownerToken]);
 
   const files = externalFiles ?? localFiles;
   const connected = externalConnected ?? localConnected;
@@ -141,7 +164,14 @@ export function SessionCard({
           {/* Session info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <StatusDot connected={connected} />
+              <div className="flex items-center gap-2">
+                <StatusDot connected={connected} />
+                {sessionInfo?.state === "DISCONNECTED" ? (
+                  <Badge label="Reconectando..." variant="warn" />
+                ) : sessionInfo?.phonePresent ? (
+                  <Badge label="Telefone conectado" variant="success" />
+                ) : null}
+              </div>
               <button
                 onClick={(e) => {
                   e.stopPropagation();

@@ -2,9 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
+import { Badge } from "../../components/ui/Badge.tsx";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
-import { pairSession } from "../../lib/api.ts";
+import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
+import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 
 declare const __BASE_URL__: string;
 const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
@@ -75,6 +77,52 @@ export default function PhonePage({
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // (a) Cliente WS para o telefone: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
+  const {
+    connected: wsConnected,
+    sessionClosed: wsSessionClosed,
+    closedReason: wsClosedReason,
+    reconnecting: wsReconnecting,
+  } = useSessionEvents(urlSessionId, credential, {
+    role: "phone",
+    reconnectInterval: 2000,
+  });
+
+  const [remoteSession, setRemoteSession] = useState<SessionInfo | null>(null);
+
+  // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
+  useEffect(() => {
+    if (!urlSessionId || !credential || wsSessionClosed) return;
+
+    let active = true;
+
+    async function check() {
+      try {
+        const data = await getSession(urlSessionId, credential!);
+        if (!active) return;
+        setRemoteSession(data);
+      } catch {
+        // Ignora erros transitórios
+      }
+    }
+
+    const id = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [urlSessionId, credential, wsSessionClosed]);
+
+  // Estados derivados
+  const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
+  const isReconnecting =
+    !isSessionClosed &&
+    (wsReconnecting || remoteSession?.state === "DISCONNECTED");
+  const isComputerDisconnected =
+    !isSessionClosed &&
+    !isReconnecting &&
+    (remoteSession?.computerPresent === false || wsClosedReason === "computer_lost");
+
   useEffect(() => {
     if (credential || sessionError || !urlSessionId || !qrToken) {
       return;
@@ -131,6 +179,8 @@ export default function PhonePage({
   }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
 
   const uploadSingleFile = (item: PhoneUploadItem) => {
+    if (isSessionClosed) return;
+
     setItems((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", progress: 0, error: undefined } : i))
     );
@@ -198,6 +248,7 @@ export default function PhonePage({
   };
 
   const handleFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isSessionClosed) return;
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
@@ -281,6 +332,49 @@ export default function PhonePage({
         </span>
       </header>
 
+      {/* Status banners */}
+      {isSessionClosed && (
+        <div
+          data-testid="status-session-closed"
+          role="alert"
+          className="bg-red-500/10 border-b border-red-500/20 px-4 py-3 text-center space-y-1"
+        >
+          <div className="flex items-center justify-center gap-1.5 text-sm font-semibold text-[var(--color-error)]">
+            <AlertCircle size={16} />
+            <span>Sessão encerrada</span>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {wsClosedReason === "computer_lost"
+              ? "Computador desconectado — a sessão foi encerrada."
+              : wsClosedReason === "user_closed"
+              ? "Sessão encerrada pelo computador."
+              : "Sessão encerrada."}
+          </p>
+        </div>
+      )}
+
+      {isReconnecting && (
+        <div
+          data-testid="status-reconnecting"
+          role="status"
+          className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center justify-center gap-2"
+        >
+          <div className="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full" />
+          <span>Reconectando...</span>
+        </div>
+      )}
+
+      {isComputerDisconnected && (
+        <div
+          data-testid="status-computer-disconnected"
+          role="status"
+          className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs font-medium text-[var(--color-error)] flex items-center justify-center gap-2"
+        >
+          <AlertCircle size={14} />
+          <span>Computador desconectado</span>
+        </div>
+      )}
+
       {/* Main Container */}
       <main className="flex-1 p-4 flex flex-col gap-4">
         {/* Big Tap Area */}
@@ -288,28 +382,36 @@ export default function PhonePage({
           ref={fileInputRef}
           type="file"
           multiple
+          disabled={isSessionClosed}
           className="hidden"
           id="phone-file-input"
           onChange={handleFilesChosen}
         />
 
         <label
-          htmlFor="phone-file-input"
+          htmlFor={isSessionClosed ? undefined : "phone-file-input"}
           className={[
-            "border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-accent)]",
-            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 cursor-pointer",
-            "bg-[var(--color-surface)] active:scale-[0.99] transition-all min-h-[160px]",
+            "border-2 border-dashed border-[var(--color-border)]",
+            isSessionClosed
+              ? "opacity-50 cursor-not-allowed bg-[var(--color-surface)]"
+              : "hover:border-[var(--color-accent)] cursor-pointer bg-[var(--color-surface)] active:scale-[0.99]",
+            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 transition-all min-h-[160px]",
           ].join(" ")}
+          onClick={(e) => {
+            if (isSessionClosed) {
+              e.preventDefault();
+            }
+          }}
         >
           <div className="w-12 h-12 rounded-full bg-[var(--color-accent-light)] flex items-center justify-center text-[var(--color-accent)]">
             <Upload size={24} strokeWidth={1.75} />
           </div>
           <div className="text-center">
             <span className="font-semibold text-base text-[var(--color-text)]">
-              Escolher arquivos
+              {isSessionClosed ? "Sessão encerrada" : "Escolher arquivos"}
             </span>
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-              Fotos, vídeos e documentos
+              {isSessionClosed ? "Envio bloqueado" : "Fotos, vídeos e documentos"}
             </p>
           </div>
         </label>
@@ -339,10 +441,15 @@ export default function PhonePage({
               variant="primary"
               size="lg"
               className="w-full shadow-lg"
-              onClick={() => fileInputRef.current?.click()}
+              disabled={isSessionClosed}
+              onClick={() => {
+                if (!isSessionClosed) {
+                  fileInputRef.current?.click();
+                }
+              }}
             >
               <Plus size={18} strokeWidth={2} />
-              Enviar mais arquivos
+              {isSessionClosed ? "Sessão encerrada" : "Enviar mais arquivos"}
             </Button>
           </div>
         )}

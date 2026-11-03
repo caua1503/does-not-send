@@ -28,13 +28,18 @@ export function createMultipartPayload(
   };
 }
 
+import type { Clock } from "../src/session/clock.js";
+
 export interface TestContext {
   app: FastifyInstance;
   config: Config;
   tempDir: string;
 }
 
-export async function createTestApp(overrides?: Partial<Config>): Promise<TestContext> {
+export async function createTestApp(
+  overrides?: Partial<Config>,
+  options?: { clock?: Clock; startSweeper?: boolean },
+): Promise<TestContext> {
   const tempDir = await mkdtemp(join(tmpdir(), "dns-test-"));
 
   const config: Config = {
@@ -49,15 +54,28 @@ export async function createTestApp(overrides?: Partial<Config>): Promise<TestCo
     ...overrides,
   };
 
-  const app = await buildApp(config);
+  const sweeperInterval =
+    config.sessionIdleTimeout && config.sessionIdleTimeout < 1000
+      ? Math.max(20, Math.floor(config.sessionIdleTimeout / 4))
+      : 1000;
+
+  const app = await buildApp(config, {
+    clock: options?.clock,
+    startSweeper: options?.startSweeper ?? (options?.clock ? false : true),
+    sweeperInterval,
+  });
 
   return { app, config, tempDir };
 }
 
 export async function cleanupTestApp(ctx: TestContext): Promise<void> {
-  const appCtx = (ctx.app as unknown as { ctx: { sessionService: { clearAllTimers(): void } } })
-    .ctx;
-  appCtx.sessionService.clearAllTimers();
+  const appCtx = (
+    ctx.app as unknown as {
+      ctx: { sessionStore?: { shutdown(): void }; sessionService?: { shutdown(): void } };
+    }
+  ).ctx;
+  appCtx.sessionStore?.shutdown();
+  appCtx.sessionService?.shutdown();
   await ctx.app.close();
   try {
     await rm(ctx.tempDir, { recursive: true, force: true });
