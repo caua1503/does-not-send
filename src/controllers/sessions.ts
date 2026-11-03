@@ -35,7 +35,7 @@ export async function authorize(
   }
   const session = ctx.sessionRepository.getById(sessionId);
 
-  if (!session || session.state !== "active") {
+  if (!session || session.state === "CLOSED") {
     // Constant-time compare against a dummy to avoid timing leak
     safeCompare(token, "0".repeat(64));
     void reply.status(401).send({ error: "Unauthorized", statusCode: 401 });
@@ -72,6 +72,7 @@ export async function sessionRoutes(
       id: session.id,
       ownerToken: session.ownerToken,
       uploadToken: session.uploadToken,
+      qrToken: session.rawQrToken,
       createdAt: session.createdAt,
     });
   });

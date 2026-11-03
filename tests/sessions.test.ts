@@ -45,7 +45,7 @@ describe("sessions", () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.id).toBe(session.id);
-      expect(body.state).toBe("active");
+      expect(body.state).toBe("WAITING");
     });
   });
 

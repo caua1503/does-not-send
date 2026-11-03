@@ -25,7 +25,7 @@ export async function websocketRoutes(
       // Authenticate: owner token only
       const session = ctx.sessionRepository.getById(sessionId);
       const isValid =
-        session && session.state === "active" && safeCompare(token, session.ownerToken);
+        session && session.state !== "CLOSED" && safeCompare(token, session.ownerToken);
 
       if (!isValid) {
         // Constant-time dummy compare to avoid timing leak when no session

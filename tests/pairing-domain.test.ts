@@ -46,18 +46,20 @@ describe("pairing domain", () => {
         ownerToken: "token-owner",
         uploadToken: "token-upload",
         shortId: "A7K92F",
-        qrToken: "qr-single-use-token",
+        qrTokenHash: "hash-of-qr-token",
+        qrConsumedAt: null,
         isPaired: false,
         pairedAt: undefined,
         phoneDisconnectedAt: undefined,
-        state: "active",
+        state: "WAITING",
         createdAt: "2026-10-30T12:00:00.000Z",
         lastActivity: "2026-10-30T12:00:00.000Z",
         files: [],
       };
 
       expect(session.shortId).toBe("A7K92F");
-      expect(session.qrToken).toBe("qr-single-use-token");
+      expect(session.qrTokenHash).toBe("hash-of-qr-token");
+      expect(session.qrConsumedAt).toBeNull();
       expect(session.isPaired).toBe(false);
       expect(session.pairedAt).toBeUndefined();
       expect(session.phoneDisconnectedAt).toBeUndefined();
@@ -65,14 +67,16 @@ describe("pairing domain", () => {
       // Paired state simulation
       const pairedSession: Session = {
         ...session,
-        qrToken: null,
+        qrConsumedAt: "2026-10-30T12:01:00.000Z",
         isPaired: true,
+        state: "PAIRED",
         pairedAt: "2026-10-30T12:01:00.000Z",
         phoneDisconnectedAt: "2026-10-30T12:05:00.000Z",
       };
 
-      expect(pairedSession.qrToken).toBeNull();
+      expect(pairedSession.qrConsumedAt).toBe("2026-10-30T12:01:00.000Z");
       expect(pairedSession.isPaired).toBe(true);
+      expect(pairedSession.state).toBe("PAIRED");
       expect(pairedSession.pairedAt).toBe("2026-10-30T12:01:00.000Z");
       expect(pairedSession.phoneDisconnectedAt).toBe("2026-10-30T12:05:00.000Z");
     });
@@ -86,9 +90,10 @@ describe("pairing domain", () => {
         ownerToken: "owner-1",
         uploadToken: "upload-1",
         shortId: "K92FA7",
-        qrToken: "qr-1",
+        qrTokenHash: "hash-1",
+        qrConsumedAt: null,
         isPaired: false,
-        state: "active",
+        state: "WAITING",
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
@@ -109,9 +114,10 @@ describe("pairing domain", () => {
         ownerToken: "owner-1",
         uploadToken: "upload-1",
         shortId: "ABCDEF",
-        qrToken: "qr-1",
+        qrTokenHash: "hash-1",
+        qrConsumedAt: null,
         isPaired: false,
-        state: "active",
+        state: "WAITING",
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
@@ -134,9 +140,10 @@ describe("pairing domain", () => {
         ownerToken: "owner-1",
         uploadToken: "upload-1",
         shortId: "AAAAAA",
-        qrToken: "qr-1",
+        qrTokenHash: "hash-1",
+        qrConsumedAt: null,
         isPaired: false,
-        state: "active",
+        state: "WAITING",
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
@@ -146,9 +153,10 @@ describe("pairing domain", () => {
         ownerToken: "owner-2",
         uploadToken: "upload-2",
         shortId: "BBBBBB",
-        qrToken: "qr-2",
+        qrTokenHash: "hash-2",
+        qrConsumedAt: "2026-10-30T12:01:00.000Z",
         isPaired: true,
-        state: "active",
+        state: "PAIRED",
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],
@@ -168,9 +176,10 @@ describe("pairing domain", () => {
         ownerToken: "owner-1",
         uploadToken: "upload-1",
         shortId: "DELETE",
-        qrToken: "qr-1",
+        qrTokenHash: "hash-1",
+        qrConsumedAt: null,
         isPaired: false,
-        state: "active",
+        state: "WAITING",
         createdAt: new Date().toISOString(),
         lastActivity: new Date().toISOString(),
         files: [],

@@ -36,7 +36,7 @@ export class SessionRepository {
   }
 
   getAllActive(): Session[] {
-    return this.getAll().filter((s) => s.state === "active");
+    return this.getAll().filter((s) => s.state !== "CLOSED");
   }
 
   getActiveIds(): Set<string> {

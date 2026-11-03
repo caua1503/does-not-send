@@ -1,6 +1,8 @@
 /** Core domain types */
 
-export type SessionState = "active" | "closed";
+import type { SessionState } from "./session/states.js";
+
+export type { SessionState } from "./session/states.js";
 export type FileState = "receiving" | "completed" | "failed";
 
 export interface SessionFile {
@@ -19,9 +21,10 @@ export interface Session {
   ownerToken: string;
   uploadToken: string;
   shortId: string;
-  qrToken: string | null;
+  qrTokenHash: string | null;
+  qrConsumedAt: string | null;
   isPaired: boolean;
-  pairedAt?: string;
+  pairedAt?: string | null;
   phoneDisconnectedAt?: string;
   state: SessionState;
   createdAt: string;
