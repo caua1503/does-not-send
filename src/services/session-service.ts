@@ -33,6 +33,7 @@ export class SessionService {
     const activeVisualIds = this.store.getActiveVisualIds();
     const visualId = generateVisualId(activeVisualIds);
 
+    const now = this.clock.now();
     const session: Session = {
       id: generateSessionId(),
       computerTokenHash: hashToken(rawComputerToken),
@@ -44,11 +45,11 @@ export class SessionService {
       isPaired: false,
       state: "WAITING",
       activeUploads: 0,
-      createdAt: new Date(this.clock.now()).toISOString(),
-      lastActivity: new Date(this.clock.now()).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      lastActivity: new Date(now).toISOString(),
       files: [],
       lastSeen: {
-        computer: null,
+        computer: now,
         phone: null,
       },
       phoneLostAt: null,
@@ -77,7 +78,13 @@ export class SessionService {
 
     const result = consumePairing(session, qrToken);
     if (result.ok) {
+      const now = this.clock.now();
       session.isPaired = true;
+      if (!session.lastSeen) {
+        session.lastSeen = { computer: null, phone: null };
+      }
+      session.lastSeen.phone = now;
+      session.phoneLostAt = null;
       this.store.update(session);
       this.touchActivity(id);
     }

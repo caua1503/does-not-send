@@ -404,13 +404,13 @@ describe("Parte 3: Presence and Sweeper", () => {
     };
     store.create(session);
 
-    // Call 1
-    await expect(store.closeSession(session.id, "first_close")).resolves.not.toThrow();
+    // Call 1 — deve resolver sem rejeitar
+    await store.closeSession(session.id, "first_close");
     expect(store.getById(session.id)!.state).toBe("CLOSED");
     expect(store.getById(session.id)!.closedReason).toBe("first_close");
 
-    // Call 2
-    await expect(store.closeSession(session.id, "second_close")).resolves.not.toThrow();
+    // Call 2 — idempotente: não altera closedReason
+    await store.closeSession(session.id, "second_close");
     expect(store.getById(session.id)!.state).toBe("CLOSED");
     expect(store.getById(session.id)!.closedReason).toBe("first_close");
   });
