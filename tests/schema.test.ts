@@ -12,24 +12,17 @@ process.env.DATABASE_URL =
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { sql } from "../src/db/db.js";
-import { runMigrations, loadMigrationsFromDisk } from "../src/db/migrations.js";
-import { randomBytes } from "node:crypto";
+import { setupTestSchema, teardownTestSchema } from "./db-helpers.js";
 
 describe("Schema Migration 001", () => {
   let testSchema: string;
 
   beforeAll(async () => {
-    testSchema = `test_${randomBytes(8).toString("hex")}`;
-    await sql.unsafe(`CREATE SCHEMA ${testSchema}`);
-    await sql.unsafe(`SET search_path TO ${testSchema}`);
-
-    // Aplicar migrations
-    const migrations = await loadMigrationsFromDisk("migrations");
-    await runMigrations(migrations, testSchema);
+    testSchema = await setupTestSchema();
   });
 
   afterAll(async () => {
-    await sql.unsafe(`DROP SCHEMA IF EXISTS ${testSchema} CASCADE`);
+    await teardownTestSchema(testSchema);
   });
 
   test("tabelas sessions, transfers, events existem", async () => {
