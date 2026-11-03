@@ -12,6 +12,7 @@
     "start": "bun --bun run src/server.ts",
     "build:web": "cd web && bun run build",
     "test": "bun --bun vitest run",
+    "test:db": "bun --bun vitest run db-connection.test.ts migrations.test.ts",
     "test:web": "cd web && bun run test",
     "test:watch": "bun --bun vitest",
     "lint": "eslint src/ tests/",
