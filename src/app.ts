@@ -83,6 +83,12 @@ export async function buildApp(
     clock,
     tempDir: config.tempDir,
     sessionIdleTimeout: config.sessionIdleTimeout,
+    timingConfig: {
+      heartbeatTimeoutMs: config.heartbeatTimeoutMs,
+      computerGraceMs: config.computerGraceMs,
+      phoneGraceMs: config.phoneGraceMs,
+      wsAuthTimeoutMs: config.wsAuthTimeoutMs,
+    },
   });
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore);

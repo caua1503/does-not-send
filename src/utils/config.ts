@@ -9,6 +9,10 @@ export interface Config {
   sessionIdleTimeout: number;
   allowedOrigins: string[];
   publicBaseUrl: string;
+  heartbeatTimeoutMs: number;
+  computerGraceMs: number;
+  phoneGraceMs: number;
+  wsAuthTimeoutMs: number;
 }
 
 function requireEnv(name: string): string {
@@ -49,6 +53,22 @@ export function loadConfig(): Config {
   const allowedOriginsRaw = optionalEnv("ALLOWED_ORIGINS", "*");
   const allowedOrigins = allowedOriginsRaw.split(",").map((s) => s.trim());
   const publicBaseUrl = requireEnv("PUBLIC_BASE_URL");
+  const heartbeatTimeoutMs = parsePositiveInt(
+    "HEARTBEAT_TIMEOUT_MS",
+    optionalEnv("HEARTBEAT_TIMEOUT_MS", "25000"),
+  );
+  const computerGraceMs = parsePositiveInt(
+    "COMPUTER_GRACE_MS",
+    optionalEnv("COMPUTER_GRACE_MS", "30000"),
+  );
+  const phoneGraceMs = parsePositiveInt(
+    "PHONE_GRACE_MS",
+    optionalEnv("PHONE_GRACE_MS", "30000"),
+  );
+  const wsAuthTimeoutMs = parsePositiveInt(
+    "WS_AUTH_TIMEOUT_MS",
+    optionalEnv("WS_AUTH_TIMEOUT_MS", "5000"),
+  );
 
   return {
     host,
@@ -59,5 +79,9 @@ export function loadConfig(): Config {
     sessionIdleTimeout,
     allowedOrigins,
     publicBaseUrl,
+    heartbeatTimeoutMs,
+    computerGraceMs,
+    phoneGraceMs,
+    wsAuthTimeoutMs,
   };
 }

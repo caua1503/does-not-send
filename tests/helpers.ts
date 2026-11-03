@@ -51,6 +51,10 @@ export async function createTestApp(
     sessionIdleTimeout: 60_000,
     allowedOrigins: ["*"],
     publicBaseUrl: "http://localhost:3000",
+    heartbeatTimeoutMs: 25_000,
+    computerGraceMs: 30_000,
+    phoneGraceMs: 30_000,
+    wsAuthTimeoutMs: 5_000,
     ...overrides,
   };
 
