@@ -13,11 +13,24 @@ export class SessionRepository {
 
   getByShortId(shortId: string): Session | undefined {
     for (const session of this.sessions.values()) {
-      if (session.shortId === shortId) {
+      if (session.shortId === shortId || session.visualId === shortId) {
         return session;
       }
     }
     return undefined;
+  }
+
+  getByVisualId(visualId: string): Session | undefined {
+    return this.getByShortId(visualId);
+  }
+
+  getActiveVisualIds(): Set<string> {
+    const set = new Set<string>();
+    for (const session of this.getAllActive()) {
+      if (session.visualId) set.add(session.visualId);
+      if (session.shortId) set.add(session.shortId);
+    }
+    return set;
   }
 
   update(session: Session): void {

@@ -60,6 +60,20 @@ describe("consumePairing", () => {
     expect(session.pairedAt).not.toBeNull();
   });
 
+  it("pareamento devolve phoneCredential e ela nunca é armazenada pura", () => {
+    const raw = generateQrToken();
+    const session = makeSession({ qrTokenHash: hashToken(raw) });
+
+    const result = consumePairing(session, raw);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(typeof result.phoneCredential).toBe("string");
+      expect(result.phoneCredential.length).toBeGreaterThanOrEqual(40);
+      expect(JSON.stringify(session)).not.toContain(result.phoneCredential);
+      expect((session as any).phoneCredentialHash).toBe(hashToken(result.phoneCredential));
+    }
+  });
+
   it("segundo telefone com o mesmo QR é recusado (ALREADY_CONSUMED)", () => {
     const raw = generateQrToken();
     const session = makeSession({ qrTokenHash: hashToken(raw) });

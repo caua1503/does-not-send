@@ -18,8 +18,11 @@ export interface SessionFile {
 
 export interface Session {
   id: string;
-  ownerToken: string;
-  uploadToken: string;
+  computerTokenHash: string;
+  phoneCredentialHash: string | null;
+  ownerToken?: string;
+  uploadToken?: string;
+  visualId: string;
   shortId: string;
   qrTokenHash: string | null;
   qrConsumedAt: string | null;
@@ -27,6 +30,7 @@ export interface Session {
   pairedAt?: string | null;
   phoneDisconnectedAt?: string;
   state: SessionState;
+  activeUploads: number;
   createdAt: string;
   lastActivity: string;
   files: SessionFile[];

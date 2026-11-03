@@ -69,15 +69,33 @@ export async function cleanupTestApp(ctx: TestContext): Promise<void> {
 export interface SessionTokens {
   id: string;
   ownerToken: string;
+  computerToken?: string;
   uploadToken: string;
+  qrToken?: string;
+  visualId?: string;
 }
 
-export async function createSession(app: FastifyInstance): Promise<SessionTokens> {
+export async function createSession(app: FastifyInstance, autoPair = true): Promise<SessionTokens> {
   const res = await app.inject({
     method: "POST",
     url: "/api/sessions",
   });
-  return res.json() as SessionTokens;
+  const data = res.json() as SessionTokens;
+
+  if (autoPair && data.qrToken) {
+    const pairRes = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${data.id}/pair`,
+      payload: { qrToken: data.qrToken },
+    });
+    if (pairRes.statusCode === 200) {
+      const pairJson = pairRes.json() as { phoneCredential: string };
+      data.uploadToken = pairJson.phoneCredential;
+      delete data.qrToken;
+    }
+  }
+
+  return data;
 }
 
 /** Upload a single file via multipart, returns parsed JSON result */
