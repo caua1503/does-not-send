@@ -16,7 +16,7 @@ describe("db-connection", () => {
     
     expect(result).toBeDefined();
     expect(result.length).toBe(1);
-    expect(result[0].value).toBe(1);
+    expect(result[0]?.value).toBe(1);
   });
 
   test("fecha conexão corretamente", async () => {

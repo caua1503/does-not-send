@@ -51,7 +51,7 @@ export async function cleanupAllTestSchemas(): Promise<void> {
   `);
 
   for (const row of schemas) {
-    const schemaName = (row as { schema_name: string }).schema_name;
+    const schemaName = (row as unknown as { schema_name: string }).schema_name;
     await sql.unsafe(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`);
   }
 }

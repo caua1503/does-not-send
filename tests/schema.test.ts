@@ -161,7 +161,8 @@ describe("Schema Migration 001", () => {
       SELECT session_id FROM ${testSchema}.events WHERE type = 'created'
     `);
     expect(events.length).toBeGreaterThan(0);
-    expect(events[0].session_id).toBeNull(); // SET NULL funcionou
+    const firstEvent = events[0] as unknown as { session_id: string | null };
+    expect(firstEvent.session_id).toBeNull(); // SET NULL funcionou
   });
 
   test("índices existem", async () => {
