@@ -53,12 +53,34 @@ describe("Schema Migration 001", () => {
       columns.map((c: any) => [c.column_name, { type: c.data_type, nullable: c.is_nullable }]),
     );
 
+    // IDs
     expect(colMap.get("id")).toEqual({ type: "uuid", nullable: "NO" });
     expect(colMap.get("visual_id")).toEqual({ type: "text", nullable: "NO" });
+    expect(colMap.get("short_id")).toEqual({ type: "text", nullable: "NO" });
+    
+    // Network
     expect(colMap.get("computer_ip")).toEqual({ type: "text", nullable: "NO" });
     expect(colMap.get("phone_ip")).toEqual({ type: "text", nullable: "YES" });
+    
+    // Auth hashes
+    expect(colMap.get("computer_token_hash")).toEqual({ type: "text", nullable: "NO" });
+    expect(colMap.get("phone_credential_hash")).toEqual({ type: "text", nullable: "YES" });
+    expect(colMap.get("qr_token_hash")).toEqual({ type: "text", nullable: "YES" });
+    
+    // State
     expect(colMap.get("state")).toEqual({ type: "text", nullable: "NO" });
+    
+    // Timestamps
     expect(colMap.get("created_at")).toMatchObject({ type: "timestamp with time zone" });
+    expect(colMap.get("last_activity")).toMatchObject({ type: "timestamp with time zone" });
+    expect(colMap.get("paired_at")).toMatchObject({ type: "timestamp with time zone", nullable: "YES" });
+    
+    // Heartbeat tracking
+    expect(colMap.get("last_seen_computer")?.type).toBe("bigint");
+    expect(colMap.get("last_seen_phone")?.type).toBe("bigint");
+    
+    // Counters
+    expect(colMap.get("active_uploads")?.type).toBe("integer");
     expect(colMap.get("files_count")?.type).toBe("integer");
     expect(colMap.get("bytes_total")?.type).toBe("bigint");
   });
@@ -77,8 +99,12 @@ describe("Schema Migration 001", () => {
     // Validar CASCADE: inserir session, inserir transfer, deletar session → transfer deletada
     const sessionId = "550e8400-e29b-41d4-a716-446655440000";
     await sql.unsafe(`
-      INSERT INTO ${testSchema}.sessions (id, visual_id, computer_ip, state)
-      VALUES ('${sessionId}', 'ABC123', '192.168.1.1', 'WAITING')
+      INSERT INTO ${testSchema}.sessions (
+        id, visual_id, short_id, computer_ip, computer_token_hash, state
+      )
+      VALUES (
+        '${sessionId}', 'ABC123', 'ABC123', '192.168.1.1', 'hash123', 'WAITING'
+      )
     `);
 
     const transferId = "660e8400-e29b-41d4-a716-446655440001";
@@ -101,8 +127,12 @@ describe("Schema Migration 001", () => {
     // Valor válido
     await expect(
       sql.unsafe(`
-        INSERT INTO ${testSchema}.sessions (id, visual_id, computer_ip, state)
-        VALUES ('${sessionId}', 'XYZ789', '192.168.1.3', 'PAIRED')
+        INSERT INTO ${testSchema}.sessions (
+          id, visual_id, short_id, computer_ip, computer_token_hash, state
+        )
+        VALUES (
+          '${sessionId}', 'XYZ789', 'XYZ789', '192.168.1.3', 'hash456', 'PAIRED'
+        )
       `),
     ).resolves.not.toThrow();
 
@@ -110,8 +140,12 @@ describe("Schema Migration 001", () => {
     const invalidSessionId = "880e8400-e29b-41d4-a716-446655440003";
     await expect(
       sql.unsafe(`
-        INSERT INTO ${testSchema}.sessions (id, visual_id, computer_ip, state)
-        VALUES ('${invalidSessionId}', 'BAD999', '192.168.1.4', 'INVALID_STATE')
+        INSERT INTO ${testSchema}.sessions (
+          id, visual_id, short_id, computer_ip, computer_token_hash, state
+        )
+        VALUES (
+          '${invalidSessionId}', 'BAD999', 'BAD999', '192.168.1.4', 'hash789', 'INVALID_STATE'
+        )
       `),
     ).rejects.toThrow();
   });
@@ -119,8 +153,12 @@ describe("Schema Migration 001", () => {
   test("CHECK constraint: transfers.category valores válidos", async () => {
     const sessionId = "990e8400-e29b-41d4-a716-446655440004";
     await sql.unsafe(`
-      INSERT INTO ${testSchema}.sessions (id, visual_id, computer_ip, state)
-      VALUES ('${sessionId}', 'CAT001', '192.168.1.5', 'PAIRED')
+      INSERT INTO ${testSchema}.sessions (
+        id, visual_id, short_id, computer_ip, computer_token_hash, state
+      )
+      VALUES (
+        '${sessionId}', 'CAT001', 'CAT001', '192.168.1.5', 'hashcat', 'PAIRED'
+      )
     `);
 
     const transferId = "aa0e8400-e29b-41d4-a716-446655440005";
@@ -146,8 +184,12 @@ describe("Schema Migration 001", () => {
   test("eventos: FK session_id SET NULL", async () => {
     const sessionId = "cc0e8400-e29b-41d4-a716-446655440007";
     await sql.unsafe(`
-      INSERT INTO ${testSchema}.sessions (id, visual_id, computer_ip, state)
-      VALUES ('${sessionId}', 'EVT123', '192.168.1.8', 'WAITING')
+      INSERT INTO ${testSchema}.sessions (
+        id, visual_id, short_id, computer_ip, computer_token_hash, state
+      )
+      VALUES (
+        '${sessionId}', 'EVT123', 'EVT123', '192.168.1.8', 'hashevt', 'WAITING'
+      )
     `);
 
     await sql.unsafe(`
@@ -180,6 +222,8 @@ describe("Schema Migration 001", () => {
     expect(indexNames).toContain("idx_sessions_created_at");
     expect(indexNames).toContain("idx_sessions_computer_ip");
     expect(indexNames).toContain("idx_sessions_visual_id");
+    expect(indexNames).toContain("idx_sessions_short_id");
+    expect(indexNames).toContain("idx_sessions_state");
 
     // Transfers
     expect(indexNames).toContain("idx_transfers_session_id");

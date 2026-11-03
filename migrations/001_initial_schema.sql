@@ -5,17 +5,38 @@
 CREATE TABLE sessions (
   id UUID PRIMARY KEY,
   visual_id TEXT NOT NULL,
+  short_id TEXT NOT NULL,
   computer_ip TEXT NOT NULL,
   phone_ip TEXT,
   ua_summary TEXT,
+  
+  -- Authentication (hashes stored, cleared on close)
+  computer_token_hash TEXT NOT NULL,
+  phone_credential_hash TEXT,
+  qr_token_hash TEXT,
+  qr_consumed_at TIMESTAMPTZ,
+  
+  -- State machine
   state TEXT NOT NULL CHECK (state IN ('WAITING', 'PAIRED', 'TRANSFERRING', 'DISCONNECTED', 'CLOSED')),
+  
+  -- Timestamps
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   paired_at TIMESTAMPTZ,
+  last_activity TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ,
   close_reason TEXT CHECK (
     close_reason IS NULL OR 
-    close_reason IN ('computer_closed', 'computer_lost', 'phone_lost', 'expired', 'server_restart')
+    close_reason IN ('computer_closed', 'computer_lost', 'phone_lost', 'expired', 'server_restart', 'idle_timeout')
   ),
+  
+  -- Heartbeat tracking (unix epoch ms)
+  last_seen_computer BIGINT,
+  last_seen_phone BIGINT,
+  phone_lost_at BIGINT,
+  computer_lost_at BIGINT,
+  
+  -- Counters
+  active_uploads INTEGER NOT NULL DEFAULT 0,
   files_count INTEGER NOT NULL DEFAULT 0,
   bytes_total BIGINT NOT NULL DEFAULT 0
 );
@@ -65,8 +86,10 @@ CREATE TABLE events (
 -- Indexes: Sessions
 CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 CREATE INDEX idx_sessions_computer_ip ON sessions(computer_ip);
-CREATE INDEX idx_sessions_phone_ip ON sessions(phone_ip);
+CREATE INDEX idx_sessions_phone_ip ON sessions(phone_ip) WHERE phone_ip IS NOT NULL;
 CREATE INDEX idx_sessions_visual_id ON sessions(visual_id);
+CREATE INDEX idx_sessions_short_id ON sessions(short_id);
+CREATE INDEX idx_sessions_state ON sessions(state) WHERE state != 'CLOSED';
 
 -- Indexes: Transfers
 CREATE INDEX idx_transfers_started_at ON transfers(started_at);
