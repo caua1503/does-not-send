@@ -1,13 +1,9 @@
 -- Migration 002: Recording Schema
--- Ajusta CHECK de events.type para eventos de gravação (sem remover colunas ainda)
+-- Placeholder: nenhuma mudança estrutural necessária ainda
+-- O sistema de gravação usa tabelas existentes (sessions, transfers, events) sem alterações no schema
 
--- 1. Ajustar CHECK constraint de events.type para incluir novos tipos
-ALTER TABLE events DROP CONSTRAINT IF EXISTS events_type_check;
-ALTER TABLE events ADD CONSTRAINT events_type_check CHECK (
-  type IN (
-    'created', 'paired', 'pairing_refused', 'qr_reuse_blocked', 
-    'state_changed', 'phone_lost', 'phone_back', 
-    'transfer_start', 'transfer_end', 'closed'
-  )
-);
+-- Este arquivo existe para manter a sequência de migrações (001, 002, ...).
+-- Futuras mudanças (remoção de colunas state/files_count/bytes_total de sessions,
+-- ajuste de CHECK constraints) serão aplicadas quando o domínio migrar para não depender delas.
 
+SELECT 1; -- no-op SQL válido

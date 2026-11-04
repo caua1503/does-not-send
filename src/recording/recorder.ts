@@ -82,19 +82,15 @@ export class PostgresRecorder implements SessionRecorder {
     const deadline = Date.now() + 5000;
     while (this.queue.length > 0 && Date.now() < deadline) {
       if (!this.processing) {
-        // Lançar processamento sem await, mas aguardar com race contra deadline
-        const processPromise = this.processBatch();
-        const timeoutPromise = new Promise<void>((resolve) => {
-          const remaining = deadline - Date.now();
-          setTimeout(resolve, Math.max(0, remaining));
-        });
-        await Promise.race([processPromise, timeoutPromise]);
-        
-        if (Date.now() >= deadline) break;
-      } else {
-        await Bun.sleep(50);
-        if (Date.now() >= deadline) break;
+        void this.processBatch(); // Start processing without awaiting
       }
+      
+      // Wait for batch completion or deadline
+      while (this.processing && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
+      
+      if (Date.now() >= deadline) break;
     }
   }
 
