@@ -14,12 +14,15 @@
     "test": "bun --bun vitest run",
     "test:web": "cd web && bun run test",
     "test:watch": "bun --bun vitest",
+    "test:db": "bun --bun vitest run --testPathPattern='tests/.+\\.test\\.ts' --grep='@db'",
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "cd web && bun run typecheck",
     "smoke": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost} bun run scripts/smoke.ts",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts'"
+    "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts'",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun run src/db/migrate.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",
