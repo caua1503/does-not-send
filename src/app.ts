@@ -20,6 +20,8 @@ import { SessionService } from "./services/session-service.js";
 import { FileService } from "./services/file-service.js";
 import { cleanOrphans } from "./services/cleanup-service.js";
 import { type Clock, SystemClock } from "./session/clock.js";
+import { getDbClient, type DbClient } from "./db/client.js";
+import { MigrationRunner } from "./db/migrate.js";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -101,6 +103,8 @@ export interface AppContext {
   sessionRepository: SessionStore;
   sessionService: SessionService;
   fileService: FileService;
+  db?: DbClient;
+  migrationRunner?: MigrationRunner;
 }
 
 export interface BuildAppOptions {
@@ -179,6 +183,16 @@ export async function buildApp(
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore);
 
+  let db: DbClient | undefined;
+  let migrationRunner: MigrationRunner | undefined;
+
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    db = getDbClient(databaseUrl);
+    migrationRunner = new MigrationRunner({ databaseUrl, logger: app.log });
+    void migrationRunner.start(); // Background, non-blocking
+  }
+
   const ctx: AppContext = {
     config,
     clock,
@@ -187,6 +201,8 @@ export async function buildApp(
     sessionRepository: sessionStore,
     sessionService,
     fileService,
+    db,
+    migrationRunner,
   };
 
   if (options?.startSweeper ?? true) {
@@ -195,6 +211,8 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
+    if (migrationRunner) migrationRunner.stop();
+    if (db) await db.close();
   });
 
   // Clean orphan files from previous runs
