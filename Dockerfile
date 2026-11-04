@@ -23,6 +23,7 @@ RUN bun install --frozen-lockfile --production
 
 # Copiar backend e artefatos compilados do frontend
 COPY src/ ./src/
+COPY drizzle/ ./drizzle/
 COPY tsconfig.json ./
 COPY --from=web-builder /app/web/dist ./web/dist
 

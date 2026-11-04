@@ -1,67 +1,120 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
+import { SQL } from "bun";
+import { drizzle } from "drizzle-orm/bun-sql";
+import { migrate } from "drizzle-orm/bun-sql/migrator";
 
-interface MigrationRunnerOptions {
-  databaseUrl: string;
-  logger?: { info(msg: string): void; error(msg: string, err?: Error): void };
-  onReady?: () => void;
+const INITIAL_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30_000;
+const CONNECTION_TIMEOUT_S = 2;
+
+export interface MigrationLogger {
+  info(msg: string): void;
+  error(msg: string): void;
+}
+
+export interface MigrationRunnerOptions {
+  migrationsFolder?: string;
+  logger?: MigrationLogger;
+  /** Initial retry delay; defaults to 1s and doubles up to 30s. */
+  initialDelayMs?: number;
 }
 
 export class MigrationRunner {
-  private databaseUrl: string;
-  private logger: { info(msg: string): void; error(msg: string, err?: Error): void };
-  private onReady?: () => void;
-  private cancelToken: { cancelled: boolean } = { cancelled: false };
+  private readonly databaseUrl: string;
+  private readonly migrationsFolder: string;
+  private readonly logger: MigrationLogger;
+  private readonly initialDelayMs: number;
+  private readonly abort = new AbortController();
   private ready = false;
+  private finished: Promise<void> | null = null;
 
-  constructor(options: MigrationRunnerOptions) {
-    this.databaseUrl = options.databaseUrl;
+  constructor(databaseUrl: string, options: MigrationRunnerOptions = {}) {
+    this.databaseUrl = databaseUrl;
+    this.migrationsFolder = options.migrationsFolder ?? "./drizzle";
     this.logger = options.logger ?? console;
-    this.onReady = options.onReady;
+    this.initialDelayMs = options.initialDelayMs ?? INITIAL_DELAY_MS;
   }
 
-  async start(): Promise<void> {
-    let delayMs = 1000;
-    const maxDelay = 30_000;
-
-    while (!this.cancelToken.cancelled) {
-      try {
-        const sql = postgres(this.databaseUrl, { max: 1, connect_timeout: 5 });
-        const db = drizzle(sql);
-
-        await migrate(db, { migrationsFolder: "./drizzle" });
-
-        await sql.end({ timeout: 1 });
-
-        this.ready = true;
-        this.logger.info("Database migrations completed successfully");
-        if (this.onReady) this.onReady();
-        return;
-      } catch (err) {
-        if (this.cancelToken.cancelled) return;
-
-        this.logger.error(
-          `Migration failed, retrying in ${delayMs}ms...`,
-          err instanceof Error ? err : undefined,
-        );
-
-        await Bun.sleep(delayMs);
-        delayMs = Math.min(delayMs * 2, maxDelay);
-      }
-    }
+  /** Starts the background loop. Never rejects while not cancelled. */
+  start(): void {
+    if (this.finished) return;
+    this.finished = this.run();
   }
 
-  stop(): void {
-    this.cancelToken.cancelled = true;
+  /** Cancels retries and in-flight attempts; resolves once the loop has exited. */
+  async stop(): Promise<void> {
+    this.abort.abort();
+    await this.finished;
   }
 
   isReady(): boolean {
     return this.ready;
   }
+
+  private async run(): Promise<void> {
+    const { signal } = this.abort;
+    let delayMs = this.initialDelayMs;
+
+    while (!signal.aborted) {
+      try {
+        await this.attempt();
+        this.ready = true;
+        this.logger.info("Database migrations applied");
+        return;
+      } catch (err) {
+        if (signal.aborted) return;
+        // Only the message: driver errors may embed the connection string.
+        const message = err instanceof Error ? err.message : "unknown error";
+        this.logger.error(`Database migration failed, retrying in ${delayMs}ms: ${message}`);
+      }
+
+      await this.sleep(delayMs, signal);
+      delayMs = Math.min(delayMs * 2, MAX_DELAY_MS);
+    }
+  }
+
+  private async attempt(): Promise<void> {
+    const { signal } = this.abort;
+    const sql = new SQL(this.databaseUrl, {
+      max: 1,
+      connectionTimeout: CONNECTION_TIMEOUT_S,
+      // No statement_timeout: DDL and the migrator's advisory lock must not be cut short.
+      connection: { application_name: "does-not-send-migrator" },
+    });
+
+    try {
+      if (signal.aborted) return;
+      // Drizzle has no abort support, so bound the attempt here instead.
+      await Promise.race([
+        migrate(drizzle(sql), { migrationsFolder: this.migrationsFolder }),
+        new Promise<never>((_, reject) => {
+          const onAbort = (): void => reject(new Error("migration attempt cancelled"));
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+    } finally {
+      // Without force(), close() waits for an in-flight migration to finish.
+      void sql.close({ timeout: 0 });
+    }
+  }
+
+  private sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) return resolve();
+      const timer = setTimeout(resolve, ms);
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+  }
 }
 
-// CLI script: run migrations once and exit
+// CLI: apply migrations once and exit (used by `bun run db:migrate`).
 if (import.meta.main) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -69,13 +122,19 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const runner = new MigrationRunner({ databaseUrl, logger: console });
   try {
-    await runner.start();
-    console.log("✅ Migrations applied successfully");
+    const sql = new SQL(databaseUrl, { max: 1, connectionTimeout: 5 });
+    try {
+      await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
+    } finally {
+      await sql.close({ timeout: 5 });
+    }
+    console.log("Migrations applied successfully");
     process.exit(0);
   } catch (err) {
-    console.error("❌ Migration failed:", err);
+    console.error(
+      `Migration failed: ${err instanceof Error ? err.message : "unknown error"}`,
+    );
     process.exit(1);
   }
 }

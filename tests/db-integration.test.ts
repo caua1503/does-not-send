@@ -1,81 +1,90 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { SQL } from "bun";
+import { eq } from "drizzle-orm";
+import { MigrationRunner } from "../src/db/migrate.js";
 import { sessions, transfers, events } from "../src/db/schema.js";
+import { createDbClient, type DbClient } from "../src/db/client.js";
+
+const databaseUrl = process.env.TEST_DATABASE_URL;
 
 // @db
-describe("Database integration", { skip: !process.env.TEST_DATABASE_URL }, () => {
-  const dbUrl = process.env.TEST_DATABASE_URL!;
-  let sql: ReturnType<typeof postgres>;
+describe.skipIf(!databaseUrl)("Database integration", () => {
+  let client: DbClient;
+  let sessionId: string;
 
   beforeAll(async () => {
-    sql = postgres(dbUrl, { max: 1 });
-    const db = drizzle(sql);
+    const setup = new SQL(databaseUrl!, { max: 1 });
+    try {
+      await setup`DROP SCHEMA IF EXISTS public CASCADE`;
+      await setup`CREATE SCHEMA public`;
+    } finally {
+      await setup.close({ timeout: 5 });
+    }
 
-    // Run migrations on empty database
-    await migrate(db, { migrationsFolder: "./drizzle" });
+    const runner = new MigrationRunner(databaseUrl!, {
+      logger: { info: () => {}, error: () => {} },
+    });
+    runner.start();
+    const deadline = Date.now() + 15_000;
+    while (!runner.isReady() && Date.now() < deadline) await Bun.sleep(50);
+    await runner.stop();
+    expect(runner.isReady()).toBe(true);
+
+    client = createDbClient(databaseUrl!);
   });
 
   afterAll(async () => {
-    await sql.end({ timeout: 1 });
+    await client?.close();
   });
 
-  test("inserts and selects session", async () => {
-    const db = drizzle(sql);
-    const sessionId = `test-${Date.now()}`;
-
-    await db.insert(sessions).values({
+  test("schema is usable by the writer pool (insert + select on every table)", async () => {
+    sessionId = crypto.randomUUID();
+    await client.writer.insert(sessions).values({
       id: sessionId,
       visualId: "ABC-123",
       computerIp: "192.168.1.1",
-      phoneIp: "192.168.1.2",
-      pairedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     });
-
-    const result = await db.select().from(sessions).where(sessions.id.eq(sessionId));
-    expect(result).toHaveLength(1);
-    expect(result[0].visualId).toBe("ABC-123");
-  });
-
-  test("inserts and selects transfer", async () => {
-    const db = drizzle(sql);
-    const sessionId = `test-${Date.now()}`;
-    const transferId = `transfer-${Date.now()}`;
-
-    await db.insert(sessions).values({
-      id: sessionId,
-      visualId: "XYZ-456",
-    });
-
-    await db.insert(transfers).values({
-      id: transferId,
+    await client.writer.insert(transfers).values({
+      id: crypto.randomUUID(),
       sessionId,
-      name: "test.pdf",
+      name: "doc.pdf",
       extension: "pdf",
       mime: "application/pdf",
       category: "pdfs",
-      size: 1024,
+      size: 5_000_000_000, // beyond int4: exercises bigint mode "number"
       status: "completed",
+      startedAt: new Date().toISOString(),
+    });
+    await client.writer.insert(events).values({
+      type: "qr_reused",
+      ip: "127.0.0.1",
+      sessionId,
+      at: new Date().toISOString(),
     });
 
-    const result = await db.select().from(transfers).where(transfers.id.eq(transferId));
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("test.pdf");
-    expect(result[0].category).toBe("pdfs");
+    const [session] = await client.reader.select().from(sessions).where(eq(sessions.id, sessionId));
+    const transferRows = await client.reader
+      .select()
+      .from(transfers)
+      .where(eq(transfers.sessionId, sessionId));
+    const eventRows = await client.reader
+      .select()
+      .from(events)
+      .where(eq(events.sessionId, sessionId));
+
+    expect(session?.visualId).toBe("ABC-123");
+    expect(transferRows[0]?.size).toBe(5_000_000_000);
+    expect(typeof eventRows[0]?.id).toBe("number");
+    expect(eventRows[0]?.type).toBe("qr_reused");
   });
 
-  test("inserts and selects event", async () => {
-    const db = drizzle(sql);
-    const eventIp = `127.0.0.${Date.now() % 255}`;
-
-    await db.insert(events).values({
-      type: "qr_reused",
-      ip: eventIp,
-    });
-
-    const result = await db.select().from(events).where(events.ip.eq(eventIp));
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("qr_reused");
+  test("deleting a session cascades its transfers", async () => {
+    await client.writer.delete(sessions).where(eq(sessions.id, sessionId));
+    const orphanTransfers = await client.reader
+      .select()
+      .from(transfers)
+      .where(eq(transfers.sessionId, sessionId));
+    expect(orphanTransfers).toHaveLength(0);
   });
 });
