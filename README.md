@@ -115,6 +115,79 @@ docker compose down
 | `MAX_FILES_PER_SESSION`| `50` | Limite de arquivos por sessão |
 | `SESSION_IDLE_TIMEOUT` | `1800000` | Tempo sem atividade para autodestruição da sessão (ms) (padrão: 30 min) |
 | `ALLOWED_ORIGINS` | `*` | Origens aceitas pelo CORS (separadas por vírgula) |
+| `DATABASE_URL` | *Opcional* | URL do Postgres (`postgres://usuario:senha@host:5432/banco`). Sem ela o banco fica desligado e o app funciona igual |
+| `POSTGRES_PASSWORD` | — | Senha do usuário `app` no serviço `postgres` do Compose (somente ambiente/.env) |
+| `TEST_DATABASE_URL` | *Opcional* | Banco **dedicado** a testes (nome terminado em `_test`). Sem ela, os testes de integração são pulados |
+
+Credenciais nunca vão para o repositório: copie `.env.example` para `.env` (já no `.gitignore`) e troque a senha.
+
+---
+
+## Banco de Dados (Postgres + Drizzle)
+
+O Postgres é infraestrutura **best-effort**: o app sobe, atende requisições e transfere arquivos mesmo com o banco
+lento ou fora do ar. As migrações rodam em segundo plano no boot, com retry e backoff de 1s até 30s; o estado é
+consultado por `db.isReady()` no contexto do app. O serviço não publica porta por padrão (rede interna do Compose).
+
+### Subir apenas o banco
+
+```bash
+cp .env.example .env        # troque POSTGRES_PASSWORD
+docker compose up -d postgres
+docker compose ps           # aguarde o status (healthy)
+```
+
+O banco não é acessível a partir do host (sem porta publicada). Use o próprio contêiner:
+
+```bash
+docker compose exec postgres psql -U app -d doesnotsend
+```
+
+Para ferramentas gráficas ou um app rodando no host, crie um `docker-compose.override.yml` (não versionado):
+
+```yaml
+services:
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]
+```
+
+Para recriar do zero (apaga o volume):
+
+```bash
+docker compose down -v
+```
+
+### Migrações
+
+```bash
+# 1. Altere src/db/schema.ts e gere o SQL versionado em drizzle/
+bun run db:generate
+
+# 2. Aplique manualmente (fora do app; falha rápido se o banco estiver fora).
+#    DATABASE_URL vem do .env; com o banco só no Docker, rode dentro da rede do compose:
+docker compose run --rm \
+  -e DATABASE_URL=postgres://app:senha@postgres:5432/doesnotsend \
+  -v "$PWD/drizzle:/app/drizzle:ro" \
+  app bun run db:migrate
+```
+
+Em execução normal o app aplica as migrações pendentes sozinho no boot. Os arquivos `drizzle/*.sql` e
+`drizzle/meta/` são versionados — não edite o SQL gerado à mão.
+
+### Testes de banco
+
+```bash
+# Cria um banco de teste dedicado no serviço (uma vez)
+docker compose up -d postgres
+docker compose exec postgres psql -U app -d doesnotsend -c "CREATE DATABASE doesnotsend_test OWNER app"
+
+# Roda os testes de integração (o setup recria os schemas public e drizzle).
+# Requer o banco acessível do host (veja docker-compose.override.yml acima):
+TEST_DATABASE_URL=postgres://app:senha@localhost:5432/doesnotsend_test bun run test:db
+```
+
+Sem `TEST_DATABASE_URL`, `bun run test` e `bun run test:db` funcionam normalmente (integração é pulada).
+O setup recusa URLs que não terminem em `_test` para não apagar dados de outro banco.
 
 ---
 
