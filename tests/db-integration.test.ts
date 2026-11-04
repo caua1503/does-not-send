@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { MigrationRunner } from "../src/db/migrate.js";
 import { sessions, transfers, events } from "../src/db/schema.js";
 import { createDbClient, type DbClient } from "../src/db/client.js";
+import { buildApp } from "../src/app.js";
+import { loadConfig } from "../src/utils/config.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 // The suite drops the public schema, so refuse anything that is not clearly a test DB.
@@ -82,6 +84,23 @@ describe.skipIf(!isDedicatedTestDb)("Database integration @db", () => {
     expect(transferRows[0]?.size).toBe(5_000_000_000);
     expect(typeof eventRows[0]?.id).toBe("number");
     expect(eventRows[0]?.type).toBe("qr_reused");
+  });
+
+  test("@db app exposes db.isReady() true once migrations finish", async () => {
+    const originalUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.PUBLIC_BASE_URL ??= "http://localhost:3000";
+    const app = await buildApp(loadConfig(), { startSweeper: false });
+    try {
+      const ctx = (app as unknown as { ctx: { db?: { isReady(): boolean } } }).ctx;
+      const deadline = Date.now() + 15_000;
+      while (!ctx.db?.isReady() && Date.now() < deadline) await Bun.sleep(50);
+      expect(ctx.db?.isReady()).toBe(true);
+    } finally {
+      await app.close();
+      if (originalUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalUrl;
+    }
   });
 
   test("@db deleting a session cascades its transfers", async () => {

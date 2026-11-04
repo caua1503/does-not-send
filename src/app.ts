@@ -191,8 +191,9 @@ export async function buildApp(
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
     try {
-      const client = createDbClient(databaseUrl);
-      db = { ...client, isReady: () => migrationRunner?.isReady() ?? false };
+      db = Object.assign(createDbClient(databaseUrl), {
+        isReady: (): boolean => migrationRunner?.isReady() ?? false,
+      });
       migrationRunner = new MigrationRunner(databaseUrl, {
         logger: {
           info: (msg) => app.log.info(msg),
