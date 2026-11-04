@@ -5,6 +5,7 @@ export default defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://app:localdev@localhost:5432/doesnotsend",
+    // Only `db:migrate`/`db:push`/`db:studio` use this; `db:generate` works offline.
+    url: process.env.DATABASE_URL ?? "",
   },
 });
