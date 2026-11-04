@@ -198,9 +198,6 @@ Para rodar testes que requerem Postgres:
 ```bash
 # Com banco já rodando (docker compose up -d postgres)
 TEST_DATABASE_URL=postgres://doesnotsend:SUA_SENHA@localhost:5432/doesnotsend_test bun test db-connection.test.ts
-
-# Testes de migrações (ainda não implementado o runner)
-bun test migrations.test.ts
 ```
 
-**Nota sobre testes de migração:** Os testes em `tests/migrations.test.ts` estão escritos mas falham propositalmente até que o migration runner seja implementado em `src/db/migrations.ts`. Cada teste cria um schema isolado com RUID (Random Unique ID) e o descarta no `afterAll`.
+Cada suíte de teste cria seu próprio schema isolado e o descarta ao finalizar.
