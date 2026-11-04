@@ -20,6 +20,8 @@ import { SessionService } from "./services/session-service.js";
 import { FileService } from "./services/file-service.js";
 import { cleanOrphans } from "./services/cleanup-service.js";
 import { type Clock, SystemClock } from "./session/clock.js";
+import { createDbClient, type DbClient } from "./db/client.js";
+import { MigrationRunner } from "./db/migrate.js";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -101,6 +103,8 @@ export interface AppContext {
   sessionRepository: SessionStore;
   sessionService: SessionService;
   fileService: FileService;
+  db?: DbClient & { isReady(): boolean };
+  migrationRunner?: MigrationRunner;
 }
 
 export interface BuildAppOptions {
@@ -179,6 +183,31 @@ export async function buildApp(
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore);
 
+  let db: (DbClient & { isReady(): boolean }) | undefined;
+  let migrationRunner: MigrationRunner | undefined;
+
+  // Database is best-effort: a slow or down database must never block boot,
+  // requests or file transfers.
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    try {
+      db = Object.assign(createDbClient(databaseUrl), {
+        isReady: (): boolean => migrationRunner?.isReady() ?? false,
+      });
+      migrationRunner = new MigrationRunner(databaseUrl, {
+        logger: {
+          info: (msg) => app.log.info(msg),
+          error: (msg) => app.log.error(msg),
+        },
+      });
+      migrationRunner.start();
+    } catch {
+      // Invalid URL or client construction failure: keep running without a DB.
+      db = undefined;
+      migrationRunner = undefined;
+    }
+  }
+
   const ctx: AppContext = {
     config,
     clock,
@@ -187,6 +216,8 @@ export async function buildApp(
     sessionRepository: sessionStore,
     sessionService,
     fileService,
+    db,
+    migrationRunner,
   };
 
   if (options?.startSweeper ?? true) {
@@ -195,6 +226,9 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
+    // Runner first: it owns its own connection and must stop opening new ones.
+    if (migrationRunner) await migrationRunner.stop();
+    if (db) await db.close();
   });
 
   // Clean orphan files from previous runs
