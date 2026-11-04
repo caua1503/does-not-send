@@ -18,7 +18,10 @@ export function errorHandler(
   };
 
   // Log full error server-side, send safe response to client
-  reply.log.error({ err: error, statusCode }, "Request error");
+  reply.log.error(
+    { err: { name: error.name, message: error.message, code: error.code }, statusCode },
+    "Request error",
+  );
 
   void reply.status(statusCode).send(response);
 }

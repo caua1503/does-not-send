@@ -1,4 +1,10 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import type { Writable } from "node:stream";
+import Fastify, {
+  LogController,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import { type Config } from "./utils/config.js";
@@ -15,6 +21,78 @@ import { FileService } from "./services/file-service.js";
 import { cleanOrphans } from "./services/cleanup-service.js";
 import { type Clock, SystemClock } from "./session/clock.js";
 
+const MAX_LOGGED_URL_LENGTH = 2048;
+
+/** Query strings carry qrToken/token, and request headers carry Authorization,
+ *  so only the path (clipped) is ever logged. */
+function loggablePath(request: FastifyRequest): string {
+  const queryIndex = request.url.indexOf("?");
+  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  return path.length > MAX_LOGGED_URL_LENGTH ? path.slice(0, MAX_LOGGED_URL_LENGTH) : path;
+}
+
+function loggableError(
+  error: unknown,
+): { name: string; message: string; code?: string } | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return {
+    name: error.name,
+    message: error.message,
+    ...(typeof code === "string" ? { code } : {}),
+  };
+}
+
+class RedactedLogController extends LogController {
+  override incomingRequest(request: FastifyRequest): void {
+    request.log.info(
+      { req: { method: request.method, url: loggablePath(request) } },
+      "incoming request",
+    );
+  }
+
+  override requestCompleted(
+    error: Error | null | undefined,
+    request: FastifyRequest,
+    _reply: FastifyReply,
+  ): void {
+    if (error) {
+      request.log.error({ err: loggableError(error) }, "request errored");
+      return;
+    }
+    request.log.info(
+      { req: { method: request.method, url: loggablePath(request) } },
+      "request completed",
+    );
+  }
+
+  override defaultErrorLog(error: Error, request: FastifyRequest): void {
+    request.log.error(
+      { req: { method: request.method, url: loggablePath(request) }, err: loggableError(error) },
+      "request errored",
+    );
+  }
+
+  override streamError(error: Error, request: FastifyRequest): void {
+    request.log.warn({ err: loggableError(error) }, "response stream error");
+  }
+
+  override routeNotFound(request: FastifyRequest): void {
+    request.log.info(
+      { req: { method: request.method, url: loggablePath(request) } },
+      "route not found",
+    );
+  }
+
+  override writeHeadError(error: Error, request: FastifyRequest): void {
+    request.log.warn({ err: loggableError(error) }, "failed to write error response headers");
+  }
+
+  override serializerError(error: Error, request: FastifyRequest, _reply: FastifyReply): void {
+    request.log.error({ err: loggableError(error) }, "response serializer failed");
+  }
+}
+
 export interface AppContext {
   config: Config;
   clock: Clock;
@@ -29,6 +107,7 @@ export interface BuildAppOptions {
   clock?: Clock;
   startSweeper?: boolean;
   sweeperInterval?: number;
+  loggerStream?: Writable;
 }
 
 export async function buildApp(
@@ -41,7 +120,9 @@ export async function buildApp(
     logger: {
       level: "info",
       transport: undefined, // structured JSON to stdout
+      stream: options?.loggerStream,
     },
+    logController: new RedactedLogController(),
     bodyLimit: 1048576, // 1MB for JSON bodies only; multipart handled separately
   });
 

@@ -4,6 +4,7 @@ import type { Config } from "../src/utils/config.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { Writable } from "node:stream";
 
 export function createMultipartPayload(
   files: Array<{ name: string; content: Buffer; filename: string; contentType?: string }>,
@@ -38,7 +39,7 @@ export interface TestContext {
 
 export async function createTestApp(
   overrides?: Partial<Config>,
-  options?: { clock?: Clock; startSweeper?: boolean },
+  options?: { clock?: Clock; startSweeper?: boolean; loggerStream?: Writable },
 ): Promise<TestContext> {
   const tempDir = await mkdtemp(join(tmpdir(), "dns-test-"));
 
@@ -67,6 +68,7 @@ export async function createTestApp(
     clock: options?.clock,
     startSweeper: options?.startSweeper ?? (options?.clock ? false : true),
     sweeperInterval,
+    loggerStream: options?.loggerStream,
   });
 
   return { app, config, tempDir };
