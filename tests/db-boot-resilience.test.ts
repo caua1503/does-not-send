@@ -3,6 +3,8 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/utils/config.js";
 import { MigrationRunner } from "../src/db/migrate.js";
 
+type Ctx = { db?: { isReady(): boolean } };
+
 // Port 1 is reserved and never accepts connections: deterministic retry failure.
 const UNREACHABLE_URL = "postgres://user:secret@127.0.0.1:1/nodb";
 
@@ -16,7 +18,16 @@ afterEach(() => {
 function captureLogger() {
   const info: string[] = [];
   const error: string[] = [];
-  return { info, error, logger: { info: (m: string) => info.push(m), error: (m: string) => error.push(m) } };
+  return {
+    info,
+    error,
+    logger: { info: (m: string) => info.push(m), error: (m: string) => error.push(m) },
+  };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await Bun.sleep(10);
 }
 
 describe("MigrationRunner background loop", () => {
@@ -25,14 +36,13 @@ describe("MigrationRunner background loop", () => {
     const runner = new MigrationRunner(UNREACHABLE_URL, { logger, initialDelayMs: 20 });
 
     runner.start();
-    await Bun.sleep(500);
+    await waitFor(() => error.length >= 3, 3000);
 
     expect(runner.isReady()).toBe(false);
-    expect(error.length).toBeGreaterThanOrEqual(3);
     expect(error[0]).toContain("retrying in 20ms");
     expect(error[1]).toContain("retrying in 40ms");
     expect(error[2]).toContain("retrying in 80ms");
-    // The connection string (and its password) must never reach the log.
+    // The password must never reach the log, whatever the driver message says.
     expect(error.join("\n")).not.toContain("secret");
 
     await runner.stop();
@@ -53,19 +63,22 @@ describe("MigrationRunner background loop", () => {
     expect(runner.isReady()).toBe(false);
   });
 
-  test("isReady() only becomes true after a successful run", async () => {
-    const { logger } = captureLogger();
-    const runner = new MigrationRunner(UNREACHABLE_URL, { logger, initialDelayMs: 10 });
-    expect(runner.isReady()).toBe(false);
+  test("stop() during backoff prevents any further attempt", async () => {
+    const { error, logger } = captureLogger();
+    const runner = new MigrationRunner(UNREACHABLE_URL, { logger, initialDelayMs: 2000 });
     runner.start();
-    await Bun.sleep(50);
-    expect(runner.isReady()).toBe(false);
+    await waitFor(() => error.length >= 1, 3000);
+    expect(error).toHaveLength(1);
+
     await runner.stop();
+    await Bun.sleep(300);
+    expect(error).toHaveLength(1);
+    expect(runner.isReady()).toBe(false);
   });
 });
 
 describe("App boot with database down", () => {
-  test("boot completes, serves requests and dbReady() stays false", async () => {
+  test("boot completes, serves requests and db.isReady() stays false", async () => {
     process.env.PUBLIC_BASE_URL ??= "http://localhost:3000";
     process.env.DATABASE_URL = UNREACHABLE_URL;
 
@@ -74,9 +87,9 @@ describe("App boot with database down", () => {
     try {
       expect(Date.now() - startedAt).toBeLessThan(3000);
 
-      const ctx = (app as unknown as { ctx: { dbReady(): boolean; migrationRunner?: unknown } }).ctx;
-      expect(ctx.migrationRunner).toBeDefined();
-      expect(ctx.dbReady()).toBe(false);
+      const ctx = (app as unknown as { ctx: Ctx }).ctx;
+      expect(ctx.db).toBeDefined();
+      expect(ctx.db!.isReady()).toBe(false);
 
       const res = await app.inject({ method: "GET", url: "/health" });
       expect(res.statusCode).toBe(200);
@@ -87,14 +100,14 @@ describe("App boot with database down", () => {
     }
   });
 
-  test("boot does not depend on the database being reachable", async () => {
+  test("database feature is inert without DATABASE_URL", async () => {
     process.env.PUBLIC_BASE_URL ??= "http://localhost:3000";
-    process.env.DATABASE_URL = "postgres://user:secret@127.0.0.1:1/other";
+    delete process.env.DATABASE_URL;
 
     const app = await buildApp(loadConfig(), { startSweeper: false });
     try {
-      const ctx = (app as unknown as { ctx: { dbReady(): boolean } }).ctx;
-      expect(ctx.dbReady()).toBe(false);
+      const ctx = (app as unknown as { ctx: Ctx }).ctx;
+      expect(ctx.db).toBeUndefined();
       expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
     } finally {
       await app.close();

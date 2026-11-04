@@ -103,9 +103,8 @@ export interface AppContext {
   sessionRepository: SessionStore;
   sessionService: SessionService;
   fileService: FileService;
-  db?: DbClient;
+  db?: DbClient & { isReady(): boolean };
   migrationRunner?: MigrationRunner;
-  dbReady(): boolean;
 }
 
 export interface BuildAppOptions {
@@ -184,7 +183,7 @@ export async function buildApp(
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore);
 
-  let db: DbClient | undefined;
+  let db: (DbClient & { isReady(): boolean }) | undefined;
   let migrationRunner: MigrationRunner | undefined;
 
   // Database is best-effort: a slow or down database must never block boot,
@@ -192,7 +191,8 @@ export async function buildApp(
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
     try {
-      db = createDbClient(databaseUrl);
+      const client = createDbClient(databaseUrl);
+      db = { ...client, isReady: () => migrationRunner?.isReady() ?? false };
       migrationRunner = new MigrationRunner(databaseUrl, {
         logger: {
           info: (msg) => app.log.info(msg),
@@ -206,7 +206,6 @@ export async function buildApp(
       migrationRunner = undefined;
     }
   }
-  const dbReady = (): boolean => migrationRunner?.isReady() ?? false;
 
   const ctx: AppContext = {
     config,
@@ -218,7 +217,6 @@ export async function buildApp(
     fileService,
     db,
     migrationRunner,
-    dbReady,
   };
 
   if (options?.startSweeper ?? true) {
@@ -227,8 +225,9 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
-    if (db) await db.close();
+    // Runner first: it owns its own connection and must stop opening new ones.
     if (migrationRunner) await migrationRunner.stop();
+    if (db) await db.close();
   });
 
   // Clean orphan files from previous runs

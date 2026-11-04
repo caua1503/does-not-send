@@ -6,16 +6,20 @@ import { sessions, transfers, events } from "../src/db/schema.js";
 import { createDbClient, type DbClient } from "../src/db/client.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
+// The suite drops the public schema, so refuse anything that is not clearly a test DB.
+const isDedicatedTestDb = databaseUrl !== undefined && /_test($|\?)/.test(databaseUrl);
 
-// @db
-describe.skipIf(!databaseUrl)("Database integration", () => {
+describe.skipIf(!isDedicatedTestDb)("Database integration @db", () => {
   let client: DbClient;
   let sessionId: string;
 
   beforeAll(async () => {
-    const setup = new SQL(databaseUrl!, { max: 1 });
+    const setup = new SQL(databaseUrl!, { max: 1, connectionTimeout: 2 });
     try {
+      // Drizzle keeps its journal in "drizzle"; dropping only "public" would
+      // leave it claiming migrations that no longer exist.
       await setup`DROP SCHEMA IF EXISTS public CASCADE`;
+      await setup`DROP SCHEMA IF EXISTS drizzle CASCADE`;
       await setup`CREATE SCHEMA public`;
     } finally {
       await setup.close({ timeout: 5 });
@@ -37,7 +41,7 @@ describe.skipIf(!databaseUrl)("Database integration", () => {
     await client?.close();
   });
 
-  test("schema is usable by the writer pool (insert + select on every table)", async () => {
+  test("@db migrates an empty database and inserts/selects in every table", async () => {
     sessionId = crypto.randomUUID();
     await client.writer.insert(sessions).values({
       id: sessionId,
@@ -52,7 +56,8 @@ describe.skipIf(!databaseUrl)("Database integration", () => {
       extension: "pdf",
       mime: "application/pdf",
       category: "pdfs",
-      size: 5_000_000_000, // beyond int4: exercises bigint mode "number"
+      // Beyond int4: fails if the column is not bigint / mode is wrong.
+      size: 5_000_000_000,
       status: "completed",
       startedAt: new Date().toISOString(),
     });
@@ -79,7 +84,7 @@ describe.skipIf(!databaseUrl)("Database integration", () => {
     expect(eventRows[0]?.type).toBe("qr_reused");
   });
 
-  test("deleting a session cascades its transfers", async () => {
+  test("@db deleting a session cascades its transfers", async () => {
     await client.writer.delete(sessions).where(eq(sessions.id, sessionId));
     const orphanTransfers = await client.reader
       .select()

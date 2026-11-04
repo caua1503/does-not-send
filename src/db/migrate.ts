@@ -6,6 +6,13 @@ const INITIAL_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
 const CONNECTION_TIMEOUT_S = 2;
 
+/** Error text without anything that could carry credentials (driver messages
+ *  may echo the URL). */
+function redactUrl(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.replace(/:\/\/[^\s/@:]+:[^\s/@]*@/g, "://***@");
+}
+
 export interface MigrationLogger {
   info(msg: string): void;
   error(msg: string): void;
@@ -62,9 +69,9 @@ export class MigrationRunner {
         return;
       } catch (err) {
         if (signal.aborted) return;
-        // Only the message: driver errors may embed the connection string.
-        const message = err instanceof Error ? err.message : "unknown error";
-        this.logger.error(`Database migration failed, retrying in ${delayMs}ms: ${message}`);
+        this.logger.error(
+          `Database migration failed, retrying in ${delayMs}ms: ${redactUrl(err)}`,
+        );
       }
 
       await this.sleep(delayMs, signal);
@@ -94,7 +101,7 @@ export class MigrationRunner {
       ]);
     } finally {
       // Without force(), close() waits for an in-flight migration to finish.
-      void sql.close({ timeout: 0 });
+      void sql.close({ timeout: 0 }).catch(() => {});
     }
   }
 

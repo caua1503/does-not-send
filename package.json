@@ -14,7 +14,7 @@
     "test": "bun --bun vitest run",
     "test:web": "cd web && bun run test",
     "test:watch": "bun --bun vitest",
-    "test:db": "bun --bun vitest run --testPathPattern='tests/.+\\.test\\.ts' --grep='@db'",
+    "test:db": "bun --bun vitest run tests/db-integration.test.ts",
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "cd web && bun run typecheck",
