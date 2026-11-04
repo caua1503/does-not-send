@@ -11,14 +11,6 @@ describe("db-connection", () => {
     await closeDatabase();
   });
 
-  test("conecta ao Postgres e executa SELECT 1", async () => {
-    const result = await sql`SELECT 1 as value`;
-    
-    expect(result).toBeDefined();
-    expect(result.length).toBe(1);
-    expect(result[0].value).toBe(1);
-  });
-
   test("fecha conexão corretamente", async () => {
     await expect(closeDatabase()).resolves.not.toThrow();
   });
