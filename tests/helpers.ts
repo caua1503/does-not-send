@@ -56,6 +56,8 @@ export async function createTestApp(
     computerGraceMs: 30_000,
     phoneGraceMs: 30_000,
     wsAuthTimeoutMs: 5_000,
+    cleanupMaxAttempts: 5,
+    cleanupInitialDelayMs: 100,
     ...overrides,
   };
 

@@ -7,6 +7,8 @@ export class SessionRepository extends SessionStore {
       clock: options?.clock ?? new SystemClock(),
       tempDir: options?.tempDir ?? "/tmp",
       timingConfig: options?.timingConfig,
+      cleanupRetry: options?.cleanupRetry,
+      logger: options?.logger,
     });
   }
 }

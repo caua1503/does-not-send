@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import type { FastifyBaseLogger } from "fastify";
 import { join } from "node:path";
 import type { Session, SessionRole } from "../types.js";
 import type { Clock } from "./clock.js";
@@ -20,20 +21,44 @@ export interface PendingWs {
   connectedAt: number;
 }
 
+export interface CleanupRetryOptions {
+  maxAttempts: number;
+  initialDelayMs: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}
+
 export interface SessionStoreOptions {
   clock?: Clock;
   tempDir: string;
   timingConfig?: Partial<SessionTimingConfig>;
   sessionIdleTimeout?: number;
+  cleanupRetry?: Partial<CleanupRetryOptions>;
+  logger?: FastifyBaseLogger;
 }
+
+interface PendingCleanup {
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
+  maxAttempts: 5,
+  initialDelayMs: 100,
+  baseDelayMs: 200,
+  maxDelayMs: 5_000,
+};
 
 export class SessionStore {
   readonly clock: Clock;
   readonly timingConfig: SessionTimingConfig;
   readonly tempDir: string;
   readonly sessionIdleTimeout?: number;
+  readonly cleanupRetry: CleanupRetryOptions;
+  log: FastifyBaseLogger;
 
   private sessions = new Map<string, Session>();
+  private pendingCleanups = new Map<string, PendingCleanup>();
   private pendingSockets = new Set<PendingWs>();
   private activeSockets = new Map<string, { computer?: WebSocketLike; phone?: WebSocketLike }>();
   private activeUploadControllers = new Map<string, Set<AbortController>>();
@@ -47,6 +72,8 @@ export class SessionStore {
       ...DEFAULT_TIMING_CONFIG,
       ...options.timingConfig,
     };
+    this.cleanupRetry = { ...DEFAULT_CLEANUP_RETRY, ...options.cleanupRetry };
+    this.log = options.logger ?? (undefined as unknown as FastifyBaseLogger);
   }
 
   // Repository-compatible methods
@@ -314,12 +341,7 @@ export class SessionStore {
     this.closeWs(sessionId);
 
     // 5. Delete session temp folder
-    const dir = join(this.tempDir, sessionId);
-    try {
-      await rm(dir, { recursive: true, force: true });
-    } catch {
-      // Directory cleanup failure logged without sensitive info
-    }
+    await this.removeSessionDir(sessionId, 1);
 
     // 6. Remove secrets from memory
     session.computerTokenHash = "";
@@ -330,8 +352,64 @@ export class SessionStore {
     this.update(session);
   }
 
+  // Deletes the session directory, falling back to retries with backoff.
+  // Only the session id and errno codes are logged, never the absolute path.
+  private async removeSessionDir(sessionId: string, attempt: number): Promise<void> {
+    try {
+      await rm(join(this.tempDir, sessionId), { recursive: true, force: true });
+      this.pendingCleanups.delete(sessionId);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (attempt >= this.cleanupRetry.maxAttempts) {
+        this.log.error(
+          { sessionId, attempts: attempt, code },
+          "session cleanup failed, manual removal required",
+        );
+        this.pendingCleanups.delete(sessionId);
+        return;
+      }
+      const delay = Math.min(
+        this.cleanupRetry.initialDelayMs * this.cleanupRetry.baseDelayMs ** (attempt - 1),
+        this.cleanupRetry.maxDelayMs,
+      );
+      this.log.warn(
+        { sessionId, attempt, code, retryInMs: delay },
+        "session cleanup retry scheduled",
+      );
+      this.scheduleCleanup(sessionId, attempt + 1, delay);
+    }
+  }
+
+  private scheduleCleanup(sessionId: string, attempt: number, delayMs: number): void {
+    const existing = this.pendingCleanups.get(sessionId);
+    if (existing?.timer) clearTimeout(existing.timer);
+
+    // Registered before arming the timer so a sweep or a zero-delay timer can
+    // never observe the entry as not-pending.
+    const pending: PendingCleanup = { attempts: attempt, timer: null };
+    this.pendingCleanups.set(sessionId, pending);
+    pending.timer = setTimeout(() => {
+      pending.timer = null;
+      void this.removeSessionDir(sessionId, pending.attempts);
+    }, delayMs);
+    pending.timer.unref?.();
+  }
+
+  private async retryPendingCleanups(): Promise<void> {
+    const due = Array.from(this.pendingCleanups).filter(([, pending]) => !pending.timer);
+    await Promise.all(
+      due.map(([sessionId, pending]) => this.removeSessionDir(sessionId, pending.attempts)),
+    );
+  }
+
+  getPendingCleanupIds(): string[] {
+    return Array.from(this.pendingCleanups.keys());
+  }
+
   // Sweeper tick()
   async tick(): Promise<void> {
+    await this.retryPendingCleanups();
+
     const now = this.clock.now();
 
     // 1. Check pending WS for 5s timeout
@@ -419,6 +497,10 @@ export class SessionStore {
       clearInterval(this.sweeperTimer);
       this.sweeperTimer = null;
     }
+    for (const pending of this.pendingCleanups.values()) {
+      if (pending.timer) clearTimeout(pending.timer);
+    }
+    this.pendingCleanups.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.activeUploadControllers.clear();

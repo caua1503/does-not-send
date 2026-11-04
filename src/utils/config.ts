@@ -13,6 +13,8 @@ export interface Config {
   computerGraceMs: number;
   phoneGraceMs: number;
   wsAuthTimeoutMs: number;
+  cleanupMaxAttempts: number;
+  cleanupInitialDelayMs: number;
 }
 
 function requireEnv(name: string): string {
@@ -69,6 +71,14 @@ export function loadConfig(): Config {
     "WS_AUTH_TIMEOUT_MS",
     optionalEnv("WS_AUTH_TIMEOUT_MS", "5000"),
   );
+  const cleanupMaxAttempts = parsePositiveInt(
+    "CLEANUP_MAX_ATTEMPTS",
+    optionalEnv("CLEANUP_MAX_ATTEMPTS", "5"),
+  );
+  const cleanupInitialDelayMs = parsePositiveInt(
+    "CLEANUP_INITIAL_DELAY_MS",
+    optionalEnv("CLEANUP_INITIAL_DELAY_MS", "100"),
+  );
 
   return {
     host,
@@ -83,5 +93,7 @@ export function loadConfig(): Config {
     computerGraceMs,
     phoneGraceMs,
     wsAuthTimeoutMs,
+    cleanupMaxAttempts,
+    cleanupInitialDelayMs,
   };
 }

@@ -170,6 +170,11 @@ export async function buildApp(
       phoneGraceMs: config.phoneGraceMs,
       wsAuthTimeoutMs: config.wsAuthTimeoutMs,
     },
+    cleanupRetry: {
+      maxAttempts: config.cleanupMaxAttempts,
+      initialDelayMs: config.cleanupInitialDelayMs,
+    },
+    logger: app.log,
   });
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore);
