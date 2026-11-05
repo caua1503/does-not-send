@@ -1,6 +1,13 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import imageCompression from "browser-image-compression";
 import PhonePage from "../../pages/phone/PhonePage.tsx";
+
+vi.mock("browser-image-compression", () => {
+  return {
+    default: vi.fn(),
+  };
+});
 
 describe("PhonePage", () => {
   const fetchMock = vi.fn();
@@ -305,6 +312,85 @@ describe("PhonePage", () => {
       "Authorization",
       "Bearer secret-phone-credential-xyz"
     );
+
+    vi.unstubAllGlobals();
+  });
+
+  it("exibe 'Otimizando...' para foto > 1.2 MB sem bloquear a tela e depois envia comprimida", async () => {
+    sessionStorage.setItem(
+      "dns_phone_cred_session-test-id",
+      JSON.stringify({
+        phoneCredential: "secret-phone-credential-xyz",
+        visualId: "B2K9",
+      })
+    );
+
+    const xhrInstances: any[] = [];
+    class MockXHR {
+      open = vi.fn();
+      setRequestHeader = vi.fn();
+      send = vi.fn();
+      upload = { onprogress: null };
+      status = 201;
+      onload: any = null;
+      onerror: any = null;
+
+      constructor() {
+        xhrInstances.push(this);
+      }
+    }
+
+    vi.stubGlobal("XMLHttpRequest", MockXHR);
+
+    let resolveCompression: (file: File) => void = () => {};
+    vi.mocked(imageCompression).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCompression = resolve;
+        })
+    );
+
+    render(<PhonePage />);
+
+    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const bigPhoto = new File(
+      [new Uint8Array(2.5 * 1024 * 1024)],
+      "foto-pesada.jpg",
+      { type: "image/jpeg" }
+    );
+
+    fireEvent.change(input, { target: { files: [bigPhoto] } });
+
+    // Mostra estado Otimizando... para a foto
+    expect(screen.getByText("Otimizando...")).toBeInTheDocument();
+    expect(screen.getByText("foto-pesada.jpg")).toBeInTheDocument();
+
+    // A tela NÃO está bloqueada: o input continua ativo e utilizável
+    expect(input).not.toBeDisabled();
+    expect(xhrInstances.length).toBe(0);
+
+    // Resolve a compressão para um arquivo menor
+    const compressedPhoto = new File(
+      [new Uint8Array(900 * 1024)],
+      "foto-pesada.jpg",
+      { type: "image/jpeg" }
+    );
+    await act(async () => {
+      resolveCompression(compressedPhoto);
+    });
+
+    // Estado Otimizando... desaparece e upload inicia
+    await waitFor(() => {
+      expect(screen.queryByText("Otimizando...")).not.toBeInTheDocument();
+      expect(xhrInstances.length).toBe(1);
+    });
+
+    const xhr = xhrInstances[0];
+    expect(xhr.open).toHaveBeenCalledWith(
+      "POST",
+      "/api/sessions/session-test-id/files"
+    );
+    expect(xhr.send).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
   });

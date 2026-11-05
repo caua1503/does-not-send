@@ -18,6 +18,8 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
     computerGraceMs: 30000,
     phoneGraceMs: 30000,
     wsAuthTimeoutMs: 5000,
+    cleanupMaxAttempts: 5,
+    cleanupInitialDelayMs: 100,
   };
 
   it("criação de sessão inicializa lastSeen.computer com clock.now() e primeiro tick não marca computerLostAt", async () => {
