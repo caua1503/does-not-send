@@ -28,6 +28,8 @@ import {
   SqlStore,
   type SessionRecorder,
 } from "./recording/index.js";
+import { sessions } from "./db/schema.js";
+import { isNull } from "drizzle-orm";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -119,6 +121,7 @@ export interface BuildAppOptions {
   startSweeper?: boolean;
   sweeperInterval?: number;
   loggerStream?: Writable;
+  recorder?: import("./recording/index.js").SessionRecorder;
 }
 
 export async function buildApp(
@@ -126,6 +129,18 @@ export async function buildApp(
   options?: BuildAppOptions,
 ): Promise<FastifyInstance> {
   const clock = options?.clock ?? new SystemClock();
+
+  // Parse TRUST_PROXY
+  let trustProxy: boolean | string = false;
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  if (trustProxyEnv) {
+    if (trustProxyEnv === "true") {
+      trustProxy = true;
+    } else {
+      // number of hops or CIDR list — pass as-is; Fastify/proxy-addr accepts both
+      trustProxy = trustProxyEnv;
+    }
+  }
 
   const app = Fastify({
     logger: {
@@ -135,6 +150,7 @@ export async function buildApp(
     },
     logController: new RedactedLogController(),
     bodyLimit: 1048576, // 1MB for JSON bodies only; multipart handled separately
+    trustProxy,
   });
 
   // CORS
@@ -171,25 +187,6 @@ export async function buildApp(
   app.setErrorHandler(errorHandler);
 
   // Services
-  const sessionStore = new SessionStore({
-    clock,
-    tempDir: config.tempDir,
-    sessionIdleTimeout: config.sessionIdleTimeout,
-    timingConfig: {
-      heartbeatTimeoutMs: config.heartbeatTimeoutMs,
-      computerGraceMs: config.computerGraceMs,
-      phoneGraceMs: config.phoneGraceMs,
-      wsAuthTimeoutMs: config.wsAuthTimeoutMs,
-    },
-    cleanupRetry: {
-      maxAttempts: config.cleanupMaxAttempts,
-      initialDelayMs: config.cleanupInitialDelayMs,
-    },
-    logger: app.log,
-  });
-  const sessionService = new SessionService(sessionStore, config, clock);
-  const fileService = new FileService(config, sessionStore);
-
   let db: (DbClient & { isReady(): boolean }) | undefined;
   let migrationRunner: MigrationRunner | undefined;
 
@@ -208,6 +205,30 @@ export async function buildApp(
         },
       });
       migrationRunner.start();
+
+      // Boot hook: mark orphaned sessions as closed with server_restart reason
+      // Wait for migrations to complete before running UPDATE
+      app.addHook("onReady", async () => {
+        if (db?.isReady()) {
+          try {
+            await db.writer
+              .update(sessions)
+              .set({
+                closedAt: new Date().toISOString(),
+                closeReason: "server_restart",
+              })
+              .where(isNull(sessions.closedAt));
+          } catch (err) {
+            app.log.error(
+              { error: err instanceof Error ? err.message : String(err) },
+              "failed to mark orphaned sessions on boot",
+            );
+          }
+        } else if (db) {
+          // DB configured but migrations not yet ready — log only, never throw
+          app.log.warn("db not ready at onReady, skipping server_restart UPDATE");
+        }
+      });
     } catch {
       // Invalid URL or client construction failure: keep running without a DB.
       db = undefined;
@@ -215,14 +236,37 @@ export async function buildApp(
     }
   }
 
-  // Recorder: best-effort like database
+  // Recorder: best-effort like database; built before SessionStore so it can be passed in
   let recorder: SessionRecorder;
-  if (db) {
+  if (options?.recorder) {
+    recorder = options.recorder;
+  } else if (db) {
     const store = new SqlStore(db.writer, app.log);
     recorder = new PostgresRecorder(store, () => db.isReady(), app.log);
   } else {
     recorder = new NoopRecorder();
   }
+
+  const sessionStore = new SessionStore({
+    clock,
+    tempDir: config.tempDir,
+    sessionIdleTimeout: config.sessionIdleTimeout,
+    timingConfig: {
+      heartbeatTimeoutMs: config.heartbeatTimeoutMs,
+      computerGraceMs: config.computerGraceMs,
+      phoneGraceMs: config.phoneGraceMs,
+      wsAuthTimeoutMs: config.wsAuthTimeoutMs,
+    },
+    cleanupRetry: {
+      maxAttempts: config.cleanupMaxAttempts,
+      initialDelayMs: config.cleanupInitialDelayMs,
+    },
+    logger: app.log,
+    recorder,
+  });
+
+  const sessionService = new SessionService(sessionStore, config, clock);
+  const fileService = new FileService(config, sessionStore, recorder, app.log);
 
   const ctx: AppContext = {
     config,

@@ -4,6 +4,8 @@ import {
   authorize as domainAuthorize,
   generateSecret,
 } from "../session/auth.js";
+import { safeRecord } from "../utils/record-event.js";
+import { normalizeIp } from "../recording/normalize.js";
 
 type TokenRole = "owner" | "upload" | "computer" | "phone";
 
@@ -71,9 +73,25 @@ export async function sessionRoutes(
   const { ctx } = opts;
 
   // Create session
-  app.post("/sessions", async (_request, reply) => {
+  app.post("/sessions", async (request, reply) => {
     const session = await ctx.sessionService.create();
     const placeholderUploadToken = generateSecret();
+
+    // Store normalized IP in session BEFORE emitting event (action must complete first)
+    session.computerIp = normalizeIp(request.ip);
+
+    // Emit session_created event AFTER domain action (normalizeIp) is complete
+    safeRecord(
+      ctx.recorder,
+      {
+        type: "session_created",
+        at: new Date(),
+        sessionId: session.id,
+        visualId: session.visualId,
+        computerIp: session.computerIp ?? undefined,
+      },
+      request.log,
+    );
 
     return reply.status(201).send({
       id: session.id,
@@ -107,6 +125,16 @@ export async function sessionRoutes(
 
     const session = ctx.sessionRepository.getById(id);
     if (!session) {
+      safeRecord(
+        ctx.recorder,
+        {
+          type: "pairing_refused",
+          at: new Date(),
+          ip: normalizeIp(request.ip) ?? undefined,
+          sessionId: undefined,
+        },
+        request.log,
+      );
       return reply.status(404).send({
         error: "Session not found",
         statusCode: 404,
@@ -115,6 +143,32 @@ export async function sessionRoutes(
 
     const pairResult = ctx.sessionService.pair(id, qrToken);
     if (!pairResult.ok) {
+      // Emit pairing_refused or qr_reused AFTER checking result, always with normalized IP
+      const normalizedPhoneIp = normalizeIp(request.ip) ?? undefined;
+      if (pairResult.error.code === "ALREADY_CONSUMED") {
+        safeRecord(
+          ctx.recorder,
+          {
+            type: "qr_reused",
+            at: new Date(),
+            ip: normalizedPhoneIp,
+            sessionId: id,
+          },
+          request.log,
+        );
+      } else if (pairResult.error.code === "INVALID") {
+        safeRecord(
+          ctx.recorder,
+          {
+            type: "pairing_refused",
+            at: new Date(),
+            ip: normalizedPhoneIp,
+            sessionId: id,
+          },
+          request.log,
+        );
+      }
+
       switch (pairResult.error.code) {
         case "ALREADY_CONSUMED":
           return reply.status(409).send({
@@ -142,6 +196,19 @@ export async function sessionRoutes(
           });
       }
     }
+
+    // Pairing succeeded - store normalized IP THEN emit session_paired
+    session.phoneIp = normalizeIp(request.ip);
+    safeRecord(
+      ctx.recorder,
+      {
+        type: "session_paired",
+        at: new Date(),
+        sessionId: id,
+        phoneIp: session.phoneIp ?? undefined,
+      },
+      request.log,
+    );
 
     return reply.status(200).send({
       success: true,

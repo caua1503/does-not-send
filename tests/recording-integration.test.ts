@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { loadConfig } from "../src/utils/config.js";
 import type { FastifyInstance } from "fastify";

@@ -22,7 +22,7 @@ export class SqlStore implements Store {
         }
       });
 
-      const durationMs = Number((Bun.nanoseconds() - start) / 1_000_000n);
+      const durationMs = Number((Bun.nanoseconds() - start) / 1_000_000);
       if (durationMs > 1000) {
         this.logger.warn(`lote lento: ${durationMs}ms, ${events.length} eventos`);
       }

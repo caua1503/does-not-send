@@ -8,6 +8,8 @@ import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
 import { fileEvents } from "../utils/events.js";
+import type { SessionRecorder } from "../recording/index.js";
+import { safeRecord } from "../utils/record-event.js";
 
 export interface WebSocketLike {
   readyState: number;
@@ -35,6 +37,7 @@ export interface SessionStoreOptions {
   sessionIdleTimeout?: number;
   cleanupRetry?: Partial<CleanupRetryOptions>;
   logger?: FastifyBaseLogger;
+  recorder?: SessionRecorder;
 }
 
 interface PendingCleanup {
@@ -56,6 +59,7 @@ export class SessionStore {
   readonly sessionIdleTimeout?: number;
   readonly cleanupRetry: CleanupRetryOptions;
   log: FastifyBaseLogger;
+  private recorder?: SessionRecorder;
 
   private sessions = new Map<string, Session>();
   private pendingCleanups = new Map<string, PendingCleanup>();
@@ -74,6 +78,7 @@ export class SessionStore {
     };
     this.cleanupRetry = { ...DEFAULT_CLEANUP_RETRY, ...options.cleanupRetry };
     this.log = options.logger ?? (undefined as unknown as FastifyBaseLogger);
+    this.recorder = options.recorder;
   }
 
   // Repository-compatible methods
@@ -327,8 +332,10 @@ export class SessionStore {
     }
 
     // 1. Transition to CLOSED
+    const closedAt = new Date();
     transition(session, "CLOSED");
     session.closedReason = reason;
+    session.closedAt = closedAt.toISOString();
 
     // 2. Abort active uploads
     this.abortUploads(sessionId);
@@ -350,6 +357,20 @@ export class SessionStore {
     session.ownerToken = undefined;
     session.uploadToken = undefined;
     this.update(session);
+
+    // 7. Emit session_closed event AFTER domain action is complete
+    if (this.recorder && this.log) {
+      safeRecord(
+        this.recorder,
+        {
+          type: "session_closed",
+          at: closedAt,
+          sessionId,
+          reason: reason as import("../recording/events.js").SessionClosed["reason"],
+        },
+        this.log,
+      );
+    }
   }
 
   // Deletes the session directory, falling back to retries with backoff.
