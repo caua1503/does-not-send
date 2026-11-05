@@ -127,6 +127,19 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const clock = options?.clock ?? new SystemClock();
 
+  // Parse TRUST_PROXY
+  let trustProxy: boolean | number | string = false;
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  if (trustProxyEnv) {
+    if (trustProxyEnv === "true") {
+      trustProxy = true;
+    } else if (/^\d+$/.test(trustProxyEnv)) {
+      trustProxy = parseInt(trustProxyEnv, 10);
+    } else {
+      trustProxy = trustProxyEnv; // CIDR list
+    }
+  }
+
   const app = Fastify({
     logger: {
       level: "info",
@@ -135,6 +148,7 @@ export async function buildApp(
     },
     logController: new RedactedLogController(),
     bodyLimit: 1048576, // 1MB for JSON bodies only; multipart handled separately
+    trustProxy,
   });
 
   // CORS

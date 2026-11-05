@@ -15,6 +15,10 @@ export interface SessionFile {
   bytesReceived: number;
   state: FileState;
   createdAt: string;
+  startedAt: string; // Alias para createdAt (usado em eventos)
+  finishedAt?: string; // Timestamp quando completed/failed
+  extension: string; // Calculado de originalName
+  category: string; // Calculado de extension+mimeType
 }
 
 export interface Session {
@@ -42,4 +46,7 @@ export interface Session {
   phoneLostAt: number | null;
   computerLostAt: number | null;
   closedReason?: string | null;
+  computerIp?: string | null; // IP normalizado do computador
+  phoneIp?: string | null; // IP normalizado do celular
+  closedAt?: string | null; // ISO 8601 timestamp de fechamento
 }
