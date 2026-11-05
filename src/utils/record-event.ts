@@ -13,8 +13,11 @@ export function safeRecord(
   try {
     recorder.record(event);
   } catch (err) {
-    // Log only the error code/message, never event content or sensitive data
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error(`recorder.record() failed: ${message}`);
+    // Log only the error code to avoid leaking sensitive data in messages
+    const code =
+      err instanceof Error
+        ? ((err as { code?: unknown }).code as string | undefined) ?? err.constructor.name
+        : "UNKNOWN";
+    logger.error(`recorder.record() failed: ${code}`);
   }
 }

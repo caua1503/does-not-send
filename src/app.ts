@@ -224,6 +224,9 @@ export async function buildApp(
               "failed to mark orphaned sessions on boot",
             );
           }
+        } else if (db) {
+          // DB configured but migrations not yet ready — log only, never throw
+          app.log.warn("db not ready at onReady, skipping server_restart UPDATE");
         }
       });
     } catch {

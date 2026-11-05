@@ -96,7 +96,7 @@ export class FileService {
           extension: fileRecord.extension,
           mime: fileRecord.mimeType,
           category: fileRecord.category as import("../recording/events.js").TransferStarted["category"],
-          size: declaredSize ?? 0,
+          size: 0, // real size unknown at start; updated by transfer_finished
         },
         this.log,
       );
