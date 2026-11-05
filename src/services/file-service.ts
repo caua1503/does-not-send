@@ -8,6 +8,10 @@ import type { SessionFile } from "../types.js";
 import { generateStorageName } from "../utils/crypto.js";
 import { sanitizeFilename } from "../utils/sanitize.js";
 import { fileEvents } from "../utils/events.js";
+import { extractExtension, categorize } from "../recording/normalize.js";
+import type { SessionRecorder } from "../recording/index.js";
+import type { Logger } from "../recording/index.js";
+import { safeRecord } from "../utils/record-event.js";
 
 export interface UploadResult {
   file: SessionFile;
@@ -17,6 +21,8 @@ export class FileService {
   constructor(
     private config: Config,
     private repository: SessionRepository,
+    private recorder?: SessionRecorder,
+    private log: Logger = { info: () => {}, warn: () => {}, error: () => {} },
   ) {}
 
   async handleFileUpload(
@@ -47,6 +53,7 @@ export class FileService {
     const storageName = generateStorageName();
     const filePath = join(this.config.tempDir, sessionId, storageName);
 
+    const now = new Date().toISOString();
     const fileRecord: SessionFile = {
       id: storageName,
       originalName: safeName,
@@ -55,8 +62,13 @@ export class FileService {
       size: declaredSize ?? 0,
       bytesReceived: 0,
       state: "receiving",
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      startedAt: now,
+      extension: extractExtension(safeName),
+      category: "", // Will be calculated after extension is set
     };
+    // Calculate category from extension and mime
+    fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
 
     session.files.push(fileRecord);
     this.repository.update(session);
@@ -70,6 +82,25 @@ export class FileService {
       size: fileRecord.size,
       bytesReceived: 0,
     });
+
+    // Emit transfer_started event
+    if (this.recorder) {
+      safeRecord(
+        this.recorder,
+        {
+          type: "transfer_started",
+          at: new Date(now),
+          id: fileRecord.id,
+          sessionId,
+          name: safeName,
+          extension: fileRecord.extension,
+          mime: fileRecord.mimeType,
+          category: fileRecord.category as import("../recording/events.js").TransferStarted["category"],
+          size: declaredSize ?? 0,
+        },
+        this.log,
+      );
+    }
 
     let writeStream: WriteStream | null = null;
 
@@ -149,6 +180,7 @@ export class FileService {
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.size = fileStat.size;
       fileRecord.state = "completed";
+      fileRecord.finishedAt = new Date().toISOString();
       this.repository.update(session);
 
       fileEvents.emitFileEvent({
@@ -161,9 +193,25 @@ export class FileService {
         bytesReceived: fileStat.size,
       });
 
+      // Emit transfer_finished event
+      if (this.recorder) {
+        safeRecord(
+          this.recorder,
+          {
+            type: "transfer_finished",
+            at: new Date(),
+            id: fileRecord.id,
+            status: "completed" as const,
+            size: fileStat.size,
+          },
+          this.log,
+        );
+      }
+
       return { file: fileRecord };
     } catch (err) {
       fileRecord.state = "failed";
+      fileRecord.finishedAt = new Date().toISOString();
       this.repository.update(session);
 
       fileEvents.emitFileEvent({
@@ -175,6 +223,21 @@ export class FileService {
         size: fileRecord.size,
         bytesReceived: fileRecord.bytesReceived,
       });
+
+      // Emit transfer_finished event with failure
+      if (this.recorder) {
+        safeRecord(
+          this.recorder,
+          {
+            type: "transfer_finished",
+            at: new Date(),
+            id: fileRecord.id,
+            status: "failed" as const,
+            size: fileRecord.bytesReceived,
+          },
+          this.log,
+        );
+      }
 
       // Clean up partial file
       try {
