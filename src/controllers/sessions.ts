@@ -126,6 +126,16 @@ export async function sessionRoutes(
 
     const session = ctx.sessionRepository.getById(id);
     if (!session) {
+      safeRecord(
+        ctx.recorder,
+        {
+          type: "pairing_refused",
+          at: new Date(),
+          ip: request.ip,
+          sessionId: undefined,
+        },
+        request.log,
+      );
       return reply.status(404).send({
         error: "Session not found",
         statusCode: 404,
