@@ -6,7 +6,7 @@ export interface PhoneUploadItem {
   id: string;
   file: File;
   progress: number; // 0 - 1
-  state: "pending" | "uploading" | "completed" | "error";
+  state: "pending" | "optimizing" | "uploading" | "completed" | "error";
   error?: string;
 }
 
@@ -32,6 +32,12 @@ export function UploadItem({ item, onRetry }: UploadItemProps) {
           </span>
         </div>
 
+        {item.state === "optimizing" && (
+          <p className="mt-1 text-xs text-[var(--color-accent)] font-medium">
+            Otimizando...
+          </p>
+        )}
+
         {item.state === "uploading" && (
           <div className="mt-1.5 flex items-center gap-2">
             <ProgressBar value={item.progress} max={1} className="flex-1" />
@@ -49,7 +55,7 @@ export function UploadItem({ item, onRetry }: UploadItemProps) {
       </div>
 
       <div className="flex items-center flex-shrink-0">
-        {item.state === "uploading" && (
+        {(item.state === "uploading" || item.state === "optimizing") && (
           <Loader2 size={18} className="animate-spin text-[var(--color-accent)]" />
         )}
         {item.state === "completed" && (

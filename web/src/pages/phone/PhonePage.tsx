@@ -6,6 +6,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
 import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
+import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 
 declare const __BASE_URL__: string;
 const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
@@ -91,6 +92,8 @@ export default function PhonePage({
 
   // Estados derivados
   const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
+  const isSessionClosedRef = useRef(isSessionClosed);
+  isSessionClosedRef.current = isSessionClosed;
   const isReconnecting =
     !isSessionClosed &&
     (wsReconnecting || remoteSession?.state === "DISCONNECTED");
@@ -269,6 +272,33 @@ export default function PhonePage({
     xhr.send(formData);
   };
 
+  const processAndUpload = async (id: string, initialFile: File) => {
+    if (isSessionClosedRef.current) return;
+
+    let finalFile = initialFile;
+    try {
+      finalFile = await compressPhoto(initialFile);
+    } catch {
+      finalFile = initialFile;
+    }
+
+    if (isSessionClosedRef.current) return;
+
+    // Drop reference to initialFile from React state and set finalFile
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === id ? { ...i, file: finalFile, state: "uploading", progress: 0 } : i
+      )
+    );
+
+    uploadSingleFile({
+      id,
+      file: finalFile,
+      progress: 0,
+      state: "uploading",
+    });
+  };
+
   const handleFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isSessionClosed) return;
     if (!e.target.files || e.target.files.length === 0) return;
@@ -278,15 +308,21 @@ export default function PhonePage({
       id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
-      state: "pending",
+      state: isCompressiblePhoto(file) ? "optimizing" : "pending",
     }));
 
     setItems((prev) => [...prev, ...newItems]);
     // Reset file input
     if (fileInputRef.current) fileInputRef.current.value = "";
 
-    // Trigger upload for all new items
-    newItems.forEach((item) => uploadSingleFile(item));
+    // Trigger upload or async compression pipeline
+    newItems.forEach((item) => {
+      if (item.state === "optimizing") {
+        void processAndUpload(item.id, item.file);
+      } else {
+        uploadSingleFile(item);
+      }
+    });
   };
 
   const retryUpload = (id: string) => {
@@ -296,7 +332,9 @@ export default function PhonePage({
 
   const totalFiles = items.length;
   const completedFiles = items.filter((i) => i.state === "completed").length;
-  const isUploading = items.some((i) => i.state === "uploading" || i.state === "pending");
+  const isUploading = items.some(
+    (i) => i.state === "uploading" || i.state === "pending" || i.state === "optimizing"
+  );
 
   if (sessionError) {
     return (
