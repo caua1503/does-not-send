@@ -13,6 +13,7 @@ describe("PhonePage", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    localStorage.clear();
     sessionStorage.clear();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
@@ -28,6 +29,7 @@ describe("PhonePage", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    localStorage.clear();
     sessionStorage.clear();
   });
 

@@ -25,7 +25,15 @@ interface StoredSession {
 function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
   if (!id) return { phoneCredential: null, visualId: null };
   try {
-    const raw = sessionStorage.getItem(`dns_phone_cred_${id}`);
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(`dns_phone_cred_${id}`);
+    } catch {}
+    if (!raw) {
+      try {
+        raw = sessionStorage.getItem(`dns_phone_cred_${id}`);
+      } catch {}
+    }
     if (!raw) return { phoneCredential: null, visualId: null };
     try {
       const parsed = JSON.parse(raw) as StoredSession;
@@ -42,6 +50,16 @@ function readStoredSession(id: string): { phoneCredential: string | null; visual
   } catch {
     return { phoneCredential: null, visualId: null };
   }
+}
+
+function clearStoredSession(id: string): void {
+  if (!id) return;
+  try {
+    localStorage.removeItem(`dns_phone_cred_${id}`);
+  } catch {}
+  try {
+    sessionStorage.removeItem(`dns_phone_cred_${id}`);
+  } catch {}
 }
 
 export default function PhonePage({
@@ -102,6 +120,12 @@ export default function PhonePage({
     !isReconnecting &&
     (remoteSession?.computerPresent === false || wsClosedReason === "computer_lost");
 
+  useEffect(() => {
+    if (isSessionClosed && urlSessionId) {
+      clearStoredSession(urlSessionId);
+    }
+  }, [isSessionClosed, urlSessionId]);
+
   // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
   useEffect(() => {
     if (!urlSessionId || !credential || isSessionClosed) return;
@@ -117,6 +141,7 @@ export default function PhonePage({
         if (!active) return;
         if (err?.status === 410) {
           setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+          clearStoredSession(urlSessionId);
         }
       }
     }
@@ -148,6 +173,14 @@ export default function PhonePage({
 
         if (storageKey) {
           try {
+            localStorage.setItem(
+              storageKey,
+              JSON.stringify({ phoneCredential: cred, visualId: vId })
+            );
+          } catch {
+            // Ignore localStorage quota error
+          }
+          try {
             sessionStorage.setItem(
               storageKey,
               JSON.stringify({ phoneCredential: cred, visualId: vId })
@@ -161,6 +194,12 @@ export default function PhonePage({
         setCredential(cred);
         setVisualId(vId);
         setIsPairing(false);
+
+        if (typeof window !== "undefined" && window.history && window.history.replaceState) {
+          try {
+            window.history.replaceState({}, "", window.location.pathname);
+          } catch {}
+        }
       } catch (err: any) {
         pairingInProgressRef.current = false;
         if (isCancelled) return;
@@ -226,19 +265,17 @@ export default function PhonePage({
           prev.map((i) => (i.id === item.id ? { ...i, state: "completed", progress: 1 } : i))
         );
       } else if (xhr.status === 401) {
-        setSessionError("Credencial inválida.");
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Credencial inválida" } : i))
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Falha de autorização no envio" } : i))
         );
       } else if (xhr.status === 410) {
-        setSessionError("Sessão encerrada.");
+        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
         );
       } else if (xhr.status === 404) {
-        setSessionError("Sessão não encontrada.");
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Não encontrada" } : i))
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não encontrada" } : i))
         );
       } else if (xhr.status === 409) {
         setItems((prev) =>
