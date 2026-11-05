@@ -235,10 +235,11 @@ export class PostgresRecorder implements SessionRecorder {
 
     // Log aggregated failures
     if (failedByType.size > 0) {
+      const totalFailed = Array.from(failedByType.values()).reduce((sum, count) => sum + count, 0);
       const summary = Array.from(failedByType.entries())
         .map(([type, count]) => `${type}=${count}`)
         .join(", ");
-      this.logger.warn(`${this.failed} eventos descartados por constraint: ${summary}`);
+      this.logger.warn(`${totalFailed} eventos descartados por constraint: ${summary}`);
     }
   }
 
