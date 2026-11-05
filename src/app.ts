@@ -22,6 +22,12 @@ import { cleanOrphans } from "./services/cleanup-service.js";
 import { type Clock, SystemClock } from "./session/clock.js";
 import { createDbClient, type DbClient } from "./db/client.js";
 import { MigrationRunner } from "./db/migrate.js";
+import {
+  PostgresRecorder,
+  NoopRecorder,
+  SqlStore,
+  type SessionRecorder,
+} from "./recording/index.js";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -105,6 +111,7 @@ export interface AppContext {
   fileService: FileService;
   db?: DbClient & { isReady(): boolean };
   migrationRunner?: MigrationRunner;
+  recorder: import("./recording/index.js").SessionRecorder;
 }
 
 export interface BuildAppOptions {
@@ -208,6 +215,15 @@ export async function buildApp(
     }
   }
 
+  // Recorder: best-effort like database
+  let recorder: SessionRecorder;
+  if (db) {
+    const store = new SqlStore(db.writer, app.log);
+    recorder = new PostgresRecorder(store, () => db.isReady(), app.log);
+  } else {
+    recorder = new NoopRecorder();
+  }
+
   const ctx: AppContext = {
     config,
     clock,
@@ -218,6 +234,7 @@ export async function buildApp(
     fileService,
     db,
     migrationRunner,
+    recorder,
   };
 
   if (options?.startSweeper ?? true) {
@@ -226,6 +243,7 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
+    await recorder.close(5000);
     // Runner first: it owns its own connection and must stop opening new ones.
     if (migrationRunner) await migrationRunner.stop();
     if (db) await db.close();
