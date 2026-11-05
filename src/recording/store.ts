@@ -1,5 +1,11 @@
 import type { DomainEvent } from "./events.js";
 
+export interface Logger {
+  info(msg: string): void;
+  error(msg: string): void;
+  warn(msg: string): void;
+}
+
 export interface Store {
   /**
    * Persist a batch of events. Throws on any error (transient or constraint violation).

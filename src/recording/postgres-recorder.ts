@@ -1,14 +1,9 @@
 import type { DomainEvent } from "./events.js";
 import { Queue } from "./queue.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
-import { type Store, ConstraintViolationError, isTransientError } from "./store.js";
+import { type Store, type Logger, isTransientError } from "./store.js";
 
-export interface Logger {
-  info(msg: string): void;
-  error(msg: string): void;
-  warn(msg: string): void;
-}
-
+export type { Logger };
 export interface SessionRecorder {
   record(event: DomainEvent): void;
   stats(): { queued: number; dropped: number; failed: number };
