@@ -120,6 +120,16 @@ Mudanças:
 
 Verificação: `bun run typecheck:web`, `bun run test:web`, commit `refactor(web): centraliza BASE_URL e corrige golden de granularidade`.
 
+### Status
+
+**DONE** — commits `b457310` + `6554bda`.
+
+- `BASE_URL` centralizado em `web/src/lib/base.ts` (novo, commitado); `PhonePage` e `ComputerPage` importam de lá, `ComputerPage` mantém `|| window.location.origin`.
+- `SessionCard`: aliases `files`/`connected` inlinados. `Dashboard.tsx` **não** foi tocado (bug de `fitGranularity` é pré-existente e fora de escopo; servidor limita os buckets).
+- `admin-router.test.ts` (versão final): datas fixas e dois casos — "mantém a granularidade pedida quando cabe" (`day`/`month`/`year` curtos) e "engrossa a série em período muito longo" (`1970-01-01`→`2100-01-01` = `week`). A invariante `buckets <= MAX_BUCKETS` **não** é afirmada: o fallback em `Dashboard.tsx:63` divide `days` pela janela do passo (62/400/1900) em vez da largura do bucket e o resultado alterna perto dos limiares (20767 dias → `day`, 20952 → `week`). Por isso o teste não fixa valores nos limiares; o servidor limita os buckets. Bug pré-existente registrado em Risco.
+- `web/bun.lock` regenerado após remover `@testing-library/user-event`; `bun install --frozen-lockfile` passa (necessário para o Docker stage 1).
+- Verificação: `typecheck:web` OK, `test:web` 72/72, `web && bun run build` OK.
+
 ## T6 — Docker (um commit)
 
 Arquivos:
@@ -129,14 +139,28 @@ Contexto: o stage 1 copia `web/` inteiro, então imagens locais verdes podem vir
 
 Verificação: `docker build .` (Fase 4 confirma de novo).
 
+### Status
+
+**DONE (no-op)** — commit `6788cdf` (só plano).
+
+- `.dockerignore` já existe e está versionado; conteúdo confere com o exigido: `node_modules`, `web/node_modules`, `web/dist`, `.env`, `tmp`, `*.test.ts`, `tests`, `scripts`, `docs`, `spike`, `.git`. Nenhuma entrada necessária falta.
+- Nenhuma alteração de código: `*.log` foi deliberadamente omitido (sem impacto nos inputs reais do build).
+
 ---
 
 ## Fase 4 — revisão
 
-Subagent revisor sem contexto, recebe `git diff dev...HEAD` de cada branch de tarefa e aponta: mudança de comportamento, teste de contrato removido, import quebrado. Correções em T7 (branch `chore/cleanup`, commit `fix`). Depois: suíte completa back+web, `typecheck`, `lint`, `docker build`. Sem merge para `dev`/`main`; aviso ao terminar.
+Subagent revisor sem contexto, recebeu `git diff dev...HEAD` de cada branch de tarefa. Achados e correções (commit `89405b2` em A, `a76994d` em B):
+
+1. **Corrigido — retry de migração morria após conexão recusada.** `isRetryable` perdia `ERR_POSTGRES_CONNECTION_*` embrulhado em `cause.code` pelo Drizzle e parava o loop. Agora delega para `isTransientError` (`src/recording/store.ts`), que cobre 08/53/57 e o formato embrulhado.
+2. **Corrigido — export ausente na branch de testes.** `DEFAULT_CLEANUP_RETRY` não exportado fazia 19 testes falharem em B.
+3. **Falso positivo** — `crypto.ts` duplicado: o revisor leu a árvore principal (pré-fix) em vez do worktree; A está correto.
+4. **Aceito (baixo)** — teste de CSP do `/admin` e o teste e2e de upload com nome no disco ficaram cobertos só em nível de unidade (`static.test.ts` cobre CSP do `/`; `sanitize.test.ts` cobre path traversal).
+5. **Fora de escopo registrado** — enums do Drizzle (`event_type`, `close_reason`) sem `qr_reused`/`idle_timeout`/etc. enquanto `src/types.ts` ainda os declara; incoerência já existente no snapshot base. Bug de `fitGranularity` idem.
 
 ## Riscos
 
-- T2: remover `clearAllTimers`/`shutdown` exige grep de callers — se um teste usa, vira KEEP.
-- T5: `ComputerPage` sem fallback ficaria quebrado em dev; o import mantém fallback.
+- T2: `clearAllTimers`/`shutdown`/`emitSessionClosed` removidos em A com grep de zero callers; em B/C o snapshot ainda os contém, a integração resolve em favor de A.
+- T5: `fitGranularity` (`web/src/admin/pages/Dashboard.tsx:63`) tem bug pré-existente: período longo pedido em `day` devolve `day` (perde resolução do range). Servidor trunca em 400 buckets, então não há erro, só perda de detalhe. Fora de escopo desta limpeza.
 - T4: nenhuma remoção de teste cobre upload de arquivo único, ZIP ou autorização — esses ficam intactos.
+- Integração: a árvore suja original de `chore/cleanup` virou os commits `chore(snapshot)` nas três branches; o worktree principal foi resetado para `dev` e recebeu os merges. Backup em `/tmp/main-tree-uncommitted.patch` e no stash `chore-cleanup: snapshot pre-integracao`.

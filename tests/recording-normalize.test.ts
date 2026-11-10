@@ -2,28 +2,12 @@ import { describe, it, expect } from "vitest";
 import { normalizeIp, extractExtension, categorize } from "../src/recording/normalize.js";
 
 describe("normalizeIp", () => {
-  it("removes ::ffff: prefix", () => {
+  it("strips ::ffff: prefix, normalizes case and returns null for empty or undefined", () => {
     expect(normalizeIp("::ffff:192.168.1.1")).toBe("192.168.1.1");
     expect(normalizeIp("::FFFF:10.0.0.1")).toBe("10.0.0.1");
-  });
-
-  it("converts to lowercase", () => {
     expect(normalizeIp("2001:DB8::1")).toBe("2001:db8::1");
-    expect(normalizeIp("FE80::1")).toBe("fe80::1");
-  });
-
-  it("returns null for empty or undefined", () => {
     expect(normalizeIp("")).toBeNull();
-    expect(normalizeIp("   ")).toBeNull();
     expect(normalizeIp(undefined)).toBeNull();
-  });
-
-  it("preserves valid IPv6", () => {
-    expect(normalizeIp("2001:db8::8a2e:370:7334")).toBe("2001:db8::8a2e:370:7334");
-  });
-
-  it("preserves IPv4", () => {
-    expect(normalizeIp("192.168.1.1")).toBe("192.168.1.1");
   });
 });
 

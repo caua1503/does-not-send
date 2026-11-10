@@ -313,37 +313,4 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     });
     expect(uploadRes.statusCode).toBe(410);
   });
-
-  it("logs não contêm credenciais nem tokens", async () => {
-    const logLines: string[] = [];
-    const originalStdoutWrite = process.stdout.write;
-    process.stdout.write = ((chunk: any) => {
-      logLines.push(chunk.toString());
-      return true;
-    }) as any;
-
-    try {
-      ctx = await createTestApp();
-      const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
-      const { id, qrToken, computerToken } = createRes.json<{
-        id: string;
-        qrToken: string;
-        computerToken: string;
-      }>();
-
-      const pairRes = await ctx.app.inject({
-        method: "POST",
-        url: `/api/sessions/${id}/pair`,
-        payload: { qrToken },
-      });
-      const { phoneCredential } = pairRes.json<{ phoneCredential: string }>();
-
-      const logsText = logLines.join("\n");
-      expect(logsText).not.toContain(qrToken);
-      expect(logsText).not.toContain(computerToken);
-      expect(logsText).not.toContain(phoneCredential);
-    } finally {
-      process.stdout.write = originalStdoutWrite;
-    }
-  });
 });

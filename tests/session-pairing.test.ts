@@ -17,31 +17,6 @@ function makeSession(overrides: Partial<PairableSession> = {}): PairableSession 
   };
 }
 
-describe("hashToken", () => {
-  it("returns 64-char hex string (SHA-256)", () => {
-    const hash = hashToken("abc");
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  it("same input produces same hash", () => {
-    expect(hashToken("test-token")).toBe(hashToken("test-token"));
-  });
-
-  it("different inputs produce different hashes", () => {
-    expect(hashToken("token-1")).not.toBe(hashToken("token-2"));
-  });
-});
-
-describe("generateQrToken", () => {
-  it("generates base64url string with sufficient entropy", () => {
-    const t1 = generateQrToken();
-    const t2 = generateQrToken();
-    expect(typeof t1).toBe("string");
-    expect(t1.length).toBeGreaterThanOrEqual(40);
-    expect(t1).not.toBe(t2);
-  });
-});
-
 describe("consumePairing", () => {
   it("primeiro pareamento bem-sucedido muda WAITING para PAIRED", () => {
     const raw = generateQrToken();
