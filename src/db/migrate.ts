@@ -57,6 +57,14 @@ export class MigrationRunner {
     return this.ready;
   }
 
+  /** Resolves once migrations are applied or retries stop; never rejects. */
+  async whenReady(): Promise<boolean> {
+    // The loop resolves only after this.ready = true (or on cancel).
+    if (this.finished) await this.finished.catch(() => {});
+    while (!this.ready && !this.finished) await Bun.sleep(100);
+    return this.ready;
+  }
+
   private async run(): Promise<void> {
     const { signal } = this.abort;
     let delayMs = this.initialDelayMs;

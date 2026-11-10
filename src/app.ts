@@ -215,27 +215,26 @@ export async function buildApp(
       });
       migrationRunner.start();
 
-      // Boot hook: mark orphaned sessions as closed with server_restart reason
-      // Wait for migrations to complete before running UPDATE
-      app.addHook("onReady", async () => {
-        if (db?.isReady()) {
-          try {
-            await db.writer
-              .update(sessions)
-              .set({
-                closedAt: new Date().toISOString(),
-                closeReason: "server_restart",
-              })
-              .where(isNull(sessions.closedAt));
-          } catch (err) {
-            app.log.error(
-              { error: err instanceof Error ? err.message : String(err) },
-              "failed to mark orphaned sessions on boot",
-            );
-          }
-        } else if (db) {
-          // DB configured but migrations not yet ready — log only, never throw
-          app.log.warn("db not ready at onReady, skipping server_restart UPDATE");
+      // Boot: mark orphaned sessions as closed with server_restart reason. Runs in
+      // the background (never delays boot or transfers) once migrations land.
+      void migrationRunner.whenReady().then(async (ready) => {
+        if (!ready) {
+          app.log.warn("db not ready, skipping server_restart UPDATE");
+          return;
+        }
+        try {
+          await db?.writer
+            .update(sessions)
+            .set({
+              closedAt: new Date().toISOString(),
+              closeReason: "server_restart",
+            })
+            .where(isNull(sessions.closedAt));
+        } catch (err) {
+          app.log.error(
+            { error: err instanceof Error ? err.message : String(err) },
+            "failed to mark orphaned sessions on boot",
+          );
         }
       });
     } catch {

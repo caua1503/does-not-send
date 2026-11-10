@@ -27,9 +27,11 @@ export class SqlStore implements Store {
         this.logger.warn(`lote lento: ${durationMs}ms, ${events.length} eventos`);
       }
     } catch (err) {
-      // Check if it's a constraint violation (SQLSTATE class 23)
-      const code = (err as { code?: string }).code;
-      if (code && code.startsWith("23")) {
+      // Constraint violations (SQLSTATE class 23). Drizzle wraps driver errors,
+      // so the Postgres errno lives on the cause, not on err itself.
+      const errno = (err as { errno?: unknown; cause?: { errno?: unknown } }).cause?.errno ??
+        (err as { errno?: unknown }).errno;
+      if (typeof errno === "string" && errno.startsWith("23")) {
         throw new ConstraintViolationError("Constraint violation", err);
       }
       // Rethrow as-is (transient errors checked by caller)
