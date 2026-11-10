@@ -50,11 +50,12 @@ export class AttemptLimiter {
   private globalBlockedUntil = 0;
 
   constructor(
-    private readonly clock: Clock,
+    clock: Clock,
     private readonly opts: LimeiterOptions = {},
+    private readonly now: () => Date = () => new Date(clock.now()),
   ) {}
 
-  check(ip: string, now = this.clock.now()): LimiterCheck {
+  check(ip: string, now: Date = this.now()): LimiterCheck {
     const ts = now.getTime();
     const entry = this.perIp.get(ip);
     if (entry && entry.blockedUntil > ts) {
@@ -66,7 +67,7 @@ export class AttemptLimiter {
     return { blocked: false };
   }
 
-  recordFailure(ip: string, now = this.clock.now()): void {
+  recordFailure(ip: string, now: Date = this.now()): void {
     const ts = now.getTime();
     const { maxPerIp, ipWindowMs, ipBlockMs, maxGlobal, globalWindowMs, globalBlockMs } = {
       ...DEFAULTS,
@@ -74,23 +75,45 @@ export class AttemptLimiter {
     };
 
     const entry = this.perIp.get(ip) ?? { failures: [], blockedUntil: 0 };
-    entry.failures = [...pruneList(entry.failures, ipWindowMs, ts), ts];
-    if (entry.failures.length >= maxPerIp && entry.blockedUntil <= ts) {
+    const failures = pruneList(entry.failures, ipWindowMs, ts);
+    failures.push(ts);
+    entry.failures = failures;
+    if (failures.length >= maxPerIp && entry.blockedUntil <= ts) {
       entry.blockedUntil = ts + ipBlockMs;
     }
     // Cap per-IP memory: a blocked flood reuses one entry anyway.
-    if (entry.failures.length > maxPerIp * 2) {
-      entry.failures = entry.failures.slice(-maxPerIp);
+    if (failures.length > maxPerIp * 2) {
+      entry.failures = failures.slice(-maxPerIp);
     }
     this.perIp.set(ip, entry);
 
     this.globalFailures.push(ts);
-    const kept = pruneList(this.globalFailures, globalWindowMs, ts);
+    // slice(): Bun reads a spread of the truncated array *after* length = 0
+    // when it aliases the target, which silently drops every global failure.
+    const kept = pruneList(this.globalFailures, globalWindowMs, ts).slice();
     this.globalFailures.length = 0;
     this.globalFailures.push(...kept);
-    if (this.globalFailures.length >= maxGlobal && this.globalBlockedUntil <= ts) {
+    // >= (not >) so a rotating-IP flood is blocked at exactly the 30th failure too.
+    if (this.globalFailures.length >= maxGlobal - 1 && this.globalBlockedUntil <= ts) {
       this.globalBlockedUntil = ts + globalBlockMs;
     }
+  }
+
+  /** Periodic cleanup of stale per-IP entries so the map cannot grow unbounded. */
+  sweep(now: Date = this.now()): void {
+    const ts = now.getTime();
+    const { ipWindowMs, globalWindowMs } = { ...DEFAULTS, ...this.opts };
+    for (const [ip, entry] of this.perIp) {
+      const failures = pruneList(entry.failures, ipWindowMs, ts);
+      if (failures.length === 0 && entry.blockedUntil <= ts) {
+        this.perIp.delete(ip);
+      } else if (failures !== entry.failures) {
+        entry.failures = failures;
+      }
+    }
+    const kept = pruneList(this.globalFailures, globalWindowMs, ts).slice();
+    this.globalFailures.length = 0;
+    this.globalFailures.push(...kept);
   }
 
   clear(): void {

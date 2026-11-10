@@ -28,4 +28,20 @@ export function buildSessionCookie(token: string, secure: boolean, maxAgeSeconds
   return cookie.toString();
 }
 
-export const SESSION_LOGOUT_COOKIE = buildSessionCookie("", false, 0);
+/**
+ * Set-Cookie value for a login. Browsers reject (and some clients ignore) a
+ * cookie whose `Secure` attribute was serialized empty on plain HTTP, so drop
+ * the attribute for HTTP responses instead of emitting `; Secure;`.
+ */
+export function sessionCookieHeader(
+  token: string,
+  secureValue: boolean,
+  maxAgeSeconds: number,
+): string {
+  return buildSessionCookie(token, secureValue, maxAgeSeconds).replace("Secure=;", "");
+}
+
+/** Expires the admin cookie on logout (independent of the request protocol). */
+export function expiryCookieHeader(): string {
+  return buildSessionCookie("", false, 0);
+}

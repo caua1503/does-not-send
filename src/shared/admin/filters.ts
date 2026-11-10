@@ -204,15 +204,93 @@ export interface Period {
   to: string;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isPlainDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+interface ZonedParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/** Y-M-D H:M:S of `date` as seen on a clock in `tz`. */
+export function zonedParts(date: Date, tz: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+    .formatToParts(date)
+    .reduce<Record<string, string>>((acc, part) => {
+      if (part.type !== "literal") acc[part.type] = part.value;
+      return acc;
+    }, {});
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour) % 24,
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+/** UTC instant of wall-clock `y-m-d 00:00:00` in `tz` (iterates once for DST). */
+export function dateTuple(plainDate: string): [number, number, number] {
+  const [y, m, d] = plainDate.split("-").map(Number);
+  return [y!, m!, d!];
+}
+
+function startOfDayInZone(year: number, month: number, day: number, tz: string): number {
+  const wallAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
+  const p = zonedParts(new Date(wallAsUtc), tz);
+  const firstOffset = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - wallAsUtc;
+  const instant = wallAsUtc - firstOffset;
+  const p2 = zonedParts(new Date(instant), tz);
+  const secondOffset = Date.UTC(p2.year, p2.month - 1, p2.day, p2.hour, p2.minute, p2.second) - instant;
+  return secondOffset === firstOffset ? instant : wallAsUtc - secondOffset;
+}
+
 /**
  * Resolve the effective period: explicit bounds win; a missing `to` is "now";
- * missing `from` defaults to 30 days before `to`.
+ * missing `from` defaults to 30 days before `to`. A bare date is read as a
+ * calendar day in `tz` (from = 00:00:00.000, to = 23:59:59.999).
  */
-export function resolvePeriod(bounds: Pick<AdminFilters, "from" | "to">, now: Date): Period {
-  const toMs = bounds.to ? Date.parse(bounds.to) : now.getTime();
-  const fromMs = bounds.from
-    ? Date.parse(bounds.from)
-    : toMs - DEFAULT_PERIOD_DAYS * 24 * 60 * 60 * 1000;
+export function resolvePeriod(
+  bounds: Pick<AdminFilters, "from" | "to">,
+  now: Date,
+  tz: string = "America/Sao_Paulo",
+): Period {
+  let fromMs: number;
+  let toMs: number;
+
+  if (bounds.to && isPlainDate(bounds.to)) {
+    toMs = startOfDayInZone(...dateTuple(bounds.to), tz) + DAY_MS - 1;
+  } else if (bounds.to) {
+    toMs = Date.parse(bounds.to);
+  } else {
+    toMs = now.getTime();
+  }
+
+  if (bounds.from && isPlainDate(bounds.from)) {
+    fromMs = startOfDayInZone(...dateTuple(bounds.from), tz);
+  } else if (bounds.from) {
+    fromMs = Date.parse(bounds.from);
+  } else {
+    fromMs = toMs - DEFAULT_PERIOD_DAYS * DAY_MS;
+  }
+
   return { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() };
 }
 

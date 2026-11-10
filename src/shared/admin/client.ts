@@ -11,6 +11,8 @@ import type {
 import { serializeAdminFilters } from "./filters.js";
 import type { AdminFilters } from "./types.js";
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export interface ApiErrorInfo {
   status: number;
   code: string;
@@ -63,14 +65,25 @@ export class AdminClient {
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     let response: Response;
+    // The admin API answers quickly (5s statement timeout); never leave the UI hanging.
+    const callerSignal = init?.signal ?? null;
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
     try {
       response = await this.fetchFn(`${this.baseUrl}${path}`, {
         credentials: "same-origin",
         ...init,
+        signal,
         headers: { accept: "application/json", ...(init?.headers ?? {}) },
       }) as Response;
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      // A caller-initiated abort is control flow (navigation/refresh), not an error to show.
+      if (callerSignal?.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+        throw err instanceof DOMException ? err : new DOMException("Aborted", "AbortError");
+      }
+      if (timeout.aborted || (err instanceof DOMException && err.name === "TimeoutError")) {
+        throw new AdminApiError({ status: 0, code: "timeout", message: "Tempo esgotado" });
+      }
       throw new AdminApiError({ status: 0, code: "network_error", message: "Falha de rede" });
     }
 
@@ -104,7 +117,15 @@ export class AdminClient {
   }
 
   async logout(): Promise<void> {
-    await this.request("/admin/api/logout", { method: "POST" });
+    await this.request("/admin/api/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).catch((err: unknown) => {
+      // An expired session already logged the user out; clearing the cookie is enough.
+      if (err instanceof AdminApiError && err.status === 401) return;
+      throw err;
+    });
   }
 
   async me(): Promise<MeResponse> {

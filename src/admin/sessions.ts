@@ -20,7 +20,10 @@ export class AdminSessionStore {
   private readonly dummyHash = sha256Hex(crypto.randomUUID());
   private sweeper?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly clock: Clock) {}
+  constructor(
+    clock: Clock,
+    private readonly now: () => Date = () => new Date(clock.now()),
+  ) {}
 
   startSweeper(): void {
     if (this.sweeper) return;
@@ -37,7 +40,7 @@ export class AdminSessionStore {
   }
 
   /** Creates a token; only its sha256 half (plus expiry) is kept in memory. */
-  issue(now = this.clock.now()): { token: string; expiresAt: Date } {
+  issue(now: Date = this.now()): { token: string; expiresAt: Date } {
     const bytes = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES));
     const token = Buffer.from(bytes).toString("base64url");
     const expiresAtMs = now.getTime() + SESSION_TTL_MS;
@@ -47,7 +50,7 @@ export class AdminSessionStore {
   }
 
   /** Constant-shape check: hits and misses both end in a timingSafeEqual. */
-  lookup(token: string | undefined, now = this.clock.now()): Date | null {
+  lookup(token: string | undefined, now: Date = this.now()): Date | null {
     if (!token || token.length > MAX_TOKEN_LENGTH) {
       constantCompare(this.dummyHash, this.dummyHash);
       return null;
@@ -66,7 +69,7 @@ export class AdminSessionStore {
   }
 
   /** Removes expired entries; hourly via unref'd interval, plus opportunistically. */
-  sweep(now = this.clock.now()): void {
+  sweep(now: Date = this.now()): void {
     const ts = now.getTime();
     for (const [hash, expiresAt] of this.sessions) {
       if (expiresAt <= ts) this.sessions.delete(hash);

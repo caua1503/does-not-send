@@ -131,3 +131,22 @@ describe("resolvePeriod", () => {
     expect(explicitFrom.to).toBe("2026-11-06T12:00:00.000Z");
   });
 });
+
+describe("resolvePeriod e fusos", () => {
+  it("datas 'YYYY-MM-DD' viram o dia inteiro em ADMIN_TZ, não em UTC", () => {
+    // Que bug pega: from=2026-01-01 perderia as 3 primeiras horas do dia em São Paulo.
+    const now = new Date("2026-06-01T00:00:00Z");
+    const period = resolvePeriod({ from: "2026-01-01", to: "2026-01-01" }, now, "America/Sao_Paulo");
+    expect(period).toEqual({
+      from: "2026-01-01T03:00:00.000Z",
+      to: "2026-01-02T02:59:59.999Z",
+    });
+  });
+
+  it("sem bounds, usa os últimos 30 dias terminando em agora", () => {
+    const now = new Date("2026-03-31T12:00:00Z");
+    const { from, to } = resolvePeriod({}, now);
+    expect(to).toBe("2026-03-31T12:00:00.000Z");
+    expect(Date.parse(to) - Date.parse(from)).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+});

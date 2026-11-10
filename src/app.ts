@@ -30,6 +30,9 @@ import {
 } from "./recording/index.js";
 import { sessions } from "./db/schema.js";
 import { isNull } from "drizzle-orm";
+import { registerAdmin, type AdminDeps } from "./admin/index.js";
+import { loadAdminPageHtml } from "./admin/page.js";
+import { adminRoutes } from "./controllers/admin.js";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -114,6 +117,9 @@ export interface AppContext {
   db?: DbClient & { isReady(): boolean };
   migrationRunner?: MigrationRunner;
   recorder: import("./recording/index.js").SessionRecorder;
+  adminDeps?: AdminDeps;
+  /** Shell HTML for /admin, loaded once at boot from web/dist/admin. */
+  adminPageHtml?: string;
 }
 
 export interface BuildAppOptions {
@@ -169,7 +175,10 @@ export async function buildApp(
     void reply.header("X-Frame-Options", "DENY");
     void reply.header("X-XSS-Protection", "0");
     if (!reply.hasHeader("Content-Security-Policy")) {
-      const isApiOrHealth = request.url.startsWith("/api") || request.url.startsWith("/health");
+      const isApiOrHealth =
+        request.url.startsWith("/api") ||
+        request.url.startsWith("/health") ||
+        request.url.startsWith("/admin/api/");
       if (isApiOrHealth) {
         void reply.header("Content-Security-Policy", "default-src 'none'");
       } else {
@@ -268,6 +277,11 @@ export async function buildApp(
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore, recorder, app.log);
 
+  const adminPageHtml = config.admin ? loadAdminPageHtml() : undefined;
+  if (config.admin && !adminPageHtml) {
+    app.log.warn({}, "Admin frontend not built (web/dist/admin); /admin will answer 503");
+  }
+
   const ctx: AppContext = {
     config,
     clock,
@@ -279,6 +293,7 @@ export async function buildApp(
     db,
     migrationRunner,
     recorder,
+    ...(adminPageHtml ? { adminPageHtml } : {}),
   };
 
   if (options?.startSweeper ?? true) {
@@ -295,6 +310,13 @@ export async function buildApp(
 
   // Clean orphan files from previous runs
   await cleanOrphans(config.tempDir, sessionStore);
+
+  // Admin (page + API): absent entirely when config.admin is undefined.
+  const adminDeps = await registerAdmin(app, ctx);
+  if (adminDeps) {
+    app.decorate("adminDeps", adminDeps);
+    await app.register(adminRoutes, { ctx, deps: adminDeps });
+  }
 
   // Routes
   await app.register(healthRoute);

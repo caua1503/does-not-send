@@ -27,7 +27,6 @@ export const CLOSE_REASON_LABELS: Record<CloseReason, string> = {
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   pairing_refused: "Pareamento recusado",
-  qr_reused: "QR reutilizado",
 };
 
 export const GRANULARITY_LABELS: Record<Granularity, string> = {

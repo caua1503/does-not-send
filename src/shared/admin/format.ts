@@ -35,6 +35,17 @@ export function formatNumber(value: number): string {
   return INTEGER.format(value);
 }
 
+/**
+ * Canonical ISO-8601 UTC string for the admin contract ("YYYY-MM-DDTHH:mm:ss.sssZ").
+ * Accepts Date and the strings Postgres/Bun.SQL return ("2026-01-02 03:04:05+00"),
+ * so every response field and the client share the same shape.
+ */
+export function toIsoString(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function parseIso(iso: string): Date | null {
   if (!iso) return null;
   const date = new Date(iso);
