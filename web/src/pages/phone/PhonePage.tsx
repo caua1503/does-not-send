@@ -206,6 +206,7 @@ export default function PhonePage({
 
     return () => {
       isCancelled = true;
+      pairingInProgressRef.current = false;
     };
   }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
 

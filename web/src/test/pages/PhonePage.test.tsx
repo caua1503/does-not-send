@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import imageCompression from "browser-image-compression";
@@ -100,6 +101,38 @@ describe("PhonePage", () => {
     );
     expect(stored.phoneCredential).toBe("phone-secret-cred-123");
     expect(stored.visualId).toBe("A7K92F");
+  });
+
+  it("conclui o pareamento sob StrictMode (efeitos remontados)", async () => {
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/session-test-id",
+        search: "?qrToken=strict-mode-qr",
+      },
+      writable: true,
+    });
+
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        phoneCredential: "strict-cred",
+        visualId: "S7T23C",
+        state: "PAIRED",
+      }),
+    }));
+
+    render(
+      <StrictMode>
+        <PhonePage />
+      </StrictMode>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
+    });
   });
 
   it("recupera credencial e visualId do localStorage sem chamar pair", () => {
