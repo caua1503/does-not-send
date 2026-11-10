@@ -284,11 +284,13 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
     expect(page.items.map((t) => t.size)).toEqual([3000, 5000]);
 
     const injected = (await get(
-      "/admin/api/transfers?sort=size%3Bdrop+table+transfers&dir=x",
+      "/admin/api/transfers?from=2026-01-01&to=2026-01-31&sort=size%3Bdrop+table+transfers&dir=x",
     )) as Paginated<TransferRow>;
     expect(injected.items.length).toBeGreaterThan(0);
 
-    const capped = (await get("/admin/api/transfers?pageSize=500")) as Paginated<TransferRow>;
+    const capped = (await get(
+      "/admin/api/transfers?from=2026-01-01&to=2026-01-31&pageSize=500",
+    )) as Paginated<TransferRow>;
     expect(capped.pageSize).toBe(100);
   });
 
@@ -304,8 +306,9 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
       "transfer_finished",
       "transfer_started",
       "transfer_finished",
+      "transfer_started", // t3 (falhou, tem início e fim)
       "transfer_finished",
-      "transfer_started",
+      "transfer_started", // t4 ainda em andamento: só início
       "closed",
     ]);
     expect(detail.timeline[0]!.at).toBe(insertedAt["2026-01-05T10:00:00-03:00"]);

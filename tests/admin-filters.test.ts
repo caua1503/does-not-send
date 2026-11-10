@@ -76,8 +76,8 @@ describe("parseAdminFilters", () => {
   it("inverte from/to quando from vem depois de to", () => {
     const { filters, warnings } = parseAdminFilters("from=2026-02-02&to=2026-01-01");
     expect(warnings).toContain("from");
-    expect(filters.from).toBe("2026-01-01T00:00:00.000Z");
-    expect(filters.to).toBe("2026-02-02T00:00:00.000Z");
+    expect(filters.from).toBe("2026-01-01");
+    expect(filters.to).toBe("2026-02-02");
   });
 
   it("troca minSize/maxSize quando invertidos", () => {
@@ -141,6 +141,15 @@ describe("resolvePeriod e fusos", () => {
       from: "2026-01-01T03:00:00.000Z",
       to: "2026-01-02T02:59:59.999Z",
     });
+  });
+
+  it("data simples fica como 'YYYY-MM-DD' (não vira meia-noite UTC)", () => {
+    // Que bug pega: parseAdminFilters convertendo "2026-01-06" em ISO UTC antes do resolvePeriod,
+    // esticando o filtro 21:00 do dia anterior no horário de São Paulo.
+    const { filters, warnings } = parseAdminFilters("from=2026-01-06&to=2026-01-06");
+    expect(warnings).toEqual([]);
+    expect(filters.from).toBe("2026-01-06");
+    expect(filters.to).toBe("2026-01-06");
   });
 
   it("sem bounds, usa os últimos 30 dias terminando em agora", () => {

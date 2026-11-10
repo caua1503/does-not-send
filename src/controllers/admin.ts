@@ -6,7 +6,7 @@ import { isOriginAllowed, isSecureRequest, isJsonContentType } from "../admin/ht
 import { createAdminQueries, fillBuckets, SESSION_SORTS, TRANSFER_SORTS, parseDirection, parseSort } from "../admin/queries.js";
 import { buildBuckets } from "../admin/time-buckets.js";
 import { errorHandler } from "../utils/error-handler.js";
-import { parseAdminFilters, resolvePeriod } from "../shared/admin/filters.js";
+import { parseAdminFilters, resolvePeriod, type Period } from "../shared/admin/filters.js";
 import { MAX_BUCKETS, type AdminFilters, type SessionTimelineItem } from "../shared/admin/types.js";
 
 export interface AdminRouteOptions {
@@ -151,10 +151,14 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return false;
   };
 
-  const readFilters = (request: FastifyRequest): AdminFilters => {
+  // The effective period is resolved once per request and its ISO instants are
+  // what the WHERE builders compare against (bare dates are day bounds in tz).
+  const readFilters = (request: FastifyRequest): { filters: AdminFilters; period: Period } => {
     const url = request.raw.url ?? request.url;
     const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
-    return parseAdminFilters(query).filters;
+    const { filters } = parseAdminFilters(query);
+    const period = resolvePeriod(filters, new Date(ctx.clock.now()), ctx.config.admin!.tz);
+    return { filters: { ...filters, ...period }, period };
   };
 
   const sortOf = (request: FastifyRequest, key: string): string | null => {
@@ -164,17 +168,15 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
 
   app.get("/admin/api/summary", async (request, reply) => {
     if (!requireDb(reply)) return reply;
-    const filters = readFilters(request);
-    const period = resolvePeriod(filters, new Date(ctx.clock.now()), ctx.config.admin!.tz);
+    const { filters, period } = readFilters(request);
     const data = await queries().summary(filters);
     return reply.send({ period, ...data });
   });
 
   app.get("/admin/api/timeseries", async (request, reply) => {
     if (!requireDb(reply)) return reply;
-    const filters = readFilters(request);
+    const { filters, period } = readFilters(request);
     const tz = ctx.config.admin!.tz;
-    const period = resolvePeriod(filters, new Date(ctx.clock.now()), tz);
     const buckets = buildBuckets(new Date(period.from), new Date(period.to), filters.granularity, tz, MAX_BUCKETS);
     const rows = await queries().timeseries(filters, buckets);
     return reply.send({ granularity: filters.granularity, points: fillBuckets(buckets, rows) });
@@ -182,7 +184,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
 
   app.get("/admin/api/transfers", async (request, reply) => {
     if (!requireDb(reply)) return reply;
-    const filters = readFilters(request);
+    const { filters } = readFilters(request);
     const sort = parseSort(sortOf(request, "sort"), TRANSFER_SORTS, "startedAt");
     const dir = parseDirection(sortOf(request, "dir"), "desc");
     return reply.send(await queries().listTransfers(filters, sort, dir));
@@ -190,7 +192,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
 
   app.get("/admin/api/sessions", async (request, reply) => {
     if (!requireDb(reply)) return reply;
-    const filters = readFilters(request);
+    const { filters } = readFilters(request);
     const sort = parseSort(sortOf(request, "sort"), SESSION_SORTS, "createdAt");
     const dir = parseDirection(sortOf(request, "dir"), "desc");
     return reply.send(await queries().listSessions(filters, sort, dir));

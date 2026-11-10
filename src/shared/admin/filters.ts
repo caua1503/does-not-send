@@ -131,8 +131,8 @@ export function parseAdminFilters(input: URLSearchParams | string): ParsedFilter
     else warnings.push("granularity");
   }
 
-  let from = readIso(params, "from", warnings);
-  let to = readIso(params, "to", warnings);
+  let from = readBound(params, "from", warnings);
+  let to = readBound(params, "to", warnings);
   if (from && to && Date.parse(from) > Date.parse(to)) {
     warnings.push("from");
     [from, to] = [to, from];
@@ -252,7 +252,19 @@ export function dateTuple(plainDate: string): [number, number, number] {
   return [y!, m!, d!];
 }
 
-function startOfDayInZone(year: number, month: number, day: number, tz: string): number {
+/**
+ * A bare date is kept as-is ("YYYY-MM-DD"): resolvePeriod turns it into a full
+ * day in the admin timezone, so it must not be re-read as UTC midnight here.
+ */
+function readBound(params: URLSearchParams, key: string, warnings: string[]): string | undefined {
+  const value = cleanText(params.get(key));
+  if (value !== undefined && isPlainDate(value)) {
+    return Number.isNaN(Date.parse(value)) ? (warnings.push(key), undefined) : value;
+  }
+  return readIso(params, key, warnings);
+}
+
+export function startOfDayInZone(year: number, month: number, day: number, tz: string): number {
   const wallAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
   const p = zonedParts(new Date(wallAsUtc), tz);
   const firstOffset = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - wallAsUtc;

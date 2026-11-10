@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, or, sql, sum } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { BunSQLDatabase } from "drizzle-orm/bun-sql";
 import * as schema from "../db/schema.js";
@@ -278,16 +278,26 @@ export function createAdminQueries(db: ReaderDb) {
     closeReason: sessions.closeReason,
   };
 
+  // Bounds are ISO instants (Period); a bare date reaches the driver as
+  // `date <= timestamptz`, which Postgres evaluates like `date < timestamptz`,
+  // so it must never be passed through as-is.
+  function within(column: AnyColumn, from: string, to: string): SQL {
+    return and(gte(column, from), lte(column, to))!;
+  }
+
   function transferWhere(filters: AdminFilters): SQL | undefined {
     const conditions: Array<SQL | undefined> = [];
     if (filters.from && filters.to) {
-      conditions.push(gte(transfers.startedAt, filters.from), lte(transfers.startedAt, filters.to));
+      conditions.push(within(transfers.startedAt, filters.from, filters.to));
     }
     if (filters.category) conditions.push(eq(transfers.category, filters.category));
     if (filters.status) conditions.push(eq(transfers.status, filters.status));
     if (filters.minSize !== undefined) conditions.push(gte(transfers.size, filters.minSize));
     if (filters.maxSize !== undefined) conditions.push(lte(transfers.size, filters.maxSize));
-    if (filters.q) conditions.push(ilike(transfers.name, likePattern(filters.q)));
+    // ilike() would forget the ESCAPE clause, leaving `\` escaping partially on.
+    if (filters.q) {
+      conditions.push(sql`${transfers.name} ILIKE ${likePattern(filters.q)} ESCAPE '\\'`);
+    }
     if (filters.session) {
       conditions.push(
         or(
@@ -317,7 +327,7 @@ export function createAdminQueries(db: ReaderDb) {
   function sessionWhere(filters: AdminFilters): SQL | undefined {
     const conditions: Array<SQL | undefined> = [];
     if (filters.from && filters.to) {
-      conditions.push(gte(sessions.createdAt, filters.from), lte(sessions.createdAt, filters.to));
+      conditions.push(within(sessions.createdAt, filters.from, filters.to));
     }
     if (filters.ip) {
       conditions.push(or(eq(sessions.computerIp, filters.ip), eq(sessions.phoneIp, filters.ip)));
@@ -333,7 +343,7 @@ export function createAdminQueries(db: ReaderDb) {
   function pairingRefusedWhere(filters: AdminFilters): SQL {
     const conditions: SQL[] = [eq(events.type, "pairing_refused"), sql`${events.ip} <> ''`];
     if (filters.from && filters.to) {
-      conditions.push(gte(events.at, filters.from), lte(events.at, filters.to));
+      conditions.push(within(events.at, filters.from, filters.to));
     }
     if (filters.ip) conditions.push(eq(events.ip, filters.ip));
     if (filters.session) {
