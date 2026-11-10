@@ -94,7 +94,7 @@ Mantidos por critério: pareamento, sessão, reconexão, upload, ZIP, segurança
 
 Verificação: `bun run test`, commit `test(backend): remove testes de forma e restaura contrato de QR reutilizável`.
 
-### Status — DONE — commit `T4_HASH` (substituir pelo hash real)
+### Status — DONE — commit `2acf7e3`
 
 Restaurados:
 - `session-pairing`: "QR continua válido em sessão PAIRED e DISCONNECTED" — contrato de QR reutilizável/reconexão (removido no snapshot 2ea75a5); restaurado verbatim.
