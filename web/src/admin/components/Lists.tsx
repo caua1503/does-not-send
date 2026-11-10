@@ -1,5 +1,10 @@
 import { Link } from "./Link.tsx";
-import type { Paginated, SessionRow, TransferRow } from "../../../../src/shared/admin/types.ts";
+import type {
+  Paginated,
+  SessionRow,
+  TransferRow,
+  TransferStatus,
+} from "../../../../src/shared/admin/types.ts";
 import {
   CLOSE_REASON_LABELS,
   POSITION_LABELS,
@@ -11,7 +16,7 @@ import { Badge, Card } from "../../components/ui/index.ts";
 
 type BadgeVariant = "neutral" | "success" | "warn" | "error";
 
-function statusVariant(status: TransferRow["status"]): BadgeVariant {
+export function statusVariant(status: TransferStatus): BadgeVariant {
   return status === "completed" ? "success" : status === "failed" ? "error" : "warn";
 }
 

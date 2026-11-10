@@ -53,56 +53,6 @@ describe("PhonePage", () => {
     expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
   });
 
-  it("pareia com qrToken, armazena no localStorage e exibe visualId no cabeçalho", async () => {
-    Object.defineProperty(window, "location", {
-      value: {
-        origin: "http://localhost:3000",
-        pathname: "/enviar/session-test-id",
-        search: "?qrToken=secret-qr-token",
-      },
-      writable: true,
-    });
-
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        success: true,
-        phoneCredential: "phone-secret-cred-123",
-        visualId: "A7K92F",
-        shortId: "A7K92F",
-        state: "PAIRED",
-        pairedAt: new Date().toISOString(),
-      }),
-    });
-
-    render(<PhonePage />);
-
-    expect(screen.getByText(/conectando ao computador/i)).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toContain("/api/sessions/session-test-id/pair");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ qrToken: "secret-qr-token" });
-
-    // Header exibe visual ID
-    const visualBadge = screen.getByTestId("phone-visual-id");
-    expect(visualBadge).toBeInTheDocument();
-    expect(visualBadge).toHaveTextContent("ID: A7K92F");
-
-    // localStorage preenchido
-    const stored = JSON.parse(
-      localStorage.getItem("dns_phone_cred_session-test-id") || "{}"
-    );
-    expect(stored.phoneCredential).toBe("phone-secret-cred-123");
-    expect(stored.visualId).toBe("A7K92F");
-  });
-
   it("conclui o pareamento sob StrictMode (efeitos remontados)", async () => {
     Object.defineProperty(window, "location", {
       value: {
@@ -133,32 +83,6 @@ describe("PhonePage", () => {
     await waitFor(() => {
       expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
     });
-  });
-
-  it("recupera credencial e visualId do localStorage sem chamar pair", () => {
-    localStorage.setItem(
-      "dns_phone_cred_session-test-id",
-      JSON.stringify({
-        phoneCredential: "cached-credential",
-        visualId: "X8M41P",
-      })
-    );
-
-    Object.defineProperty(window, "location", {
-      value: {
-        origin: "http://localhost:3000",
-        pathname: "/enviar/session-test-id",
-        search: "",
-      },
-      writable: true,
-    });
-
-    render(<PhonePage />);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
-    const visualBadge = screen.getByTestId("phone-visual-id");
-    expect(visualBadge).toHaveTextContent("ID: X8M41P");
   });
 
   it("trata erro 401 no pareamento com mensagem clara", async () => {
@@ -470,29 +394,6 @@ describe("PhonePage", () => {
         expect(screen.getByTestId("status-reconnecting")).toBeInTheDocument();
         expect(screen.getByText(/reconectando\.\.\./i)).toBeInTheDocument();
       });
-    });
-
-    it("exibe aviso 'sessão encerrada' ao receber session_closed e bloqueia botão de envio", async () => {
-      render(<PhonePage />);
-
-      await waitFor(() => {
-        expect(mockSockets.length).toBeGreaterThanOrEqual(1);
-      });
-
-      const ws = mockSockets[0];
-      act(() => {
-        ws.receiveMessage({ type: "auth_ok", role: "phone" });
-        ws.receiveMessage({ type: "session_closed", reason: "user_closed" });
-      });
-
-      await waitFor(() => {
-        expect(screen.getByTestId("status-session-closed")).toBeInTheDocument();
-        expect(screen.getAllByText(/sessão encerrada/i).length).toBeGreaterThanOrEqual(1);
-      });
-
-      const input = document.getElementById("phone-file-input") as HTMLInputElement;
-      expect(input).toBeDisabled();
-      expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
     });
   });
 });

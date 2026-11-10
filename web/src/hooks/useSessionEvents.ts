@@ -35,7 +35,7 @@ export function useSessionEvents(
   options?: UseSessionEventsOptions,
 ): UseSessionEventsResult {
   const role = options?.role ?? "computer";
-  const reconnectDelay = options?.reconnectInterval ?? (role === "phone" ? 2000 : 2000);
+  const reconnectDelay = options?.reconnectInterval ?? 2000;
 
   const [state, dispatch] = useReducer(sessionReducer, initialState);
   const [connected, setConnected] = useState(false);

@@ -3,7 +3,7 @@ import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import type { Config } from "../utils/config.js";
-import type { SessionRepository } from "../repositories/session-repository.js";
+import type { SessionStore } from "../session/store.js";
 import type { SessionFile } from "../types.js";
 import { generateStorageName } from "../utils/crypto.js";
 import { sanitizeFilename } from "../utils/sanitize.js";
@@ -20,7 +20,7 @@ export interface UploadResult {
 export class FileService {
   constructor(
     private config: Config,
-    private repository: SessionRepository,
+    private repository: SessionStore,
     private recorder?: SessionRecorder,
     private log: Logger = { info: () => {}, warn: () => {}, error: () => {} },
   ) {}

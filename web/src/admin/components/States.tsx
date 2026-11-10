@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, Database, Inbox } from "lucide-react";
+import { AlertTriangle, Database, Inbox } from "lucide-react";
 import { AdminApiError } from "../../../../src/shared/admin/client.ts";
 import { POSITION_LABELS } from "../../../../src/shared/admin/labels.ts";
 import { Button, Card, EmptyState } from "../../components/ui/index.ts";
@@ -57,14 +57,6 @@ export function EmptyStateCard({ description }: { description: string }) {
   return (
     <Card>
       <EmptyState icon={Inbox} title={POSITION_LABELS.noData} description={description} />
-    </Card>
-  );
-}
-
-export function ForbiddenState() {
-  return (
-    <Card>
-      <EmptyState icon={Ban} title="Acesso negado" description="Faça login para ver o painel." />
     </Card>
   );
 }

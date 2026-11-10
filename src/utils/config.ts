@@ -1,4 +1,6 @@
 import { resolve } from "node:path";
+import { DEFAULT_TIMING_CONFIG } from "../session/timing.js";
+import { DEFAULT_CLEANUP_RETRY } from "../session/store.js";
 
 /**
  * Resolved admin credentials. `undefined` means the /admin routes are not
@@ -43,11 +45,12 @@ function optionalEnv(name: string, fallback: string): string {
 const ADMIN_DEFAULT_USER = "admin";
 const ADMIN_DEFAULT_PASSWORD = "admin";
 const ADMIN_MIN_PRODUCTION_PASSWORD = 12;
-const DEFAULT_ADMIN_TZ = "America/Sao_Paulo";
+/** Single source for the admin timezone default (re-exported by shared/admin/format). */
+export const DEFAULT_TZ = "America/Sao_Paulo";
 
 /** Falls back to UTC when the value is not a valid IANA zone (never throws at boot). */
 function resolveTimeZone(raw: string | undefined): string {
-  const candidate = raw && raw.trim() !== "" ? raw.trim() : DEFAULT_ADMIN_TZ;
+  const candidate = raw && raw.trim() !== "" ? raw.trim() : DEFAULT_TZ;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: candidate });
     return candidate;
@@ -101,19 +104,19 @@ export function loadConfig(): Config {
   const publicBaseUrl = requireEnv("PUBLIC_BASE_URL");
   const heartbeatTimeoutMs = parsePositiveInt(
     "HEARTBEAT_TIMEOUT_MS",
-    optionalEnv("HEARTBEAT_TIMEOUT_MS", "25000"),
+    optionalEnv("HEARTBEAT_TIMEOUT_MS", String(DEFAULT_TIMING_CONFIG.heartbeatTimeoutMs)),
   );
   const wsAuthTimeoutMs = parsePositiveInt(
     "WS_AUTH_TIMEOUT_MS",
-    optionalEnv("WS_AUTH_TIMEOUT_MS", "5000"),
+    optionalEnv("WS_AUTH_TIMEOUT_MS", String(DEFAULT_TIMING_CONFIG.wsAuthTimeoutMs)),
   );
   const cleanupMaxAttempts = parsePositiveInt(
     "CLEANUP_MAX_ATTEMPTS",
-    optionalEnv("CLEANUP_MAX_ATTEMPTS", "5"),
+    optionalEnv("CLEANUP_MAX_ATTEMPTS", String(DEFAULT_CLEANUP_RETRY.maxAttempts)),
   );
   const cleanupInitialDelayMs = parsePositiveInt(
     "CLEANUP_INITIAL_DELAY_MS",
-    optionalEnv("CLEANUP_INITIAL_DELAY_MS", "100"),
+    optionalEnv("CLEANUP_INITIAL_DELAY_MS", String(DEFAULT_CLEANUP_RETRY.initialDelayMs)),
   );
   let admin: AdminConfig | undefined;
   try {

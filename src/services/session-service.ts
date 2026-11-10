@@ -41,7 +41,6 @@ export class SessionService {
       visualId,
       shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
-      isPaired: false,
       state: "WAITING",
       activeUploads: 0,
       createdAt: new Date(now).toISOString(),
@@ -51,7 +50,6 @@ export class SessionService {
         computer: now,
         phone: null,
       },
-      phoneLostAt: null,
       closedReason: null,
     };
 
@@ -77,12 +75,10 @@ export class SessionService {
     const result = consumePairing(session, qrToken);
     if (result.ok) {
       const now = this.clock.now();
-      session.isPaired = true;
       if (!session.lastSeen) {
         session.lastSeen = { computer: null, phone: null };
       }
       session.lastSeen.phone = now;
-      session.phoneLostAt = null;
       this.store.update(session);
       this.touchActivity(id);
     }

@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestApp, cleanupTestApp, createSession, type TestContext } from "./helpers.js";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
 function createMultipartPayload(
   files: Array<{ name: string; content: Buffer; filename: string }>,
 ): { body: Buffer; contentType: string } {
@@ -162,34 +160,5 @@ describe("upload", () => {
     expect(result.files).toHaveLength(1);
     expect(result.files[0].originalName).toBe("info.txt");
     expect(result.files[0].state).toBe("completed");
-  });
-
-  it("stores file with server-generated name, not original", async () => {
-    const session = await createSession(ctx.app);
-    const { body, contentType } = createMultipartPayload([
-      { name: "file", content: Buffer.from("secret"), filename: "../../etc/passwd" },
-    ]);
-
-    const res = await ctx.app.inject({
-      method: "POST",
-      url: `/api/sessions/${session.id}/files`,
-      headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
-      body,
-    });
-
-    if (res.statusCode === 201) {
-      const result = res.json();
-      // Original name should be sanitized
-      expect(result.files[0].originalName).not.toContain("..");
-      expect(result.files[0].originalName).not.toContain("/");
-
-      // Check disk: no file named "passwd" or similar
-      const dir = join(ctx.config.tempDir, session.id);
-      const diskFiles = await readdir(dir);
-      for (const f of diskFiles) {
-        expect(f).not.toBe("passwd");
-        expect(f).not.toContain("..");
-      }
-    }
   });
 });

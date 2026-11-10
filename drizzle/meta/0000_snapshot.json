@@ -309,9 +309,6 @@
       "name": "close_reason",
       "schema": "public",
       "values": [
-        "idle_timeout",
-        "computer_lost",
-        "phone_lost",
         "user_closed",
         "closed",
         "server_restart"
@@ -321,8 +318,7 @@
       "name": "event_type",
       "schema": "public",
       "values": [
-        "pairing_refused",
-        "qr_reused"
+        "pairing_refused"
       ]
     },
     "public.transfer_status": {

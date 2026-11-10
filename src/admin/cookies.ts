@@ -1,8 +1,6 @@
 import type { FastifyRequest } from "fastify";
 
 export const ADMIN_COOKIE_NAME = "admin_session";
-/** 8h. */
-export const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60;
 
 /** Reads the admin session token from the request Cookie header via Bun.CookieMap. */
 export function readSessionToken(request: FastifyRequest): string | undefined {

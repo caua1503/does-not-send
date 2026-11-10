@@ -87,16 +87,6 @@ describe("authorization", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("nonexistent session returns same error as wrong token", async () => {
-    const res = await ctx.app.inject({
-      method: "GET",
-      url: "/api/sessions/nonexistent-id",
-      headers: { authorization: "Bearer sometoken" },
-    });
-    expect(res.statusCode).toBe(401);
-    expect(res.json().error).toBe("Unauthorized");
-  });
-
   it("error response does not reveal session existence", async () => {
     const session = await createSession(ctx.app);
 

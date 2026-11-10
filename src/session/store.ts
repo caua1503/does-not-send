@@ -83,7 +83,6 @@ export class SessionStore {
     if (!session.lastSeen) {
       session.lastSeen = { computer: null, phone: null };
     }
-    if (session.phoneLostAt === undefined) session.phoneLostAt = null;
     if (session.closedReason === undefined) session.closedReason = null;
     this.sessions.set(session.id, session);
   }
@@ -168,7 +167,6 @@ export class SessionStore {
 
     if (role === "phone" && session.state === "DISCONNECTED") {
       transition(session, "PAIRED");
-      session.phoneLostAt = null;
     }
 
     this.update(session);
@@ -443,16 +441,12 @@ export class SessionStore {
       if (session.state === "PAIRED" || session.state === "TRANSFERRING") {
         if (!phonePresent) {
           transition(session, "DISCONNECTED");
-          if (session.phoneLostAt === null) {
-            session.phoneLostAt = now;
-          }
           this.abortUploads(session.id);
           this.update(session);
         }
       } else if (session.state === "DISCONNECTED") {
         if (phonePresent) {
           transition(session, "PAIRED");
-          session.phoneLostAt = null;
           this.update(session);
         }
       }

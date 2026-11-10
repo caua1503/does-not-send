@@ -23,11 +23,20 @@ describe("admin hash router", () => {
 });
 
 describe("fitGranularity", () => {
+  const today = Date.now();
+  const from = new Date(today - 30 * 86_400_000).toISOString().slice(0, 10);
+  const to = new Date(today).toISOString().slice(0, 10);
+  const yearsAgo = (n: number) => {
+    const d = new Date(today);
+    d.setUTCFullYear(d.getUTCFullYear() - n);
+    return d.toISOString().slice(0, 10);
+  };
+
   it("não deixa a série passar de 400 buckets", () => {
     // Que bug pega: período longo em dias estouraria o limite e a API recusaria.
-    expect(fitGranularity("day", "2026-10-12", "2026-11-10")).toBe("day");
-    expect(fitGranularity("day", "2022-01-01", "2026-11-10")).toBe("week");
-    expect(fitGranularity("day", "2000-01-01", "2026-11-10")).toBe("month");
-    expect(fitGranularity("day", "1970-01-01", "2026-11-10")).toBe("year");
+    expect(fitGranularity("day", from, to)).toBe("day");
+    expect(fitGranularity("day", yearsAgo(4), to)).toBe("week");
+    expect(fitGranularity("day", yearsAgo(26), to)).toBe("month");
+    expect(fitGranularity("day", yearsAgo(56), to)).toBe("year");
   });
 });

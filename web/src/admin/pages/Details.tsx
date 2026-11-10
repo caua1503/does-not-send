@@ -15,7 +15,7 @@ import type { SessionRow, SessionTimelineItem } from "../../../../src/shared/adm
 import type { AdminApi } from "../api.ts";
 import { useRemote } from "../use-remote.ts";
 import { Link } from "../components/Link.tsx";
-import { SessionStatus } from "../components/Lists.tsx";
+import { SessionStatus, statusVariant } from "../components/Lists.tsx";
 import { ErrorState, Skeleton } from "../components/States.tsx";
 import { Badge, Card, EmptyState } from "../../components/ui/index.ts";
 import { FileQuestion } from "lucide-react";
@@ -55,7 +55,7 @@ export function SessionDetailPage({ api, id, tz }: { api: AdminApi; id: string; 
                         <span className="tabular text-[var(--color-text-muted)]">{formatBytes(t.size)}</span>
                         <Badge
                           label={TRANSFER_STATUS_LABELS[t.status]}
-                          variant={t.status === "completed" ? "success" : t.status === "failed" ? "error" : "warn"}
+                          variant={statusVariant(t.status)}
                         />
                       </span>
                     </li>
@@ -114,13 +114,7 @@ export function TransferDetailPage({ api, id, tz }: { api: AdminApi; id: string;
               <Fact label="Situação">
                 <Badge
                   label={TRANSFER_STATUS_LABELS[state.data.transfer.status]}
-                  variant={
-                    state.data.transfer.status === "completed"
-                      ? "success"
-                      : state.data.transfer.status === "failed"
-                        ? "error"
-                        : "warn"
-                  }
+                  variant={statusVariant(state.data.transfer.status)}
                 />
               </Fact>
               <Fact label="Categoria">{categoryLabel(state.data.transfer.category)}</Fact>

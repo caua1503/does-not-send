@@ -1,12 +1,8 @@
 /**
  * Typed API client.
- * BASE_URL is injected by Vite at build time via __BASE_URL__ define.
- * Falls back to empty string (relative paths) for dev server proxy.
  */
 
-declare const __BASE_URL__: string;
-
-const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
+import { BASE_URL as BASE } from "./base.ts";
 
 export interface Session {
   id: string;
