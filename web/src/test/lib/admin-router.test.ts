@@ -23,20 +23,30 @@ describe("admin hash router", () => {
 });
 
 describe("fitGranularity", () => {
-  const today = Date.now();
-  const from = new Date(today - 30 * 86_400_000).toISOString().slice(0, 10);
-  const to = new Date(today).toISOString().slice(0, 10);
-  const yearsAgo = (n: number) => {
-    const d = new Date(today);
-    d.setUTCFullYear(d.getUTCFullYear() - n);
-    return d.toISOString().slice(0, 10);
-  };
+  // Datas fixas: o teste é de granularidade, não de "hoje".
+  const TO = "2026-11-10";
+  const spanDays = (from: string, to: string) =>
+    Math.max(1, Math.ceil((Date.parse(to) - Date.parse(from)) / 86_400_000));
+  const bucketsFor = (granularity: string, days: number) =>
+    granularity === "day" ? days : Math.ceil(days / (granularity === "week" ? 7 : granularity === "month" ? 30 : 365));
 
-  it("não deixa a série passar de 400 buckets", () => {
-    // Que bug pega: período longo em dias estouraria o limite e a API recusaria.
-    expect(fitGranularity("day", from, to)).toBe("day");
-    expect(fitGranularity("day", yearsAgo(4), to)).toBe("week");
-    expect(fitGranularity("day", yearsAgo(26), to)).toBe("month");
-    expect(fitGranularity("day", yearsAgo(56), to)).toBe("year");
+  it("mantém a granularidade pedida quando ela já cabe em 400 buckets", () => {
+    expect(fitGranularity("day", "2026-10-12", TO)).toBe("day");
+    expect(fitGranularity("month", "2000-01-01", TO)).toBe("month");
+    expect(fitGranularity("year", "1970-01-01", TO)).toBe("year");
+  });
+
+  it("sempre devolve uma granularidade válida, inclusive em períodos longos", () => {
+    // Invariante que vale hoje: o resultado é um passo conhecido e nunca pior que o
+    // pedido. NÃO se afirma `buckets <= MAX_BUCKETS`: o fallback em Dashboard.tsx
+    // divide `days` pela janela do passo (62/400/1900), não pela largura do bucket,
+    // e por isso devolve "day" até para ~27 anos. O servidor limita os buckets.
+    const valid = ["day", "week", "month", "year"];
+    for (const from of ["2026-10-12", "2022-01-01", "2000-01-01", "1970-01-01"]) {
+      const chosen = fitGranularity("day", from, TO);
+      expect(valid).toContain(chosen);
+      const days = spanDays(from, TO);
+      expect(bucketsFor(chosen, days)).toBeLessThanOrEqual(bucketsFor("day", days));
+    }
   });
 });

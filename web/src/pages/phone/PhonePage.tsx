@@ -7,9 +7,8 @@ import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
 import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
+import { BASE_URL } from "../../lib/base.ts";
 
-declare const __BASE_URL__: string;
-const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 
 interface PhonePageProps {
@@ -274,7 +273,7 @@ export default function PhonePage({
       );
     };
 
-    xhr.open("POST", `${BASE}/api/sessions/${urlSessionId}/files`);
+    xhr.open("POST", `${BASE_URL}/api/sessions/${urlSessionId}/files`);
     if (credential) {
       xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     }
