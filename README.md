@@ -31,10 +31,10 @@ Aplicação web para transferir arquivos entre telefone e computador na rede loc
 ```
 
 1. **Computador**: Acessa `/`, clica em **Nova Sessão** e visualiza o QR Code com a URL do uploadToken.
-2. **Telefone**: Escaneia o QR Code, abrindo `/enviar/:id?token=...`. Seleciona fotos/vídeos/documentos com progresso real via `XMLHttpRequest`.
+2. **Telefone**: Escaneia o QR Code, abrindo `/enviar/:id?token=...`. Seleciona fotos/vídeos/documentos com progresso real via `XMLHttpRequest`. O QR Code continua válido durante toda a sessão: escaneá-lo de novo troca o celular conectado.
 3. **Tempo Real**: Eventos de envio e conclusão são transmitidos em tempo real para o computador via WebSocket (`/api/sessions/:id/ws`).
 4. **Download & Preview**: Pré-visualização inline protegida para imagens, áudio, vídeo e PDFs. Downloads individuais e ZIP sob demanda sem carregar na RAM.
-5. **Encerramento**: Ao fechar a aba ou clicar em "Encerrar", o backend remove a sessão e limpa os arquivos temporários do disco.
+5. **Encerramento**: A sessão termina apenas quando o computador clica em "Encerrar" (nada de timeout automático); o backend remove a sessão e limpa os arquivos temporários do disco. No telefone, "Sair da sessão" só desconecta aquele celular.
 
 ---
 
@@ -113,7 +113,6 @@ docker compose down
 | `TEMP_DIR` | `./tmp/uploads` | Diretório no disco para armazenamento temporário |
 | `MAX_FILE_SIZE` | `5368709120` | Tamanho máximo por arquivo em bytes (padrão: 5GB) |
 | `MAX_FILES_PER_SESSION`| `50` | Limite de arquivos por sessão |
-| `SESSION_IDLE_TIMEOUT` | `1800000` | Tempo sem atividade para autodestruição da sessão (ms) (padrão: 30 min) |
 | `ALLOWED_ORIGINS` | `*` | Origens aceitas pelo CORS (separadas por vírgula) |
 | `DATABASE_URL` | *Opcional* | URL do Postgres (`postgres://usuario:senha@host:5432/banco`). Sem ela o banco fica desligado e o app funciona igual |
 | `POSTGRES_PASSWORD` | — | Senha do usuário `app` no serviço `postgres` do Compose (somente ambiente/.env) |

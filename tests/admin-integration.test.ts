@@ -90,7 +90,7 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
         phoneIp: null,
         createdAt: at("2026-01-07T10:00:00-03:00"),
         closedAt: at("2026-01-07T10:30:00-03:00"),
-        closeReason: "idle_timeout",
+        closeReason: "user_closed",
       },
       // Outside the default window (30 days before "now") but inside the fixed test period.
       {
@@ -179,7 +179,6 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
       { at: at("2026-01-05T09:00:00-03:00"), type: "pairing_refused", ip: "10.0.0.9" },
       { at: at("2026-01-05T09:01:00-03:00"), type: "pairing_refused", ip: "10.0.0.9" },
       { at: at("2026-01-05T09:02:00-03:00"), type: "pairing_refused", ip: "10.0.0.8" },
-      { at: at("2026-01-05T09:03:00-03:00"), type: "qr_reused", ip: "10.0.0.7" },
       { at: at("2026-01-05T09:04:00-03:00"), type: "pairing_refused", ip: "" },
     ]);
 
@@ -207,7 +206,7 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
     return res.json();
   };
 
-  it("@db summary soma só concluídas, ignora qr_reused e IP vazio", async () => {
+  it("@db summary soma só concluídas e ignora IP vazio", async () => {
     const summary = (await get(
       "/admin/api/summary?from=2026-01-01&to=2026-01-31",
     )) as AdminSummary;
@@ -226,7 +225,7 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
     ]);
     expect(summary.byCategory[0]).toEqual({ category: "pdfs", count: 2, volumeBytes: 3000 });
     expect(summary.topPhoneIps).toEqual([{ ip: "10.0.0.50", count: 2 }]);
-    expect(summary.refusedPairings).toBe(3); // 2 IPs + 1 outro; qr_reused e IP '' fora
+    expect(summary.refusedPairings).toBe(3); // 2 IPs + 1 outro; IP '' fora
   });
 
   it("@db from/to de dias inteiros no fuso de São Paulo", async () => {

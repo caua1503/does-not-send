@@ -53,18 +53,10 @@ export interface PairingRefused {
   sessionId?: string;
 }
 
-export interface QrReused {
-  type: "qr_reused";
-  at: Date;
-  ip?: string;
-  sessionId?: string;
-}
-
 export type DomainEvent =
   | SessionCreated
   | SessionPaired
   | SessionClosed
   | TransferStarted
   | TransferFinished
-  | PairingRefused
-  | QrReused;
+  | PairingRefused;

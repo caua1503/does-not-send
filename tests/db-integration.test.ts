@@ -64,7 +64,7 @@ describe.skipIf(!isDedicatedTestDb)("Database integration @db", () => {
       startedAt: new Date().toISOString(),
     });
     await client.writer.insert(events).values({
-      type: "qr_reused",
+      type: "pairing_refused",
       ip: "127.0.0.1",
       sessionId,
       at: new Date().toISOString(),
@@ -83,7 +83,7 @@ describe.skipIf(!isDedicatedTestDb)("Database integration @db", () => {
     expect(session?.visualId).toBe("ABC-123");
     expect(transferRows[0]?.size).toBe(5_000_000_000);
     expect(typeof eventRows[0]?.id).toBe("number");
-    expect(eventRows[0]?.type).toBe("qr_reused");
+    expect(eventRows[0]?.type).toBe("pairing_refused");
   });
 
   test("@db app exposes db.isReady() true once migrations finish", async () => {

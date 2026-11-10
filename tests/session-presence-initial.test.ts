@@ -11,18 +11,15 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
     tempDir: "/tmp/dns-presence-test",
     maxFileSize: 1000,
     maxFilesPerSession: 10,
-    sessionIdleTimeout: 100000,
     allowedOrigins: ["*"],
     publicBaseUrl: "http://localhost:3000",
     heartbeatTimeoutMs: 25000,
-    computerGraceMs: 30000,
-    phoneGraceMs: 30000,
     wsAuthTimeoutMs: 5000,
     cleanupMaxAttempts: 5,
     cleanupInitialDelayMs: 100,
   };
 
-  it("criação de sessão inicializa lastSeen.computer com clock.now() e primeiro tick não marca computerLostAt", async () => {
+  it("criação de sessão inicializa lastSeen.computer com clock.now() e primeiro tick mantém o computador presente", async () => {
     const clock = new FakeClock(1000);
     const store = new SessionStore({ clock, tempDir: dummyConfig.tempDir });
     const service = new SessionService(store, dummyConfig, clock);
@@ -37,9 +34,8 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
     clock.advance(1000); // t=2000
     await store.tick();
 
-    const stored = store.getById(session.id)!;
-    expect(stored.computerLostAt).toBeNull();
-    expect(stored.state).toBe("WAITING");
+    expect(store.isComputerPresent(session.id)).toBe(true);
+    expect(store.getById(session.id)!.state).toBe("WAITING");
   });
 
   it("pareamento inicializa lastSeen.phone com clock.now() e primeiro tick não move para DISCONNECTED", async () => {

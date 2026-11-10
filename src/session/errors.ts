@@ -10,11 +10,7 @@ export class InvalidTransitionError extends Error {
   }
 }
 
-export type PairingErrorCode =
-  | "ALREADY_CONSUMED"
-  | "INVALID"
-  | "NOT_FOUND"
-  | "CLOSED";
+export type PairingErrorCode = "INVALID" | "NOT_FOUND" | "CLOSED";
 
 export class PairingError extends Error {
   constructor(public readonly code: PairingErrorCode) {

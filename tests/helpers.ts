@@ -49,27 +49,18 @@ export async function createTestApp(
     tempDir,
     maxFileSize: 10 * 1024 * 1024, // 10MB for tests
     maxFilesPerSession: 5,
-    sessionIdleTimeout: 60_000,
     allowedOrigins: ["*"],
     publicBaseUrl: "http://localhost:3000",
     heartbeatTimeoutMs: 25_000,
-    computerGraceMs: 30_000,
-    phoneGraceMs: 30_000,
     wsAuthTimeoutMs: 5_000,
     cleanupMaxAttempts: 5,
     cleanupInitialDelayMs: 100,
     ...overrides,
   };
 
-  const sweeperInterval =
-    config.sessionIdleTimeout && config.sessionIdleTimeout < 1000
-      ? Math.max(20, Math.floor(config.sessionIdleTimeout / 4))
-      : 1000;
-
   const app = await buildApp(config, {
     clock: options?.clock,
     startSweeper: options?.startSweeper ?? (options?.clock ? false : true),
-    sweeperInterval,
     loggerStream: options?.loggerStream,
   });
 

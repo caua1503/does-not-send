@@ -172,7 +172,7 @@ async function main(): Promise<void> {
 }
 
 function closeReasonFor(dayOffset: number): CloseReason {
-  return dayOffset % 3 === 0 ? "idle_timeout" : dayOffset % 3 === 1 ? "user_closed" : "phone_lost";
+  return dayOffset % 2 === 0 ? "user_closed" : "closed";
 }
 
 await main();

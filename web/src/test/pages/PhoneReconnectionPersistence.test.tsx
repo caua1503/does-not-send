@@ -276,9 +276,8 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
     expect(screen.queryByText(/sessão indisponível/i)).not.toBeInTheDocument();
   });
 
-  // Cenário 7: Recarregar durante/após pareamento com QR code já consumido
-  it("Cenário 7: Se a página recarregar com qrToken na URL após consumo, recupera credencial do localStorage", async () => {
-    // qrToken já consumido pelo servidor, mas credencial salva no localStorage
+  // Cenário 7: Recarregar com qrToken na URL já pareado reaproveita a credencial salva
+  it("Cenário 7: Se a página recarregar com qrToken na URL já pareado, recupera credencial do localStorage", async () => {
     localStorage.setItem(
       "dns_phone_cred_sess-persist-123",
       JSON.stringify({
@@ -298,10 +297,90 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
 
     render(<PhonePage />);
 
-    // Por ter encontrado em localStorage, nem tenta chamar pair novamente
+    // Por ter encontrado em localStorage, nem tenta parear de novo
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
     expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: PRD11");
+  });
+
+  // Sair da sessão pelo celular
+  it("Sair da sessão apaga a credencial, fecha o WebSocket e volta ao estado inicial", async () => {
+    localStorage.setItem(
+      "dns_phone_cred_sess-persist-123",
+      JSON.stringify({
+        phoneCredential: "phone-secret-leave",
+        visualId: "SAI00",
+      })
+    );
+
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/sess-persist-123",
+        search: "",
+      },
+      writable: true,
+    });
+
+    render(<PhonePage />);
+
+    await waitFor(() => {
+      expect(mockSockets.length).toBeGreaterThanOrEqual(1);
+    });
+    const ws = mockSockets[0];
+    act(() => {
+      ws.receiveMessage({ type: "auth_ok", role: "phone" });
+    });
+
+    const leaveButton = await screen.findByRole("button", { name: /sair da sessão/i });
+    fireEvent.click(leaveButton);
+
+    expect(localStorage.getItem("dns_phone_cred_sess-persist-123")).toBeNull();
+    expect(ws.readyState).toBe(MockWebSocket.CLOSED);
+    expect(screen.queryByText(/escolher arquivos/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
+  });
+
+  it("Ler o QR Code de outro computador substitui a credencial salva", async () => {
+    localStorage.setItem(
+      "dns_phone_cred_sess-other-456",
+      JSON.stringify({
+        phoneCredential: "phone-secret-other-machine",
+        visualId: "OUT31",
+      })
+    );
+
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/sess-persist-123",
+        search: "?qrToken=qr-token-initial",
+      },
+      writable: true,
+    });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        phoneCredential: "phone-secret-new-machine",
+        visualId: "NEW42",
+        shortId: "NEW42",
+        state: "PAIRED",
+        pairedAt: new Date().toISOString(),
+      }),
+    });
+
+    render(<PhonePage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: NEW42");
+    });
+    const stored = JSON.parse(
+      localStorage.getItem("dns_phone_cred_sess-persist-123") || "{}"
+    );
+    expect(stored.phoneCredential).toBe("phone-secret-new-machine");
   });
 
   // Cenário 8: Sessão encerrada no servidor limpa localStorage

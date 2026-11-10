@@ -17,9 +17,6 @@ export const CATEGORY_LABELS: Record<Category, string> = {
 };
 
 export const CLOSE_REASON_LABELS: Record<CloseReason, string> = {
-  idle_timeout: "Inatividade",
-  computer_lost: "Computador desconectado",
-  phone_lost: "Celular desconectado",
   user_closed: "Encerrada pelo usuário",
   closed: "Encerrada",
   server_restart: "Reinício do servidor",

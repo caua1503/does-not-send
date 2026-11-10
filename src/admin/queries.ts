@@ -342,7 +342,6 @@ export function createAdminQueries(db: ReaderDb) {
     return defined.length > 0 ? and(...defined) : undefined;
   }
 
-  /** pairing_refused only: qr_reused no longer means anything (QRs are reusable). */
   function pairingRefusedWhere(filters: AdminFilters): SQL {
     const conditions: SQL[] = [eq(events.type, "pairing_refused"), sql`${events.ip} <> ''`];
     if (filters.from && filters.to) {

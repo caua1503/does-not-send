@@ -34,7 +34,6 @@ export interface SessionStoreOptions {
   clock?: Clock;
   tempDir: string;
   timingConfig?: Partial<SessionTimingConfig>;
-  sessionIdleTimeout?: number;
   cleanupRetry?: Partial<CleanupRetryOptions>;
   logger?: FastifyBaseLogger;
   recorder?: SessionRecorder;
@@ -56,7 +55,6 @@ export class SessionStore {
   readonly clock: Clock;
   readonly timingConfig: SessionTimingConfig;
   readonly tempDir: string;
-  readonly sessionIdleTimeout?: number;
   readonly cleanupRetry: CleanupRetryOptions;
   log: FastifyBaseLogger;
   private recorder?: SessionRecorder;
@@ -71,7 +69,6 @@ export class SessionStore {
   constructor(options: SessionStoreOptions) {
     this.clock = options.clock ?? new SystemClock();
     this.tempDir = options.tempDir;
-    this.sessionIdleTimeout = options.sessionIdleTimeout;
     this.timingConfig = {
       ...DEFAULT_TIMING_CONFIG,
       ...options.timingConfig,
@@ -87,7 +84,6 @@ export class SessionStore {
       session.lastSeen = { computer: null, phone: null };
     }
     if (session.phoneLostAt === undefined) session.phoneLostAt = null;
-    if (session.computerLostAt === undefined) session.computerLostAt = null;
     if (session.closedReason === undefined) session.closedReason = null;
     this.sessions.set(session.id, session);
   }
@@ -170,15 +166,9 @@ export class SessionStore {
     session.lastSeen[role] = now;
     session.lastActivity = new Date(now).toISOString();
 
-    if (role === "phone") {
-      if (session.state === "DISCONNECTED") {
-        transition(session, "PAIRED");
-        session.phoneLostAt = null;
-      }
-    } else if (role === "computer") {
-      if (session.computerLostAt !== null) {
-        session.computerLostAt = null;
-      }
+    if (role === "phone" && session.state === "DISCONNECTED") {
+      transition(session, "PAIRED");
+      session.phoneLostAt = null;
     }
 
     this.update(session);
@@ -445,34 +435,6 @@ export class SessionStore {
 
     // 2. Check each active session
     for (const session of this.getAllActive()) {
-      if (
-        this.sessionIdleTimeout &&
-        now - Date.parse(session.lastActivity) > this.sessionIdleTimeout
-      ) {
-        await this.closeSession(session.id, "idle_timeout");
-        continue;
-      }
-
-      // Computer checks
-      const compPresent =
-        session.lastSeen.computer !== null &&
-        now - session.lastSeen.computer <= this.timingConfig.heartbeatTimeoutMs;
-
-      if (!compPresent) {
-        if (session.computerLostAt === null) {
-          session.computerLostAt = now;
-          this.update(session);
-        } else if (now - session.computerLostAt > this.timingConfig.computerGraceMs) {
-          await this.closeSession(session.id, "computer_lost");
-          continue;
-        }
-      } else {
-        if (session.computerLostAt !== null) {
-          session.computerLostAt = null;
-          this.update(session);
-        }
-      }
-
       // Phone checks
       const phonePresent =
         session.lastSeen.phone !== null &&
@@ -492,12 +454,6 @@ export class SessionStore {
           transition(session, "PAIRED");
           session.phoneLostAt = null;
           this.update(session);
-        } else if (
-          session.phoneLostAt !== null &&
-          now - session.phoneLostAt > this.timingConfig.phoneGraceMs
-        ) {
-          await this.closeSession(session.id, "phone_lost");
-          continue;
         }
       }
     }

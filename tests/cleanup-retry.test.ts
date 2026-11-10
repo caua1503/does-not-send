@@ -57,7 +57,6 @@ function makeSession(store: SessionStore, id: string) {
     visualId: "AA-BB",
     shortId: "AA-BB",
     qrTokenHash: null,
-    qrConsumedAt: null,
     isPaired: false,
     state: "WAITING" as const,
     activeUploads: 0,
@@ -66,7 +65,6 @@ function makeSession(store: SessionStore, id: string) {
     files: [],
     lastSeen: { computer: now, phone: null },
     phoneLostAt: null,
-    computerLostAt: null,
     closedReason: null,
   };
 }
@@ -126,7 +124,7 @@ describe("cleanup retry", () => {
     store.cleanupRetry.maxDelayMs = 1;
 
     rmState.failures = Array.from({ length: 10 }, () => ({ code: "EPERM" }));
-    await store.closeSession(entry.id, "idle_timeout");
+    await store.closeSession(entry.id, "user_closed");
     expect(store.getById(entry.id)?.state).toBe("CLOSED");
     await sleep(200);
 
@@ -152,7 +150,7 @@ describe("cleanup retry", () => {
     await mkdir(join(ctx.config.tempDir, entry.id), { recursive: true });
 
     rmState.failures = [{ code: "EBUSY" }];
-    await store.closeSession(entry.id, "phone_lost");
+    await store.closeSession(entry.id, "user_closed");
     expect(await readdir(ctx.config.tempDir)).toContain(entry.id);
 
     // Simulate the scheduled retry timer being lost (e.g. event loop stall);

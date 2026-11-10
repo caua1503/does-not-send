@@ -10,6 +10,7 @@ import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 
 declare const __BASE_URL__: string;
 const BASE = typeof __BASE_URL__ !== "undefined" ? __BASE_URL__ : "";
+const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 
 interface PhonePageProps {
   sessionId?: string;
@@ -25,15 +26,7 @@ interface StoredSession {
 function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
   if (!id) return { phoneCredential: null, visualId: null };
   try {
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(`dns_phone_cred_${id}`);
-    } catch {}
-    if (!raw) {
-      try {
-        raw = sessionStorage.getItem(`dns_phone_cred_${id}`);
-      } catch {}
-    }
+    const raw = localStorage.getItem(`dns_phone_cred_${id}`);
     if (!raw) return { phoneCredential: null, visualId: null };
     try {
       const parsed = JSON.parse(raw) as StoredSession;
@@ -56,9 +49,6 @@ function clearStoredSession(id: string): void {
   if (!id) return;
   try {
     localStorage.removeItem(`dns_phone_cred_${id}`);
-  } catch {}
-  try {
-    sessionStorage.removeItem(`dns_phone_cred_${id}`);
   } catch {}
 }
 
@@ -85,9 +75,9 @@ export default function PhonePage({
     return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
   });
   const [sessionError, setSessionError] = useState<string | null>(() => {
-    if (!urlSessionId) return "Sessão inválida ou link expirado.";
+    if (!urlSessionId) return SCAN_AGAIN_MESSAGE;
     if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
-      return "Sessão inválida ou link expirado.";
+      return SCAN_AGAIN_MESSAGE;
     }
     return null;
   });
@@ -101,6 +91,7 @@ export default function PhonePage({
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
+    connected: wsConnected,
   } = useSessionEvents(urlSessionId, credential, {
     role: "phone",
     reconnectInterval: 2000,
@@ -116,9 +107,7 @@ export default function PhonePage({
     !isSessionClosed &&
     (wsReconnecting || remoteSession?.state === "DISCONNECTED");
   const isComputerDisconnected =
-    !isSessionClosed &&
-    !isReconnecting &&
-    (remoteSession?.computerPresent === false || wsClosedReason === "computer_lost");
+    !isSessionClosed && !isReconnecting && remoteSession?.computerPresent === false;
 
   useEffect(() => {
     if (isSessionClosed && urlSessionId) {
@@ -180,14 +169,6 @@ export default function PhonePage({
           } catch {
             // Ignore localStorage quota error
           }
-          try {
-            sessionStorage.setItem(
-              storageKey,
-              JSON.stringify({ phoneCredential: cred, visualId: vId })
-            );
-          } catch {
-            // Ignore sessionStorage quota error
-          }
         }
 
         if (isCancelled) return;
@@ -207,20 +188,10 @@ export default function PhonePage({
         const status = err?.status;
         const code = err?.code;
 
-        if (status === 409 || code === "ALREADY_CONSUMED") {
-          const stored = readStoredSession(urlSessionId);
-          if (stored.phoneCredential) {
-            setCredential(stored.phoneCredential);
-            setVisualId(stored.visualId);
-            return;
-          }
-          setSessionError("QR code já utilizado por outro aparelho.");
-        } else if (status === 410 || code === "CLOSED") {
+        if (status === 410 || code === "CLOSED") {
           setSessionError("Sessão encerrada pelo computador.");
-        } else if (status === 401 || code === "INVALID") {
-          setSessionError("Credencial inválida: sessão inválida ou QR code expirado.");
-        } else if (status === 404 || code === "NOT_FOUND") {
-          setSessionError("Sessão não encontrada.");
+        } else if (status === 401 || status === 404 || code === "INVALID" || code === "NOT_FOUND") {
+          setSessionError(SCAN_AGAIN_MESSAGE);
         } else if (status >= 500 && status < 600) {
           setSessionError("Servidor temporariamente indisponível.");
         } else if (!status || err?.name === "TypeError" || err?.message?.includes("fetch")) {
@@ -235,6 +206,7 @@ export default function PhonePage({
 
     return () => {
       isCancelled = true;
+      pairingInProgressRef.current = false;
     };
   }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
 
@@ -279,7 +251,7 @@ export default function PhonePage({
         );
       } else if (xhr.status === 409) {
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "QR já utilizado ou sessão não aceita envios" } : i))
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
         );
       } else if (xhr.status === 413) {
         setItems((prev) =>
@@ -362,6 +334,15 @@ export default function PhonePage({
     });
   };
 
+  const leaveSession = () => {
+    clearStoredSession(urlSessionId);
+    setItems([]);
+    setVisualId(null);
+    setRemoteSession(null);
+    setCredential(null);
+    if (!qrToken) setSessionError(SCAN_AGAIN_MESSAGE);
+  };
+
   const retryUpload = (id: string) => {
     const item = items.find((i) => i.id === id);
     if (item) uploadSingleFile(item);
@@ -424,9 +405,16 @@ export default function PhonePage({
             )}
           </div>
         </div>
-        <span className="text-xs text-[var(--color-text-muted)] tabular shrink-0 ml-2">
-          {completedFiles}/{totalFiles} enviados
-        </span>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span className="text-xs text-[var(--color-text-muted)] tabular">
+            {completedFiles}/{totalFiles} enviados
+          </span>
+          {wsConnected && !isSessionClosed && (
+            <Button variant="ghost" size="sm" onClick={leaveSession}>
+              Sair da sessão
+            </Button>
+          )}
+        </div>
       </header>
 
       {/* Status banners */}
@@ -441,9 +429,7 @@ export default function PhonePage({
             <span>Sessão encerrada</span>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            {wsClosedReason === "computer_lost"
-              ? "Computador desconectado — a sessão foi encerrada."
-              : wsClosedReason === "user_closed"
+            {wsClosedReason === "user_closed"
               ? "Sessão encerrada pelo computador."
               : "Sessão encerrada."}
           </p>

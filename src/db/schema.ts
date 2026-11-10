@@ -10,9 +10,6 @@ const timestamptz = customType<{ data: string; driverData: string }>({
 const timestamp = (name: string) => timestamptz(name);
 
 export const closeReasonEnum = pgEnum("close_reason", [
-  "idle_timeout",
-  "computer_lost",
-  "phone_lost",
   "user_closed",
   "closed",
   "server_restart",
@@ -34,7 +31,7 @@ export const categoryEnum = pgEnum("category", [
   "other",
 ]);
 
-export const eventTypeEnum = pgEnum("event_type", ["pairing_refused", "qr_reused"]);
+export const eventTypeEnum = pgEnum("event_type", ["pairing_refused"]);
 
 export const sessions = pgTable(
   "sessions",

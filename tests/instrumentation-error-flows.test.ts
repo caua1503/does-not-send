@@ -3,7 +3,7 @@
  *
  * Bugs reais que estes testes pegam:
  * (a) parametrizado — evento errado ou ausente em fluxos de falha;
- *     token presente em evento (ex: sessionId em qr_reused sem sessão);
+ *     token presente em evento;
  *     reason incorreto nos diferentes tipos de encerramento;
  *     upload interrompido gravado como completed em vez de failed.
  * (b) recorder que lança não deve alterar resposta/status HTTP.
@@ -36,8 +36,6 @@ async function buildTestApp(
     maxFileSize: 10 * 1024 * 1024,
     maxFilesPerSession: 10,
     heartbeatTimeoutMs: 25_000,
-    computerGraceMs: 30_000,
-    phoneGraceMs: 30_000,
   };
   const app = await buildApp(config, {
     startSweeper: false,
@@ -86,29 +84,6 @@ describe("Instrumentação: fluxos de erro", () => {
         expect(res.statusCode).toBe(404);
         const ev = rec.getEvents().find((e) => e.type === "pairing_refused");
         expect(ev).toBeDefined();
-      },
-    },
-    {
-      name: "QR reutilizado → qr_reused",
-      async run(a: FastifyInstance, rec: InMemoryRecorder) {
-        const cr = await a.inject({ method: "POST", url: "/api/sessions" });
-        const { id, qrToken } = cr.json() as { id: string; qrToken: string };
-        // Primeiro pareamento consome o token
-        await a.inject({
-          method: "POST",
-          url: `/api/sessions/${id}/pair`,
-          payload: { qrToken },
-        });
-        // Segundo uso do mesmo token = qr_reused
-        const res = await a.inject({
-          method: "POST",
-          url: `/api/sessions/${id}/pair`,
-          payload: { qrToken },
-        });
-        expect(res.statusCode).toBe(409);
-        const ev = rec.getEvents().find((e) => e.type === "qr_reused");
-        expect(ev).toBeDefined();
-        expect(ev!.type).toBe("qr_reused");
       },
     },
     {
@@ -166,13 +141,8 @@ describe("Instrumentação: fluxos de erro", () => {
     await run(app, setup.recorder);
   });
 
-  // Motivos de encerramento via sweeper
-  it.each([
-    { reason: "idle_timeout" },
-    { reason: "computer_lost" },
-    { reason: "phone_lost" },
-    { reason: "user_closed" },
-  ])("session_closed emite reason=$reason", async ({ reason }) => {
+  // Motivos de encerramento
+  it.each([{ reason: "user_closed" }, { reason: "closed" }])("session_closed emite reason=$reason", async ({ reason }) => {
     const setup = await buildTestApp();
     app = setup.app;
     tempDir = setup.tempDir;
@@ -228,14 +198,6 @@ describe("Instrumentação: fluxos de erro", () => {
     });
     expect(pairRes.statusCode).toBe(200);
     const { phoneCredential } = pairRes.json() as { phoneCredential: string };
-
-    // Tentativa com QR reutilizado (emite qr_reused que vai lançar) → 409, não 500
-    const reuseRes = await app.inject({
-      method: "POST",
-      url: `/api/sessions/${id}/pair`,
-      payload: { qrToken },
-    });
-    expect(reuseRes.statusCode).toBe(409);
 
     // Upload deve retornar 201
     const content = Buffer.from("DADOS");
@@ -299,13 +261,6 @@ describe("Instrumentação: fluxos de erro", () => {
       method: "DELETE",
       url: `/api/sessions/${id}`,
       headers: { authorization: `Bearer ${computerToken}` },
-    });
-
-    // Tentar QR reutilizado para gerar qr_reused
-    await app.inject({
-      method: "POST",
-      url: `/api/sessions/${id}/pair`,
-      payload: { qrToken },
     });
 
     const serialized = JSON.stringify(setup.recorder.getEvents());

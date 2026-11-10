@@ -17,12 +17,9 @@ export interface Config {
   tempDir: string;
   maxFileSize: number;
   maxFilesPerSession: number;
-  sessionIdleTimeout: number;
   allowedOrigins: string[];
   publicBaseUrl: string;
   heartbeatTimeoutMs: number;
-  computerGraceMs: number;
-  phoneGraceMs: number;
   wsAuthTimeoutMs: number;
   cleanupMaxAttempts: number;
   cleanupInitialDelayMs: number;
@@ -99,24 +96,12 @@ export function loadConfig(): Config {
     "MAX_FILES_PER_SESSION",
     optionalEnv("MAX_FILES_PER_SESSION", "50"),
   );
-  const sessionIdleTimeout = parsePositiveInt(
-    "SESSION_IDLE_TIMEOUT",
-    optionalEnv("SESSION_IDLE_TIMEOUT", "1800000"),
-  );
   const allowedOriginsRaw = optionalEnv("ALLOWED_ORIGINS", "*");
   const allowedOrigins = allowedOriginsRaw.split(",").map((s) => s.trim());
   const publicBaseUrl = requireEnv("PUBLIC_BASE_URL");
   const heartbeatTimeoutMs = parsePositiveInt(
     "HEARTBEAT_TIMEOUT_MS",
     optionalEnv("HEARTBEAT_TIMEOUT_MS", "25000"),
-  );
-  const computerGraceMs = parsePositiveInt(
-    "COMPUTER_GRACE_MS",
-    optionalEnv("COMPUTER_GRACE_MS", "30000"),
-  );
-  const phoneGraceMs = parsePositiveInt(
-    "PHONE_GRACE_MS",
-    optionalEnv("PHONE_GRACE_MS", "30000"),
   );
   const wsAuthTimeoutMs = parsePositiveInt(
     "WS_AUTH_TIMEOUT_MS",
@@ -143,12 +128,9 @@ export function loadConfig(): Config {
     tempDir,
     maxFileSize,
     maxFilesPerSession,
-    sessionIdleTimeout,
     allowedOrigins,
     publicBaseUrl,
     heartbeatTimeoutMs,
-    computerGraceMs,
-    phoneGraceMs,
     wsAuthTimeoutMs,
     cleanupMaxAttempts,
     cleanupInitialDelayMs,

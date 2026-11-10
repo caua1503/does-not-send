@@ -117,26 +117,41 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     expect(getRes.json().visualId).toBe(computerBody.visualId);
   });
 
-  it("QR não funciona depois do pareamento (regressão: 409 ALREADY_CONSUMED)", async () => {
+  it("o mesmo QR pareia várias vezes e a última credencial substitui a anterior", async () => {
     ctx = await createTestApp();
     const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
     const { id, qrToken } = createRes.json<{ id: string; qrToken: string }>();
 
-    // Primeiro pareamento -> sucesso
     const pair1 = await ctx.app.inject({
       method: "POST",
       url: `/api/sessions/${id}/pair`,
       payload: { qrToken },
     });
     expect(pair1.statusCode).toBe(200);
+    const { phoneCredential: first } = pair1.json<{ phoneCredential: string }>();
 
-    // Segundo pareamento com mesmo QR -> 409
     const pair2 = await ctx.app.inject({
       method: "POST",
       url: `/api/sessions/${id}/pair`,
       payload: { qrToken },
     });
-    expect(pair2.statusCode).toBe(409);
+    expect(pair2.statusCode).toBe(200);
+    const { phoneCredential: second } = pair2.json<{ phoneCredential: string }>();
+
+    // Celular antigo deixa de autenticar; o novo assume o upload
+    const oldUpload = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/files`,
+      headers: { authorization: `Bearer ${first}` },
+    });
+    expect(oldUpload.statusCode).toBe(401);
+
+    const newUpload = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/files`,
+      headers: { authorization: `Bearer ${second}` },
+    });
+    expect(newUpload.statusCode).not.toBe(401);
   });
 
   it("upload em sessão WAITING (sem pareamento) é recusado com 409", async () => {

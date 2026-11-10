@@ -41,7 +41,6 @@ export class SessionService {
       visualId,
       shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
-      qrConsumedAt: null,
       isPaired: false,
       state: "WAITING",
       activeUploads: 0,
@@ -53,7 +52,6 @@ export class SessionService {
         phone: null,
       },
       phoneLostAt: null,
-      computerLostAt: null,
       closedReason: null,
     };
 

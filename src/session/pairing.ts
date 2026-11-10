@@ -7,7 +7,6 @@ export interface PairableSession {
   id: string;
   state: SessionState;
   qrTokenHash: string | null;
-  qrConsumedAt: string | null;
   pairedAt?: string | null;
   phoneCredentialHash?: string | null;
 }
@@ -25,9 +24,9 @@ export function generateQrToken(): string {
 }
 
 /**
- * Synchronously and atomically consumes a pairing QR token for a session.
- * Since the runtime is single-threaded, keeping this function strictly
- * synchronous with zero await ensures race-free atomic consumption.
+ * Validates the session's QR token and issues a fresh phone credential.
+ * The QR token is stable for the session's whole life: reading it again
+ * replaces the previous phone credential.
  */
 export function consumePairing(
   session: PairableSession | undefined | null,
@@ -39,10 +38,6 @@ export function consumePairing(
 
   if (session.state === "CLOSED") {
     return { ok: false, error: new PairingError("CLOSED") };
-  }
-
-  if (session.qrConsumedAt !== null || session.state !== "WAITING") {
-    return { ok: false, error: new PairingError("ALREADY_CONSUMED") };
   }
 
   if (!session.qrTokenHash) {
@@ -64,8 +59,9 @@ export function consumePairing(
   session.phoneCredentialHash = hashToken(rawPhoneCredential);
 
   const now = new Date().toISOString();
-  session.qrConsumedAt = now;
-  transition(session, "PAIRED");
+  if (session.state === "WAITING") {
+    transition(session, "PAIRED");
+  }
   session.pairedAt = now;
 
   return { ok: true, pairedAt: now, phoneCredential: rawPhoneCredential };
