@@ -45,7 +45,7 @@ function optionalEnv(name: string, fallback: string): string {
 const ADMIN_DEFAULT_USER = "admin";
 const ADMIN_DEFAULT_PASSWORD = "admin";
 const ADMIN_MIN_PRODUCTION_PASSWORD = 12;
-/** Single source for the admin timezone default (re-exported by shared/admin/format). */
+/** Default admin timezone, used when ADMIN_TZ is unset or invalid. */
 export const DEFAULT_TZ = "America/Sao_Paulo";
 
 /** Falls back to UTC when the value is not a valid IANA zone (never throws at boot). */

@@ -127,7 +127,7 @@ export async function downloadRoutes(
       }
 
       const allowedMime = INLINE_EXTENSIONS[ext];
-      const isInlineAllowed = Boolean(allowedMime) && ext !== ".svg";
+      const isInlineAllowed = Boolean(allowedMime);
       const isVideoOrAudio = VIDEO_AUDIO_EXTENSIONS.has(ext);
       const resolvedMime = allowedMime ?? file.mimeType ?? "application/octet-stream";
 

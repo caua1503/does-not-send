@@ -44,7 +44,7 @@ interface PendingCleanup {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
+export const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
   maxAttempts: 5,
   initialDelayMs: 100,
   baseDelayMs: 200,
