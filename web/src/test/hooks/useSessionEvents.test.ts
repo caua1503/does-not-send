@@ -195,14 +195,14 @@ describe("useSessionEvents", () => {
       const ws = mockSockets[0]!;
       act(() => {
         ws.receiveMessage({ type: "auth_ok", role: "phone" });
-        ws.receiveMessage({ type: "session_closed", reason: "computer_lost" });
+        ws.receiveMessage({ type: "session_closed", reason: "user_closed" });
       });
 
       expect(result.current.sessionClosed).toBe(true);
-      expect(result.current.closedReason).toBe("computer_lost");
+      expect(result.current.closedReason).toBe("user_closed");
       expect(result.current.connected).toBe(false);
       expect(result.current.reconnecting).toBe(false);
-      expect(onClosed).toHaveBeenCalledWith("computer_lost");
+      expect(onClosed).toHaveBeenCalledWith("user_closed");
 
       // Avança o tempo para garantir que não tenta reconectar
       act(() => {

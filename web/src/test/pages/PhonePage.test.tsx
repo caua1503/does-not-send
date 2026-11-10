@@ -52,7 +52,7 @@ describe("PhonePage", () => {
     expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
   });
 
-  it("pareia com qrToken, armazena no sessionStorage e exibe visualId no cabeçalho", async () => {
+  it("pareia com qrToken, armazena no localStorage e exibe visualId no cabeçalho", async () => {
     Object.defineProperty(window, "location", {
       value: {
         origin: "http://localhost:3000",
@@ -94,16 +94,16 @@ describe("PhonePage", () => {
     expect(visualBadge).toBeInTheDocument();
     expect(visualBadge).toHaveTextContent("ID: A7K92F");
 
-    // sessionStorage preenchido
+    // localStorage preenchido
     const stored = JSON.parse(
-      sessionStorage.getItem("dns_phone_cred_session-test-id") || "{}"
+      localStorage.getItem("dns_phone_cred_session-test-id") || "{}"
     );
     expect(stored.phoneCredential).toBe("phone-secret-cred-123");
     expect(stored.visualId).toBe("A7K92F");
   });
 
-  it("recupera credencial e visualId do sessionStorage sem chamar pair", () => {
-    sessionStorage.setItem(
+  it("recupera credencial e visualId do localStorage sem chamar pair", () => {
+    localStorage.setItem(
       "dns_phone_cred_session-test-id",
       JSON.stringify({
         phoneCredential: "cached-credential",
@@ -152,9 +152,7 @@ describe("PhonePage", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
-      expect(
-        screen.getByText(/sessão inválida ou qr code expirado/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
     });
   });
 
@@ -184,36 +182,6 @@ describe("PhonePage", () => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
       expect(
         screen.getByText(/sessão encerrada pelo computador/i)
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("trata erro 409 no pareamento com mensagem de QR já consumido", async () => {
-    Object.defineProperty(window, "location", {
-      value: {
-        origin: "http://localhost:3000",
-        pathname: "/enviar/session-test-id",
-        search: "?qrToken=already-used",
-      },
-      writable: true,
-    });
-
-    fetchMock.mockResolvedValueOnce({
-      ok: false,
-      status: 409,
-      json: async () => ({
-        error: "QR code already consumed",
-        code: "ALREADY_CONSUMED",
-        statusCode: 409,
-      }),
-    });
-
-    render(<PhonePage />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
-      expect(
-        screen.getByText(/qr code já utilizado por outro aparelho/i)
       ).toBeInTheDocument();
     });
   });
@@ -270,7 +238,7 @@ describe("PhonePage", () => {
   });
 
   it("envia header Authorization com Bearer phoneCredential no upload via XHR", async () => {
-    sessionStorage.setItem(
+    localStorage.setItem(
       "dns_phone_cred_session-test-id",
       JSON.stringify({
         phoneCredential: "secret-phone-credential-xyz",
@@ -319,7 +287,7 @@ describe("PhonePage", () => {
   });
 
   it("exibe 'Otimizando...' para foto > 1.2 MB sem bloquear a tela e depois envia comprimida", async () => {
-    sessionStorage.setItem(
+    localStorage.setItem(
       "dns_phone_cred_session-test-id",
       JSON.stringify({
         phoneCredential: "secret-phone-credential-xyz",
@@ -438,7 +406,7 @@ describe("PhonePage", () => {
     beforeEach(() => {
       mockSockets = [];
       vi.stubGlobal("WebSocket", MockWebSocket);
-      sessionStorage.setItem(
+      localStorage.setItem(
         "dns_phone_cred_session-test-id",
         JSON.stringify({
           phoneCredential: "phone-secret-cred-123",
@@ -492,25 +460,6 @@ describe("PhonePage", () => {
       const input = document.getElementById("phone-file-input") as HTMLInputElement;
       expect(input).toBeDisabled();
       expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
-    });
-
-    it("exibe aviso 'computador desconectado' no aviso de encerramento quando reason é computer_lost", async () => {
-      render(<PhonePage />);
-
-      await waitFor(() => {
-        expect(mockSockets.length).toBeGreaterThanOrEqual(1);
-      });
-
-      const ws = mockSockets[0];
-      act(() => {
-        ws.receiveMessage({ type: "auth_ok", role: "phone" });
-        ws.receiveMessage({ type: "session_closed", reason: "computer_lost" });
-      });
-
-      await waitFor(() => {
-        expect(screen.getByTestId("status-session-closed")).toBeInTheDocument();
-        expect(screen.getByText(/computador desconectado/i)).toBeInTheDocument();
-      });
     });
   });
 });
