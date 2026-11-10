@@ -43,7 +43,7 @@ Fora de escopo (documentado): extrair `recordPairingRefused`, `extractBearerToke
 Verificação: `bun run typecheck`, `bun run lint`, `bun run test`, commit `refactor(backend): exporta defaults de retry e remove condição morta`.
 
 ### Status
-DONE — commit `ed8f609`; retomado e verificado no worktree `wt-a-backend-src`, commit final `4f0f6d5`. Aplicado: `export` em `DEFAULT_CLEANUP_RETRY`; `DEFAULT_TZ` tem só um comentário curto e correto (grep em `src/`, `tests/`, `web/src`: nenhum import de `DEFAULT_TZ` de `utils/config` e nenhum `DEFAULT_ADMIN_TZ`; `shared/admin/format.ts` declara o próprio e `admin.ts` importa de lá); condição morta `&& ext !== ".svg"` removida (`INLINE_EXTENSIONS` não tem `.svg`).
+DONE — commit `ed8f609`; retomado e verificado no worktree `wt-a-backend-src`, commit final `eca0a70`. Aplicado: `export` em `DEFAULT_CLEANUP_RETRY`; `DEFAULT_TZ` tem só um comentário curto e correto (grep em `src/`, `tests/`, `web/src`: nenhum import de `DEFAULT_TZ` de `utils/config` e nenhum `DEFAULT_ADMIN_TZ`; `shared/admin/format.ts` declara o próprio e `admin.ts` importa de lá); condição morta `&& ext !== ".svg"` removida (`INLINE_EXTENSIONS` não tem `.svg`).
 **Pulado:** chave `".png"` duplicada — só existe uma ocorrência em `INLINE_EXTENSIONS`; nada a remover. `Content-Disposition` intacto (não trocado por `rfc5987()`).
 Verificação (`PUBLIC_BASE_URL=http://localhost:3000`): typecheck OK; lint com os mesmos 23 erros pré-existentes (`no-empty`/`no-explicit-any`, todos fora do escopo); testes 288 passam, mesmas 3 falhas ambientais (`static.test.ts` sem `web/dist`, `db-boot-resilience` depende de Postgres/timing). Sem `PUBLIC_BASE_URL`, 14 falham por `Missing required environment variable` (idem baseline).
 
@@ -69,7 +69,7 @@ DONE — commit `e285b5e`. Removidos: `emitSessionClosed` + a chamada em `closeS
 Verificação: typecheck OK; lint e testes iguais ao T1 (23 erros de lint pré-existentes; 288 passam, as mesmas 3 falhas ambientais).
 
 ### Status
-PARTIAL — commit `e285b5e`; complementado no worktree `wt-a-backend-src`, commit final `4f0f6d5`. Feito: `emitSessionClosed` removido de `events.ts` (grep de `"session:closed"` em `src/`, `tests/`, `web/` = zero listeners; `session_closed` restante é mensagem WS e tipo de recording, não este evento) e a chamada em `closeSession`; `SessionService.close()`, `shutdown()` e `clearAllTimers()` removidos (zero callers em `src/`, `tests/`, `scripts/`); `tick()` mantido (chamado por `store.startSweeper` e por testes).
+PARTIAL — commit `e285b5e`; complementado no worktree `wt-a-backend-src`, commit final `eca0a70`. Feito: `emitSessionClosed` removido de `events.ts` (grep de `"session:closed"` em `src/`, `tests/`, `web/` = zero listeners; `session_closed` restante é mensagem WS e tipo de recording, não este evento) e a chamada em `closeSession`; `SessionService.close()`, `shutdown()` e `clearAllTimers()` removidos (zero callers em `src/`, `tests/`, `scripts/`); `tick()` mantido (chamado por `store.startSweeper` e por testes).
 **Pulado:** item 3 (logger fallback `undefined as unknown as FastifyBaseLogger`). `tests/session-simplified.test.ts` e `tests/session-presence-initial.test.ts` constroem `SessionStore` sem `logger`; tornar `logger` obrigatório editaria arquivos de teste fora do escopo. Os usos de `this.log` não são atingidos nesses testes.
 Verificação: igual ao T1 (typecheck OK, 23 erros de lint pré-existentes, 288 passam / 3 falhas ambientais).
 
