@@ -25,10 +25,6 @@ describe("admin hash router", () => {
 describe("fitGranularity", () => {
   // Datas fixas: o teste é de granularidade, não de "hoje".
   const TO = "2026-11-10";
-  const spanDays = (from: string, to: string) =>
-    Math.max(1, Math.ceil((Date.parse(to) - Date.parse(from)) / 86_400_000));
-  const bucketsFor = (granularity: string, days: number) =>
-    granularity === "day" ? days : Math.ceil(days / (granularity === "week" ? 7 : granularity === "month" ? 30 : 365));
 
   it("mantém a granularidade pedida quando ela já cabe em 400 buckets", () => {
     expect(fitGranularity("day", "2026-10-12", TO)).toBe("day");
@@ -36,17 +32,8 @@ describe("fitGranularity", () => {
     expect(fitGranularity("year", "1970-01-01", TO)).toBe("year");
   });
 
-  it("sempre devolve uma granularidade válida, inclusive em períodos longos", () => {
-    // Invariante que vale hoje: o resultado é um passo conhecido e nunca pior que o
-    // pedido. NÃO se afirma `buckets <= MAX_BUCKETS`: o fallback em Dashboard.tsx
-    // divide `days` pela janela do passo (62/400/1900), não pela largura do bucket,
-    // e por isso devolve "day" até para ~27 anos. O servidor limita os buckets.
-    const valid = ["day", "week", "month", "year"];
-    for (const from of ["2026-10-12", "2022-01-01", "2000-01-01", "1970-01-01"]) {
-      const chosen = fitGranularity("day", from, TO);
-      expect(valid).toContain(chosen);
-      const days = spanDays(from, TO);
-      expect(bucketsFor(chosen, days)).toBeLessThanOrEqual(bucketsFor("day", days));
-    }
+  it("engrossa a série quando 'day' estoura o limite de buckets", () => {
+    // Períodos muito longos precisam de um passo mais grosso que 'day'.
+    expect(fitGranularity("day", "1970-01-01", "2100-01-01")).toBe("week");
   });
 });

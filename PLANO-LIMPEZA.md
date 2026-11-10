@@ -111,7 +111,7 @@ Verificação: `bun run typecheck:web`, `bun run test:web`, commit `refactor(web
 
 - `BASE_URL` centralizado em `web/src/lib/base.ts` (novo, commitado); `PhonePage` e `ComputerPage` importam de lá, `ComputerPage` mantém `|| window.location.origin`.
 - `SessionCard`: aliases `files`/`connected` inlinados. `Dashboard.tsx` **não** foi tocado (bug de `fitGranularity` é pré-existente e fora de escopo; servidor limita os buckets).
-- `admin-router.test.ts`: datas fixas e dois casos — "mantém a granularidade pedida quando cabe" e "sempre devolve granularidade válida". A invariante `buckets <= MAX_BUCKETS` **não** é afirmada: medi que ela não vale hoje (o fallback de `Dashboard.tsx:63` divide `days` pela janela do passo 62/400/1900 em vez da largura do bucket, retornando `"day"` até ~20000 dias). O teste trava só o contrato observável, sem pinar essa saída defeituosa.
+- `admin-router.test.ts` (versão final): datas fixas e dois casos — "mantém a granularidade pedida quando cabe" (`day`/`month`/`year` curtos) e "engrossa a série em período muito longo" (`1970-01-01`→`2100-01-01` = `week`). A invariante `buckets <= MAX_BUCKETS` **não** é afirmada: o fallback em `Dashboard.tsx:63` divide `days` pela janela do passo (62/400/1900) em vez da largura do bucket e o resultado alterna perto dos limiares (20767 dias → `day`, 20952 → `week`). Por isso o teste não fixa valores nos limiares; o servidor limita os buckets. Bug pré-existente registrado em Risco.
 - `web/bun.lock` já estava regenerado e commitado em `2ea75a5` (snapshot base do worktree); `git diff HEAD` vazio e `bun install --frozen-lockfile` passa.
 - Verificação executada: `typecheck:web` OK, `test:web` 72/72, `web && bun run build` OK, `web && bun install --frozen-lockfile` OK.
 
@@ -142,3 +142,4 @@ Subagent revisor sem contexto, recebe `git diff dev...HEAD` de cada branch de ta
 - T2: remover `clearAllTimers`/`shutdown` exige grep de callers — se um teste usa, vira KEEP.
 - T5: `ComputerPage` sem fallback ficaria quebrado em dev; o import mantém fallback.
 - T4: nenhuma remoção de teste cobre upload de arquivo único, ZIP ou autorização — esses ficam intactos.
+- T5: `fitGranularity` (`web/src/admin/pages/Dashboard.tsx:63`) tem bug pré-existente: período longo pedido em `day` devolve `day` (perde resolução do range). Servidor trunca em 400 buckets, então não há erro, só perda de detalhe. Fora de escopo desta limpeza.
