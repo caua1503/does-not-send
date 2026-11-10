@@ -9,10 +9,9 @@ import { FileList } from "./FileList.tsx";
 import { createSession, deleteSession } from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import type { Session } from "../../lib/api.ts";
+import { BASE_URL } from "../../lib/base.ts";
 
-declare const __BASE_URL__: string;
-const PUBLIC_BASE_URL =
-  typeof __BASE_URL__ !== "undefined" && __BASE_URL__ ? __BASE_URL__ : window.location.origin;
+const PUBLIC_BASE_URL = BASE_URL || window.location.origin;
 
 interface ActiveSession extends Session {
   closing?: boolean;

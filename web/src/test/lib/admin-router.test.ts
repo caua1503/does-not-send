@@ -23,20 +23,17 @@ describe("admin hash router", () => {
 });
 
 describe("fitGranularity", () => {
-  const today = Date.now();
-  const from = new Date(today - 30 * 86_400_000).toISOString().slice(0, 10);
-  const to = new Date(today).toISOString().slice(0, 10);
-  const yearsAgo = (n: number) => {
-    const d = new Date(today);
-    d.setUTCFullYear(d.getUTCFullYear() - n);
-    return d.toISOString().slice(0, 10);
-  };
+  // Datas fixas: o teste é de granularidade, não de "hoje".
+  const TO = "2026-11-10";
 
-  it("não deixa a série passar de 400 buckets", () => {
-    // Que bug pega: período longo em dias estouraria o limite e a API recusaria.
-    expect(fitGranularity("day", from, to)).toBe("day");
-    expect(fitGranularity("day", yearsAgo(4), to)).toBe("week");
-    expect(fitGranularity("day", yearsAgo(26), to)).toBe("month");
-    expect(fitGranularity("day", yearsAgo(56), to)).toBe("year");
+  it("mantém a granularidade pedida quando ela já cabe em 400 buckets", () => {
+    expect(fitGranularity("day", "2026-10-12", TO)).toBe("day");
+    expect(fitGranularity("month", "2000-01-01", TO)).toBe("month");
+    expect(fitGranularity("year", "1970-01-01", TO)).toBe("year");
+  });
+
+  it("engrossa a série quando 'day' estoura o limite de buckets", () => {
+    // Períodos muito longos precisam de um passo mais grosso que 'day'.
+    expect(fitGranularity("day", "1970-01-01", "2100-01-01")).toBe("week");
   });
 });

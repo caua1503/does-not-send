@@ -39,7 +39,7 @@ export function SessionCard({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
-  const { files: localFiles, connected: localConnected } = useSessionEvents(
+  const { files, connected } = useSessionEvents(
     session.id,
     session.ownerToken,
     { role: "computer" },
@@ -65,9 +65,6 @@ export function SessionCard({
       clearInterval(id);
     };
   }, [session.id, session.ownerToken]);
-
-  const files = localFiles;
-  const connected = localConnected;
 
   const visualId = session.visualId || session.shortId;
   const qrToken = session.qrToken || session.uploadToken || "";
