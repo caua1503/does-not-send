@@ -1,4 +1,4 @@
-import type { Category, CloseReason, EventType, Granularity, TransferStatus } from "./types.js";
+import type { Category, CloseReason, Granularity, TransferStatus } from "./types.js";
 
 export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
   completed: "Concluída",
@@ -22,10 +22,6 @@ export const CLOSE_REASON_LABELS: Record<CloseReason, string> = {
   server_restart: "Reinício do servidor",
 };
 
-export const EVENT_TYPE_LABELS: Record<EventType, string> = {
-  pairing_refused: "Pareamento recusado",
-};
-
 export const GRANULARITY_LABELS: Record<Granularity, string> = {
   day: "Dia",
   week: "Semana",
@@ -42,14 +38,6 @@ export const POSITION_LABELS = {
   retry: "Tentar de novo",
 } as const;
 
-export function transferStatusLabel(status: TransferStatus): string {
-  return TRANSFER_STATUS_LABELS[status];
-}
-
 export function categoryLabel(category: Category): string {
   return CATEGORY_LABELS[category];
-}
-
-export function closeReasonLabel(reason: CloseReason | null): string | null {
-  return reason ? CLOSE_REASON_LABELS[reason] : null;
 }

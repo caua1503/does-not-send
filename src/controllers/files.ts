@@ -21,7 +21,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
   // Upload files (phone credential)
   app.post<{ Params: { id: string } }>("/sessions/:id/files", async (request, reply) => {
     const { id } = request.params;
-    const session = ctx.sessionRepository.getById(id);
+    const session = ctx.sessionStore.getById(id);
 
     // 1. Sessão existe?
     if (!session) {
@@ -116,7 +116,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     } finally {
       unregisterUpload();
       endUpload(session);
-      ctx.sessionRepository.update(session);
+      ctx.sessionStore.update(session);
     }
   });
 
@@ -125,7 +125,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
 
-    const session = ctx.sessionRepository.getById(auth.sessionId)!;
+    const session = ctx.sessionStore.getById(auth.sessionId)!;
     return {
       files: session.files.map((f) => ({
         id: f.id,
@@ -146,7 +146,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
       if (!auth) return;
 
-      const session = ctx.sessionRepository.getById(auth.sessionId)!;
+      const session = ctx.sessionStore.getById(auth.sessionId)!;
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {

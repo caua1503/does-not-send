@@ -30,9 +30,7 @@ export interface Session {
   visualId: string;
   shortId: string;
   qrTokenHash: string | null;
-  isPaired: boolean;
   pairedAt?: string | null;
-  phoneDisconnectedAt?: string;
   state: SessionState;
   activeUploads: number;
   createdAt: string;
@@ -42,7 +40,6 @@ export interface Session {
     computer: number | null;
     phone: number | null;
   };
-  phoneLostAt: number | null;
   closedReason?: string | null;
   computerIp?: string | null; // IP normalizado do computador
   phoneIp?: string | null; // IP normalizado do celular

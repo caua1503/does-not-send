@@ -68,13 +68,7 @@ export async function createTestApp(
 }
 
 export async function cleanupTestApp(ctx: TestContext): Promise<void> {
-  const appCtx = (
-    ctx.app as unknown as {
-      ctx: { sessionStore?: { shutdown(): void }; sessionService?: { shutdown(): void } };
-    }
-  ).ctx;
-  appCtx.sessionStore?.shutdown();
-  appCtx.sessionService?.shutdown();
+  // onClose já roda sessionStore.shutdown() e recorder.close(); fechar o app drena a fila antes do sweeper parar.
   await ctx.app.close();
   try {
     await rm(ctx.tempDir, { recursive: true, force: true });

@@ -38,7 +38,7 @@ export async function authorize(
     return null;
   }
 
-  const session = ctx.sessionRepository.getById(sessionId);
+  const session = ctx.sessionStore.getById(sessionId);
 
   let matchedRole: TokenRole | null = null;
 
@@ -123,7 +123,7 @@ export async function sessionRoutes(
       });
     }
 
-    const session = ctx.sessionRepository.getById(id);
+    const session = ctx.sessionStore.getById(id);
     if (!session) {
       safeRecord(
         ctx.recorder,

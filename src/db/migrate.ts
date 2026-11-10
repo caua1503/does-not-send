@@ -13,6 +13,25 @@ function redactUrl(err: unknown): string {
   return message.replace(/:\/\/[^\s/@:]+:[^\s/@]*@/g, "://***@");
 }
 
+// Only connectivity/transient SQLSTATEs are worth retrying; anything else
+// (bad migration, auth, missing schema) is permanent and must stop the loop.
+const RETRYABLE_CODES = new Set([
+  "40001", // serialization_failure
+  "40P01", // deadlock_detected
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+  "57P04", // database_dropped
+]);
+const RETRYABLE_CLASSES = ["08", "53"];
+
+export function isRetryable(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code ??
+    (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  if (typeof code !== "string") return true; // no SQLSTATE (network/unknown): retry
+  return RETRYABLE_CODES.has(code) || RETRYABLE_CLASSES.includes(code.slice(0, 2));
+}
+
 export interface MigrationLogger {
   info(msg: string): void;
   error(msg: string): void;
@@ -77,6 +96,12 @@ export class MigrationRunner {
         return;
       } catch (err) {
         if (signal.aborted) return;
+        if (!isRetryable(err)) {
+          this.logger.error(
+            `Database migration failed permanently: ${redactUrl(err)}`,
+          );
+          return;
+        }
         this.logger.error(
           `Database migration failed, retrying in ${delayMs}ms: ${redactUrl(err)}`,
         );

@@ -67,11 +67,6 @@ export interface AdminFilters {
 // Responses
 // ---------------------------------------------------------------------------
 
-export interface SessionRef {
-  id: string;
-  visualId: string;
-}
-
 export interface TransferRow {
   id: string;
   sessionId: string;
@@ -181,8 +176,4 @@ export interface MeResponse {
   authenticated: boolean;
   /** ISO UTC, only present while authenticated. */
   expiresAt?: string;
-}
-
-export interface ApiErrorBody {
-  error: { code: string; message: string };
 }

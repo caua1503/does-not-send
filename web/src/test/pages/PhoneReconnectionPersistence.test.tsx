@@ -416,7 +416,12 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
 
     await waitFor(() => {
       expect(screen.getByTestId("status-session-closed")).toBeInTheDocument();
+      expect(screen.getAllByText(/sessão encerrada/i).length).toBeGreaterThanOrEqual(1);
     });
+
+    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    expect(input).toBeDisabled();
+    expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
 
     // Credencial deve ser removida do localStorage para não manter sessão órfã
     expect(localStorage.getItem("dns_phone_cred_sess-persist-123")).toBeNull();

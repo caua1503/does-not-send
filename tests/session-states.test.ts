@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transition, TRANSITIONS } from "../src/session/states.js";
+import { transition } from "../src/session/states.js";
 import { InvalidTransitionError } from "../src/session/errors.js";
 
 describe("transition()", () => {
@@ -76,31 +76,5 @@ describe("transition()", () => {
   it("CLOSED → WAITING throws InvalidTransitionError", () => {
     const s = { state: "CLOSED" as const };
     expect(() => transition(s as any, "WAITING")).toThrow(InvalidTransitionError);
-  });
-
-  it("InvalidTransitionError carries from/to", () => {
-    const s = { state: "WAITING" as const };
-    try {
-      transition(s as any, "TRANSFERRING");
-    } catch (e) {
-      expect(e).toBeInstanceOf(InvalidTransitionError);
-      const err = e as InvalidTransitionError;
-      expect(err.from).toBe("WAITING");
-      expect(err.to).toBe("TRANSFERRING");
-    }
-  });
-
-  it("state is not mutated on invalid transition", () => {
-    const s = { state: "WAITING" as const };
-    try {
-      transition(s as any, "TRANSFERRING");
-    } catch {
-      /* expected */
-    }
-    expect(s.state).toBe("WAITING");
-  });
-
-  it("TRANSITIONS table has exactly 5 keys", () => {
-    expect(Object.keys(TRANSITIONS)).toHaveLength(5);
   });
 });

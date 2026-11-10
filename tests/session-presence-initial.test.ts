@@ -63,6 +63,5 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
     const afterTick = store.getById(session.id)!;
     // NÃO deve ter mudado para DISCONNECTED!
     expect(afterTick.state).toBe("PAIRED");
-    expect(afterTick.phoneLostAt).toBeNull();
   });
 });
