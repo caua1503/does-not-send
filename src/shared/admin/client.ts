@@ -63,7 +63,12 @@ export class AdminClient {
     if (options.onUnauthorized) this.onUnauthorized = options.onUnauthorized;
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  /** Raw GET with the admin credentials; callers own path validation. */
+  async request<T>(path: string, signal?: AbortSignal | null): Promise<T> {
+    return this.send<T>(path, { signal: signal ?? null });
+  }
+
+  private async send<T>(path: string, init?: RequestInit): Promise<T> {
     let response: Response;
     // The admin API answers quickly (5s statement timeout); never leave the UI hanging.
     const callerSignal = init?.signal ?? null;
@@ -106,7 +111,7 @@ export class AdminClient {
   }
 
   async login(username: string, password: string): Promise<void> {
-    await this.request(
+    await this.send(
       "/admin/api/login",
       {
         method: "POST",
@@ -117,7 +122,7 @@ export class AdminClient {
   }
 
   async logout(): Promise<void> {
-    await this.request("/admin/api/logout", {
+    await this.send("/admin/api/logout", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -136,46 +141,38 @@ export class AdminClient {
     return serializeAdminFilters({ ...mergedDefaults(), ...filters });
   }
 
+  private path(path: string, filters: Partial<AdminFilters>): string {
+    return `${path}?${this.filtersQuery(filters)}`;
+  }
+
   async summary(filters: Partial<AdminFilters>, signal?: AbortSignal): Promise<AdminSummary> {
-    const q = this.filtersQuery(filters);
-    return this.request<AdminSummary>(`/admin/api/summary?${q}`, { signal: signal ?? null });
+    return this.request<AdminSummary>(this.path("/admin/api/summary", filters), signal);
   }
 
   async timeseries(filters: Partial<AdminFilters>, signal?: AbortSignal): Promise<TimeseriesResponse> {
-    const q = this.filtersQuery(filters);
-    return this.request<TimeseriesResponse>(`/admin/api/timeseries?${q}`, { signal: signal ?? null });
+    return this.request<TimeseriesResponse>(this.path("/admin/api/timeseries", filters), signal);
   }
 
   async transfers(
     filters: Partial<AdminFilters>,
     signal?: AbortSignal,
   ): Promise<Paginated<TransferRow>> {
-    const q = this.filtersQuery(filters);
-    return this.request<Paginated<TransferRow>>(`/admin/api/transfers?${q}`, {
-      signal: signal ?? null,
-    });
+    return this.request<Paginated<TransferRow>>(this.path("/admin/api/transfers", filters), signal);
   }
 
   async sessions(
     filters: Partial<AdminFilters>,
     signal?: AbortSignal,
   ): Promise<Paginated<SessionRow>> {
-    const q = this.filtersQuery(filters);
-    return this.request<Paginated<SessionRow>>(`/admin/api/sessions?${q}`, {
-      signal: signal ?? null,
-    });
+    return this.request<Paginated<SessionRow>>(this.path("/admin/api/sessions", filters), signal);
   }
 
   async sessionDetail(id: string, signal?: AbortSignal): Promise<SessionDetail> {
-    return this.request<SessionDetail>(`/admin/api/sessions/${encodeURIComponent(id)}`, {
-      signal: signal ?? null,
-    });
+    return this.request<SessionDetail>(`/admin/api/sessions/${encodeURIComponent(id)}`, signal);
   }
 
   async transferDetail(id: string, signal?: AbortSignal): Promise<TransferDetail> {
-    return this.request<TransferDetail>(`/admin/api/transfers/${encodeURIComponent(id)}`, {
-      signal: signal ?? null,
-    });
+    return this.request<TransferDetail>(`/admin/api/transfers/${encodeURIComponent(id)}`, signal);
   }
 }
 

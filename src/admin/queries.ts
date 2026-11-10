@@ -64,6 +64,9 @@ export const SESSION_SORTS: readonly SortKey[] = [
   "totalBytes",
 ];
 
+/** Shared with the admin frontend so its table headers match the whitelist. */
+export const SORT_KEYS = { transfers: TRANSFER_SORTS, sessions: SESSION_SORTS } as const;
+
 /** Only whitelisted keys ever reach an ORDER BY; anything else uses the default. */
 export function parseSort<T extends SortKey>(
   raw: unknown,
