@@ -1,8 +1,13 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AppContext } from "../app.js";
 import type { AdminDeps } from "../admin/index.js";
 import { expiryCookieHeader, readSessionToken, sessionCookieHeader } from "../admin/cookies.js";
 import { isOriginAllowed, isSecureRequest, isJsonContentType } from "../admin/http.js";
+import { createAdminQueries, fillBuckets, SESSION_SORTS, TRANSFER_SORTS, parseDirection, parseSort } from "../admin/queries.js";
+import { buildBuckets } from "../admin/time-buckets.js";
+import { errorHandler } from "../utils/error-handler.js";
+import { parseAdminFilters, resolvePeriod } from "../shared/admin/filters.js";
+import { MAX_BUCKETS, type AdminFilters, type SessionTimelineItem } from "../shared/admin/types.js";
 
 export interface AdminRouteOptions {
   ctx: AppContext;
@@ -52,6 +57,19 @@ function sessionToken(request: FastifyRequest): string | undefined {
 export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions): Promise<void> {
   const { ctx, deps } = opts;
   const publicBaseUrl = ctx.config.publicBaseUrl;
+  const adminQueries = ctx.db ? createAdminQueries(ctx.db.reader) : undefined;
+  const queries = () => adminQueries!;
+
+  // A failing query answers 500 JSON (no SQL/messages in the body or log).
+  app.setErrorHandler(async (error, request, reply) => {
+    if (!request.url.startsWith("/admin")) return errorHandler(error as FastifyError, request, reply);
+    const err = error as Error & { code?: string; statusCode?: number };
+    request.log.error({ err: { name: err.name, code: err.code, msg: err.message }, statusCode: err.statusCode }, "admin request failed");
+    if (err.statusCode && err.statusCode >= 400 && err.statusCode < 500) {
+      return sendAdminError(reply, err.statusCode, "bad_request", "Requisição inválida");
+    }
+    return sendAdminError(reply, 500, "internal_error", "Erro interno");
+  });
 
   // Login lives outside the authenticated hook: it is the door.
   app.post("/admin/api/login", async (request, reply) => {
@@ -120,6 +138,105 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     const expiresAt = deps.sessions.lookup(sessionToken(request), new Date(ctx.clock.now()));
     if (!expiresAt) return sendAdminError(reply, 401, "unauthorized", "Sessão expirada");
     return reply.send({ authenticated: true, expiresAt: expiresAt.toISOString() });
+  });
+
+  // ---- Read-only data ------------------------------------------------------
+  // Every route answers 503 before touching the pool while migrations are not
+  // done; the 5s statement_timeout on the reader pool bounds each query.
+  const requireDb = (reply: FastifyReply): boolean => {
+    // Never query the panel schema before migrations (or after a timezone that
+    // Intl rejects, which would make the calendar helpers throw at runtime).
+    if (ctx.db?.isReady() && adminQueries) return true;
+    sendAdminError(reply, 503, "db_unavailable", "Banco indisponível");
+    return false;
+  };
+
+  const readFilters = (request: FastifyRequest): AdminFilters => {
+    const url = request.raw.url ?? request.url;
+    const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+    return parseAdminFilters(query).filters;
+  };
+
+  const sortOf = (request: FastifyRequest, key: string): string | null => {
+    const raw = (request.query as Record<string, unknown>)[key];
+    return typeof raw === "string" ? raw : null;
+  };
+
+  app.get("/admin/api/summary", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const filters = readFilters(request);
+    const period = resolvePeriod(filters, new Date(ctx.clock.now()), ctx.config.admin!.tz);
+    const data = await queries().summary(filters);
+    return reply.send({ period, ...data });
+  });
+
+  app.get("/admin/api/timeseries", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const filters = readFilters(request);
+    const tz = ctx.config.admin!.tz;
+    const period = resolvePeriod(filters, new Date(ctx.clock.now()), tz);
+    const buckets = buildBuckets(new Date(period.from), new Date(period.to), filters.granularity, tz, MAX_BUCKETS);
+    const rows = await queries().timeseries(filters, buckets);
+    return reply.send({ granularity: filters.granularity, points: fillBuckets(buckets, rows) });
+  });
+
+  app.get("/admin/api/transfers", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const filters = readFilters(request);
+    const sort = parseSort(sortOf(request, "sort"), TRANSFER_SORTS, "startedAt");
+    const dir = parseDirection(sortOf(request, "dir"), "desc");
+    return reply.send(await queries().listTransfers(filters, sort, dir));
+  });
+
+  app.get("/admin/api/sessions", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const filters = readFilters(request);
+    const sort = parseSort(sortOf(request, "sort"), SESSION_SORTS, "createdAt");
+    const dir = parseDirection(sortOf(request, "dir"), "desc");
+    return reply.send(await queries().listSessions(filters, sort, dir));
+  });
+
+  app.get<{ Params: { id: string } }>("/admin/api/transfers/:id", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const id = String(request.params.id).slice(0, 128);
+    const detail = await queries().getTransfer(id);
+    if (!detail) return sendAdminError(reply, 404, "not_found", "Transferência não encontrada");
+    return reply.send(detail);
+  });
+
+  app.get<{ Params: { id: string } }>("/admin/api/sessions/:id", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const id = String(request.params.id).slice(0, 128);
+    const rows = await queries().getSessionDetail(id);
+    if (!rows) return sendAdminError(reply, 404, "not_found", "Sessão não encontrada");
+
+    const timeline: SessionTimelineItem[] = [];
+    if (rows.session.pairedAt) timeline.push({ at: rows.session.pairedAt, kind: "paired" });
+    timeline.push({ at: rows.session.createdAt, kind: "created" });
+    for (const row of rows.timelineRows) {
+      timeline.push(
+        row.kind === "transfer_started"
+          ? { at: row.at, kind: "transfer_started", transferId: row.transferId }
+          : {
+              at: row.at,
+              kind: "transfer_finished",
+              transferId: row.transferId,
+              status: row.status,
+              size: row.size,
+            },
+      );
+    }
+    if (rows.session.closedAt && rows.session.closeReason) {
+      timeline.push({ at: rows.session.closedAt, kind: "closed", reason: rows.session.closeReason });
+    }
+    timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+
+    return reply.send({
+      session: rows.session,
+      transfers: rows.transfers,
+      timeline,
+      relatedSessions: rows.relatedSessions,
+    });
   });
 
   // The page shell (static HTML/CSS/JS from web/dist/admin). Never cached.
