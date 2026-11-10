@@ -48,6 +48,7 @@ export class AttemptLimiter {
   private readonly perIp = new Map<string, IpEntry>();
   private readonly globalFailures: number[] = [];
   private globalBlockedUntil = 0;
+  private failuresSinceSweep = 0;
 
   constructor(
     clock: Clock,
@@ -69,10 +70,14 @@ export class AttemptLimiter {
 
   recordFailure(ip: string, now: Date = this.now()): void {
     const ts = now.getTime();
-    const { maxPerIp, ipWindowMs, ipBlockMs, maxGlobal, globalWindowMs, globalBlockMs } = {
+    const { maxPerIp, ipWindowMs, ipBlockMs, maxGlobal, globalBlockMs } = {
       ...DEFAULTS,
       ...this.opts,
     };
+    // Sweep on every other failure at most: keeps the maps bounded without
+    // rescanning the whole map for each attempt of a flood.
+    this.failuresSinceSweep += 1;
+    if (this.failuresSinceSweep >= 16) this.sweep(now);
 
     const entry = this.perIp.get(ip) ?? { failures: [], blockedUntil: 0 };
     const failures = pruneList(entry.failures, ipWindowMs, ts);
@@ -88,13 +93,11 @@ export class AttemptLimiter {
     this.perIp.set(ip, entry);
 
     this.globalFailures.push(ts);
-    // slice(): Bun reads a spread of the truncated array *after* length = 0
-    // when it aliases the target, which silently drops every global failure.
-    const kept = pruneList(this.globalFailures, globalWindowMs, ts).slice();
-    this.globalFailures.length = 0;
-    this.globalFailures.push(...kept);
-    // >= (not >) so a rotating-IP flood is blocked at exactly the 30th failure too.
-    if (this.globalFailures.length >= maxGlobal - 1 && this.globalBlockedUntil <= ts) {
+    if (this.globalFailures.length > maxGlobal) {
+      this.sweep(now);
+    }
+    // >= so a rotating-IP flood is blocked at exactly the 30th failure.
+    if (this.globalFailures.length >= maxGlobal && this.globalBlockedUntil <= ts) {
       this.globalBlockedUntil = ts + globalBlockMs;
     }
   }
@@ -114,6 +117,7 @@ export class AttemptLimiter {
     const kept = pruneList(this.globalFailures, globalWindowMs, ts).slice();
     this.globalFailures.length = 0;
     this.globalFailures.push(...kept);
+    this.failuresSinceSweep = 0;
   }
 
   clear(): void {

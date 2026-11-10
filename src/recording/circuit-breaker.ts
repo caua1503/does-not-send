@@ -44,6 +44,13 @@ export class CircuitBreaker {
    * @returns true if circuit just opened, false otherwise.
    */
   recordFailure(): boolean {
+    // A failed half-open probe reopens immediately: with the old counter it fell
+    // into "already open" and, once exhausted, left the circuit closed forever.
+    if (this.state === "half_open") {
+      this.state = "open";
+      this.openUntil = Date.now() + this.config.openDurationMs;
+      return true;
+    }
     this.consecutiveFailures++;
 
     if (this.consecutiveFailures >= this.config.failureThreshold) {

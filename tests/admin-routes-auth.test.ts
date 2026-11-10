@@ -102,6 +102,33 @@ describe("login e sessão do painel", () => {
     expect(me.statusCode).toBe(401);
   });
 
+  it("logout sem corpo JSON funciona; com Origin estranho é recusado", async () => {
+    // Que bug pega: abrir/fechar aba sem body deixaria o token vivo por 8h.
+    const app = await withAdmin();
+    const cookie = await login(app);
+    const evil = await app.inject({
+      method: "POST",
+      url: "/admin/api/logout",
+      headers: { cookie, origin: "https://evil.example" },
+    });
+    expect(evil.statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/admin/api/me", headers: { cookie } })).statusCode).toBe(200);
+    const out = await app.inject({ method: "POST", url: "/admin/api/logout", headers: { cookie } });
+    expect(out.statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/admin/api/me", headers: { cookie } })).statusCode).toBe(401);
+  });
+
+  it("cookie quebrado em rota de upload não atinge o painel nem derruba o app", async () => {
+    // Que bug pega: hook de auth global lendo cookie em todas as rotas.
+    const app = await withAdmin();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      headers: { cookie: "admin_session=\u0000\u0001; %%%=;;" },
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
   it("POST sem Content-Type JSON é recusado e sem Origin estranho também", async () => {
     // Que bug pega: login por formulário/CSRF cross-site.
     const app = await withAdmin();
@@ -192,11 +219,11 @@ describe("produção sem credencial válida", () => {
     expect(loginRes.statusCode).toBe(404);
     const me = await raw.inject({ method: "GET", url: "/admin/api/me" });
     expect(me.statusCode).toBe(404);
-    // /admin may serve the prebuilt shell from disk (the route is not registered
-    // without config.admin), but it must never expose the API.
+    // Sem config.admin a rota não existe, nem mesmo com o shell já compilado.
     const page = await raw.inject({ method: "GET", url: "/admin" });
-    expect([200, 404, 503]).toContain(page.statusCode);
-    expect(page.body).not.toContain("admin_session");
+    expect(page.statusCode).toBe(404);
+    const assets = await raw.inject({ method: "GET", url: "/admin/assets/app.js" });
+    expect(assets.statusCode).toBe(404);
 
     expect((await raw.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
     expect((await raw.inject({ method: "POST", url: "/api/sessions" })).statusCode).toBe(201);

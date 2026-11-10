@@ -310,12 +310,14 @@ export async function buildApp(
   // Clean orphan files from previous runs
   await cleanOrphans(config.tempDir, sessionStore);
 
-  // Admin (page + API): absent entirely when config.admin is undefined.
-  const adminDeps = await registerAdmin(app, ctx);
-  if (adminDeps) {
-    app.decorate("adminDeps", adminDeps);
-    await app.register(adminRoutes, { ctx, deps: adminDeps });
-  }
+  // Without the panel enabled, /admin (page and assets) must not exist, even if
+  // a previous build left web/dist/admin on disk.
+  app.addHook("onRequest", async (request, reply) => {
+    if (ctx.config.admin) return;
+    if (request.url === "/admin" || request.url.startsWith("/admin/") || request.url.startsWith("/admin?")) {
+      return reply.status(404).send({ error: "Not Found", statusCode: 404 });
+    }
+  });
 
   // Routes
   await app.register(healthRoute);
@@ -324,6 +326,15 @@ export async function buildApp(
   await app.register(downloadRoutes, { prefix: "/api", ctx });
   await app.register(websocketRoutes, { prefix: "/api", ctx });
   await app.register(staticRoutes);
+
+  // Admin (page + API): absent entirely when config.admin is undefined. In its
+  // own plugin (prefix pins the encapsulation) so its hooks never see /api, and
+  // after the transfer routes so hashing the password at boot delays nothing.
+  const adminDeps = await registerAdmin(app, ctx);
+  if (adminDeps) {
+    app.decorate("adminDeps", adminDeps);
+    await app.register(adminRoutes, { prefix: "/admin", ctx, deps: adminDeps });
+  }
 
   // Decorate for access in tests
   app.decorate("ctx", ctx);

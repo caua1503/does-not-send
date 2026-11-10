@@ -61,3 +61,22 @@ describe("CircuitBreaker", () => {
     expect(breaker.canAttempt()).toBe(true);
   });
 });
+
+describe("CircuitBreaker half_open", () => {
+  it("volta a abrir depois de uma sonda half_open falhar", async () => {
+    // Que bug pega: após timeout e 1 falha, o circuito ficava fechado para sempre.
+    const breaker = new CircuitBreaker({ failureThreshold: 3, openDurationMs: 20 });
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    expect(breaker.canAttempt()).toBe(false);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(breaker.canAttempt()).toBe(true); // half_open
+    breaker.recordFailure(); // sonda half_open falha → reabre imediatamente
+    expect(breaker.canAttempt()).toBe(false);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(breaker.canAttempt()).toBe(true); // nova sonda
+    breaker.recordFailure(); // e falha de novo → reabre
+    expect(breaker.canAttempt()).toBe(false);
+  });
+});

@@ -18,6 +18,8 @@ export class AdminSessionStore {
   private readonly sessions = new Map<string, number>();
   /** Stand-in digest so expired/unknown tokens always go through a timingSafeEqual. */
   private readonly dummyHash = sha256Hex(crypto.randomUUID());
+  /** Same digest as bytes, to skip a Buffer.from on every miss. */
+  private readonly dummyBytes = Buffer.from(this.dummyHash, "hex");
   private sweeper?: ReturnType<typeof setInterval>;
 
   constructor(
@@ -52,12 +54,13 @@ export class AdminSessionStore {
   /** Constant-shape check: hits and misses both end in a timingSafeEqual. */
   lookup(token: string | undefined, now: Date = this.now()): Date | null {
     if (!token || token.length > MAX_TOKEN_LENGTH) {
-      constantCompare(this.dummyHash, this.dummyHash);
+      // Same work as a hit so timing does not reveal whether a token exists.
+      timingSafeEqual(this.dummyBytes, this.dummyBytes);
       return null;
     }
     const expiryMs = this.sessions.get(sha256Hex(token));
     if (expiryMs === undefined || expiryMs <= now.getTime()) {
-      constantCompare(this.dummyHash, this.dummyHash);
+      timingSafeEqual(this.dummyBytes, this.dummyBytes);
       return null;
     }
     return new Date(expiryMs);

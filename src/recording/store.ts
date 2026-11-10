@@ -34,8 +34,17 @@ export class ConstraintViolationError extends Error {
  * @returns true if error is transient and should be retried at the batch level.
  */
 export function isTransientError(err: unknown): boolean {
-  // Bun.sql errors expose .code (SQLSTATE) on PostgreSQL errors
-  const code = (err as { code?: string }).code;
-  if (!code) return false;
-  return code.startsWith("08") || code.startsWith("53") || code.startsWith("57");
+  // Driver errors are wrapped by Drizzle: SQLSTATE (errno) and the Bun code live
+  // on the cause; a refused connection is exactly the case retries exist for.
+  const source = (err as { cause?: { code?: unknown; errno?: unknown } }).cause;
+  const code = (err as { code?: unknown }).code ?? source?.code;
+  if (typeof code === "string" && code.startsWith("ERR_POSTGRES_CONNECTION")) return true;
+  // Bun.sql errors expose .code (SQLSTATE) on PostgreSQL errors; Drizzle wraps
+  // those as well, with the SQLSTATE on cause.errno.
+  const sqlState =
+    (err as { errno?: unknown }).errno ??
+    source?.errno ??
+    (typeof code === "string" ? code : undefined);
+  if (typeof sqlState !== "string") return false;
+  return sqlState.startsWith("08") || sqlState.startsWith("53") || sqlState.startsWith("57");
 }

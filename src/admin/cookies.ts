@@ -41,7 +41,7 @@ export function sessionCookieHeader(
   return buildSessionCookie(token, secureValue, maxAgeSeconds).replace("Secure=;", "");
 }
 
-/** Expires the admin cookie on logout (independent of the request protocol). */
-export function expiryCookieHeader(): string {
-  return buildSessionCookie("", false, 0);
+/** Expires the admin cookie on logout, with Secure when the request was HTTPS. */
+export function expiryCookieHeader(secure = false): string {
+  return sessionCookieHeader("", secure, 0);
 }

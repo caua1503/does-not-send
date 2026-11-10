@@ -1,12 +1,12 @@
-import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AppContext } from "../app.js";
 import type { AdminDeps } from "../admin/index.js";
 import { expiryCookieHeader, readSessionToken, sessionCookieHeader } from "../admin/cookies.js";
 import { isOriginAllowed, isSecureRequest, isJsonContentType } from "../admin/http.js";
 import { createAdminQueries, fillBuckets, SESSION_SORTS, TRANSFER_SORTS, parseDirection, parseSort } from "../admin/queries.js";
 import { buildBuckets } from "../admin/time-buckets.js";
-import { errorHandler } from "../utils/error-handler.js";
 import { parseAdminFilters, resolvePeriod, type Period } from "../shared/admin/filters.js";
+import { DEFAULT_TZ } from "../shared/admin/format.js";
 import { MAX_BUCKETS, type AdminFilters, type SessionTimelineItem } from "../shared/admin/types.js";
 
 export interface AdminRouteOptions {
@@ -54,17 +54,26 @@ function sessionToken(request: FastifyRequest): string | undefined {
   return (request as FastifyRequest & { adminToken?: string }).adminToken;
 }
 
+/**
+ * Registered with its own prefix so it gets a fresh scope: the auth hook and
+ * error handler never reach the upload/pairing routes.
+ */
 export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions): Promise<void> {
   const { ctx, deps } = opts;
   const publicBaseUrl = ctx.config.publicBaseUrl;
+  const tz = ctx.config.admin?.tz ?? DEFAULT_TZ;
   const adminQueries = ctx.db ? createAdminQueries(ctx.db.reader) : undefined;
   const queries = () => adminQueries!;
 
   // A failing query answers 500 JSON (no SQL/messages in the body or log).
   app.setErrorHandler(async (error, request, reply) => {
-    if (!request.url.startsWith("/admin")) return errorHandler(error as FastifyError, request, reply);
     const err = error as Error & { code?: string; statusCode?: number };
-    request.log.error({ err: { name: err.name, code: err.code, msg: err.message }, statusCode: err.statusCode }, "admin request failed");
+    // 5xx: never log err.message — driver errors can echo SQL with filter values.
+    const details =
+      err.statusCode && err.statusCode < 500
+        ? { name: err.name, code: err.code, msg: err.message }
+        : { name: err.name, code: err.code };
+    request.log.error({ err: details, statusCode: err.statusCode }, "admin request failed");
     if (err.statusCode && err.statusCode >= 400 && err.statusCode < 500) {
       return sendAdminError(reply, err.statusCode, "bad_request", "Requisição inválida");
     }
@@ -72,7 +81,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
   });
 
   // Login lives outside the authenticated hook: it is the door.
-  app.post("/admin/api/login", async (request, reply) => {
+  app.post("/api/login", async (request, reply) => {
     const rejected = rejectUnsafeRequest(request, reply, publicBaseUrl);
     if (rejected) return rejected;
 
@@ -109,13 +118,25 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return reply.status(200).send({ authenticated: true, expiresAt: expiresAt.toISOString() });
   });
 
+  // Logout only needs Origin: a client may close the tab without a JSON body.
+  app.post("/api/logout", async (request, reply) => {
+    if (!isOriginAllowed(request, publicBaseUrl)) {
+      return sendAdminError(reply, 403, "origin_not_allowed", "Origem não permitida");
+    }
+    deps.sessions.revoke(sessionToken(request));
+    // Keep the Secure flag on an HTTPS request so the browser really drops it.
+    void reply.header("Set-Cookie", expiryCookieHeader(isSecureRequest(request)));
+    reply.header("Cache-Control", NO_STORE);
+    return reply.status(204).send();
+  });
+
   // Every other /admin/api route requires a live session; responses are never cached.
   app.addHook("preHandler", async (request, reply) => {
-    if (!request.url.startsWith("/admin/api/") || request.url.startsWith("/admin/api/login")) {
-      return;
-    }
+    const path = request.url.split("?")[0];
+    if (path === "/admin/api/login" || path === "/admin") return;
     reply.header("Cache-Control", NO_STORE);
-    if (request.method !== "GET" && request.method !== "HEAD") {
+    // Logout needs no body; it already checked Origin above.
+    if (request.method !== "GET" && request.method !== "HEAD" && path !== "/admin/api/logout") {
       const error = rejectUnsafeRequest(request, reply, publicBaseUrl);
       if (error) return error;
     }
@@ -127,14 +148,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     (request as FastifyRequest & { adminToken?: string }).adminToken = token;
   });
 
-  app.post("/admin/api/logout", async (request, reply) => {
-    deps.sessions.revoke(sessionToken(request));
-    void reply.header("Set-Cookie", expiryCookieHeader());
-    reply.header("Cache-Control", NO_STORE);
-    return reply.status(204).send();
-  });
-
-  app.get("/admin/api/me", async (request, reply) => {
+  app.get("/api/me", async (request, reply) => {
     const expiresAt = deps.sessions.lookup(sessionToken(request), new Date(ctx.clock.now()));
     if (!expiresAt) return sendAdminError(reply, 401, "unauthorized", "Sessão expirada");
     return reply.send({ authenticated: true, expiresAt: expiresAt.toISOString() });
@@ -157,7 +171,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     const url = request.raw.url ?? request.url;
     const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
     const { filters } = parseAdminFilters(query);
-    const period = resolvePeriod(filters, new Date(ctx.clock.now()), ctx.config.admin!.tz);
+    const period = resolvePeriod(filters, new Date(ctx.clock.now()), tz);
     return { filters: { ...filters, ...period }, period };
   };
 
@@ -166,23 +180,22 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return typeof raw === "string" ? raw : null;
   };
 
-  app.get("/admin/api/summary", async (request, reply) => {
+  app.get("/api/summary", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const { filters, period } = readFilters(request);
     const data = await queries().summary(filters);
     return reply.send({ period, ...data });
   });
 
-  app.get("/admin/api/timeseries", async (request, reply) => {
+  app.get("/api/timeseries", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const { filters, period } = readFilters(request);
-    const tz = ctx.config.admin!.tz;
     const buckets = buildBuckets(new Date(period.from), new Date(period.to), filters.granularity, tz, MAX_BUCKETS);
     const rows = await queries().timeseries(filters, buckets);
     return reply.send({ granularity: filters.granularity, points: fillBuckets(buckets, rows) });
   });
 
-  app.get("/admin/api/transfers", async (request, reply) => {
+  app.get("/api/transfers", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const { filters } = readFilters(request);
     const sort = parseSort(sortOf(request, "sort"), TRANSFER_SORTS, "startedAt");
@@ -190,7 +203,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return reply.send(await queries().listTransfers(filters, sort, dir));
   });
 
-  app.get("/admin/api/sessions", async (request, reply) => {
+  app.get("/api/sessions", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const { filters } = readFilters(request);
     const sort = parseSort(sortOf(request, "sort"), SESSION_SORTS, "createdAt");
@@ -198,7 +211,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return reply.send(await queries().listSessions(filters, sort, dir));
   });
 
-  app.get<{ Params: { id: string } }>("/admin/api/transfers/:id", async (request, reply) => {
+  app.get<{ Params: { id: string } }>("/api/transfers/:id", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const id = String(request.params.id).slice(0, 128);
     const detail = await queries().getTransfer(id);
@@ -206,7 +219,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return reply.send(detail);
   });
 
-  app.get<{ Params: { id: string } }>("/admin/api/sessions/:id", async (request, reply) => {
+  app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const id = String(request.params.id).slice(0, 128);
     const rows = await queries().getSessionDetail(id);
@@ -242,7 +255,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
   });
 
   // The page shell (static HTML/CSS/JS from web/dist/admin). Never cached.
-  app.get("/admin", async (_request, reply) => {
+  app.get("/", async (_request, reply) => {
     reply.header("Cache-Control", NO_STORE);
     reply.header("Content-Security-Policy", ADMIN_PAGE_CSP);
     reply.header("Referrer-Policy", "no-referrer");

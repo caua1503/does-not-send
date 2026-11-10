@@ -91,7 +91,9 @@ describe("AttemptLimiter", () => {
     // Que bug pega: ataque distribuído contornando o limite por IP.
     const clock = new FakeClock(0);
     const limiter = new AttemptLimiter(clock);
-    for (let i = 0; i < 30; i++) limiter.recordFailure(`10.1.0.${i}`);
+    for (let i = 0; i < 29; i++) limiter.recordFailure(`10.1.0.${i}`);
+    expect(limiter.check("10.9.9.9").blocked).toBe(false);
+    limiter.recordFailure("10.1.0.29");
     expect(limiter.check("10.9.9.9")).toEqual({ blocked: true, retryAfterSeconds: 3600 });
     clock.advance(60 * 60 * 1000);
     expect(limiter.check("10.9.9.9").blocked).toBe(false);
