@@ -30,6 +30,9 @@ import {
 } from "./recording/index.js";
 import { sessions } from "./db/schema.js";
 import { isNull } from "drizzle-orm";
+import { registerAdmin, type AdminDeps } from "./admin/index.js";
+import { loadAdminPageHtml } from "./admin/page.js";
+import { adminRoutes } from "./controllers/admin.js";
 
 const MAX_LOGGED_URL_LENGTH = 2048;
 
@@ -114,6 +117,9 @@ export interface AppContext {
   db?: DbClient & { isReady(): boolean };
   migrationRunner?: MigrationRunner;
   recorder: import("./recording/index.js").SessionRecorder;
+  adminDeps?: AdminDeps;
+  /** Shell HTML for /admin, loaded once at boot from web/dist/admin. */
+  adminPageHtml?: string;
 }
 
 export interface BuildAppOptions {
@@ -169,7 +175,10 @@ export async function buildApp(
     void reply.header("X-Frame-Options", "DENY");
     void reply.header("X-XSS-Protection", "0");
     if (!reply.hasHeader("Content-Security-Policy")) {
-      const isApiOrHealth = request.url.startsWith("/api") || request.url.startsWith("/health");
+      const isApiOrHealth =
+        request.url.startsWith("/api") ||
+        request.url.startsWith("/health") ||
+        request.url.startsWith("/admin/api/");
       if (isApiOrHealth) {
         void reply.header("Content-Security-Policy", "default-src 'none'");
       } else {
@@ -206,27 +215,26 @@ export async function buildApp(
       });
       migrationRunner.start();
 
-      // Boot hook: mark orphaned sessions as closed with server_restart reason
-      // Wait for migrations to complete before running UPDATE
-      app.addHook("onReady", async () => {
-        if (db?.isReady()) {
-          try {
-            await db.writer
-              .update(sessions)
-              .set({
-                closedAt: new Date().toISOString(),
-                closeReason: "server_restart",
-              })
-              .where(isNull(sessions.closedAt));
-          } catch (err) {
-            app.log.error(
-              { error: err instanceof Error ? err.message : String(err) },
-              "failed to mark orphaned sessions on boot",
-            );
-          }
-        } else if (db) {
-          // DB configured but migrations not yet ready — log only, never throw
-          app.log.warn("db not ready at onReady, skipping server_restart UPDATE");
+      // Boot: mark orphaned sessions as closed with server_restart reason. Runs in
+      // the background (never delays boot or transfers) once migrations land.
+      void migrationRunner.whenReady().then(async (ready) => {
+        if (!ready) {
+          app.log.warn("db not ready, skipping server_restart UPDATE");
+          return;
+        }
+        try {
+          await db?.writer
+            .update(sessions)
+            .set({
+              closedAt: new Date().toISOString(),
+              closeReason: "server_restart",
+            })
+            .where(isNull(sessions.closedAt));
+        } catch (err) {
+          app.log.error(
+            { error: err instanceof Error ? err.message : String(err) },
+            "failed to mark orphaned sessions on boot",
+          );
         }
       });
     } catch {
@@ -268,6 +276,11 @@ export async function buildApp(
   const sessionService = new SessionService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore, recorder, app.log);
 
+  const adminPageHtml = config.admin ? loadAdminPageHtml() : undefined;
+  if (config.admin && !adminPageHtml) {
+    app.log.warn({}, "Admin frontend not built (web/dist/admin); /admin will answer 503");
+  }
+
   const ctx: AppContext = {
     config,
     clock,
@@ -279,6 +292,7 @@ export async function buildApp(
     db,
     migrationRunner,
     recorder,
+    ...(adminPageHtml ? { adminPageHtml } : {}),
   };
 
   if (options?.startSweeper ?? true) {
@@ -296,6 +310,15 @@ export async function buildApp(
   // Clean orphan files from previous runs
   await cleanOrphans(config.tempDir, sessionStore);
 
+  // Without the panel enabled, /admin (page and assets) must not exist, even if
+  // a previous build left web/dist/admin on disk.
+  app.addHook("onRequest", async (request, reply) => {
+    if (ctx.config.admin) return;
+    if (request.url === "/admin" || request.url.startsWith("/admin/") || request.url.startsWith("/admin?")) {
+      return reply.status(404).send({ error: "Not Found", statusCode: 404 });
+    }
+  });
+
   // Routes
   await app.register(healthRoute);
   await app.register(sessionRoutes, { prefix: "/api", ctx });
@@ -303,6 +326,15 @@ export async function buildApp(
   await app.register(downloadRoutes, { prefix: "/api", ctx });
   await app.register(websocketRoutes, { prefix: "/api", ctx });
   await app.register(staticRoutes);
+
+  // Admin (page + API): absent entirely when config.admin is undefined. In its
+  // own plugin (prefix pins the encapsulation) so its hooks never see /api, and
+  // after the transfer routes so hashing the password at boot delays nothing.
+  const adminDeps = await registerAdmin(app, ctx);
+  if (adminDeps) {
+    app.decorate("adminDeps", adminDeps);
+    await app.register(adminRoutes, { prefix: "/admin", ctx, deps: adminDeps });
+  }
 
   // Decorate for access in tests
   app.decorate("ctx", ctx);

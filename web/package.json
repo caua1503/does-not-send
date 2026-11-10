@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
-    "build": "bunx --bun vite build",
+    "build": "bunx --bun vite build && bun run scripts/package-admin.ts",
     "preview": "bunx --bun vite preview",
     "test": "bunx --bun vitest run",
     "test:watch": "bunx --bun vitest",

@@ -1,4 +1,13 @@
-import { pgTable, text, timestamp, bigint, pgEnum, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, bigint, pgEnum, index, customType } from "drizzle-orm/pg-core";
+
+// drizzle/bun-sql decodes timestamptz as "2026-01-05 13:05:00.000+00",
+// not ISO: anything parsing the value as ISO (the admin panel) would drop it.
+const timestamptz = customType<{ data: string; driverData: string }>({
+  dataType: () => "timestamptz",
+  fromDriver: (value) => new Date(value).toISOString(),
+});
+const timestamp = (name: string) => timestamptz(name);
 
 export const closeReasonEnum = pgEnum("close_reason", [
   "idle_timeout",
@@ -34,11 +43,11 @@ export const sessions = pgTable(
     visualId: text("visual_id").notNull(),
     computerIp: text("computer_ip"),
     phoneIp: text("phone_ip"),
-    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+    createdAt: timestamp("created_at")
       .notNull()
-      .defaultNow(),
-    pairedAt: timestamp("paired_at", { withTimezone: true, mode: "string" }),
-    closedAt: timestamp("closed_at", { withTimezone: true, mode: "string" }),
+      .default(sql`now()`),
+    pairedAt: timestamp("paired_at"),
+    closedAt: timestamp("closed_at"),
     closeReason: closeReasonEnum("close_reason"),
   },
   (table) => [index("sessions_created_at_idx").on(table.createdAt)],
@@ -57,10 +66,10 @@ export const transfers = pgTable(
     category: categoryEnum("category").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
     status: transferStatusEnum("status").notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true, mode: "string" })
+    startedAt: timestamp("started_at")
       .notNull()
-      .defaultNow(),
-    finishedAt: timestamp("finished_at", { withTimezone: true, mode: "string" }),
+      .default(sql`now()`),
+    finishedAt: timestamp("finished_at"),
   },
   (table) => [
     index("transfers_started_at_idx").on(table.startedAt),
@@ -72,7 +81,7 @@ export const events = pgTable(
   "events",
   {
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
-    at: timestamp("at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    at: timestamp("at").notNull().default(sql`now()`),
     type: eventTypeEnum("type").notNull(),
     ip: text("ip").notNull(),
     sessionId: text("session_id").references(() => sessions.id, { onDelete: "set null" }),

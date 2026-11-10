@@ -21,8 +21,13 @@ export async function staticRoutes(app: FastifyInstance): Promise<void> {
 
   // SPA fallback for frontend paths
   app.setNotFoundHandler(async (request, reply) => {
-    // API and health 404s stay JSON
-    if (request.url.startsWith("/api") || request.url.startsWith("/health")) {
+    // API and health 404s stay JSON; /admin/api never falls back to the app SPA
+    if (
+      request.url.startsWith("/api") ||
+      request.url.startsWith("/health") ||
+      request.url === "/admin" ||
+      request.url.startsWith("/admin/")
+    ) {
       return reply.status(404).send({ error: "Not Found", statusCode: 404 });
     }
 

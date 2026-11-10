@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PostgresRecorder, type Logger } from "../src/recording/postgres-recorder.js";
 import type { Store } from "../src/recording/store.js";
-import { ConstraintViolationError } from "../src/recording/store.js";
+import { ConstraintViolationError, isTransientError } from "../src/recording/store.js";
 import type { DomainEvent } from "../src/recording/events.js";
 
 // Helper: wait for condition with timeout
@@ -265,4 +265,21 @@ describe("PostgresRecorder", () => {
     expect(types).toContain("session_closed");
     expect(recorder.stats().failed).toBe(2); // session_created + transfer_started
   }, 2000);
+});
+
+describe("isTransientError", () => {
+  const wrapped = (cause: Record<string, unknown>): Error =>
+    Object.assign(new Error("query failed"), { cause });
+
+  it("trata conexão recusada (Drizzle envolve o erro do driver) como transitória", () => {
+    // Que bug pega: Postgres fora no meio do upload descartava os eventos em vez de reenfileirar.
+    expect(isTransientError(wrapped({ code: "ERR_POSTGRES_CONNECTION_REFUSED" }))).toBe(true);
+    expect(isTransientError(wrapped({ errno: "08006" }))).toBe(true);
+    expect(isTransientError({ code: "08006" })).toBe(true);
+  });
+
+  it("constraint e erro desconhecido não são transitórios", () => {
+    expect(isTransientError(wrapped({ errno: "23503" }))).toBe(false);
+    expect(isTransientError(new Error("boom"))).toBe(false);
+  });
 });

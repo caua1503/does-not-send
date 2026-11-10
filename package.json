@@ -22,7 +22,8 @@
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts'",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun run src/db/migrate.ts"
+    "db:migrate": "bun run src/db/migrate.ts",
+    "seed:admin:demo": "bun --bun run scripts/seed-admin-demo.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",

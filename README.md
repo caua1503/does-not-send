@@ -191,6 +191,34 @@ O setup recusa URLs que não terminem em `_test` para não apagar dados de outro
 
 ---
 
+## Painel `/admin`
+
+Painel de leitura das sessões e transferências, servido pelo próprio app em `/admin` (página, assets e API
+`/admin/api/*`). O painel nunca atrasa nem derruba a transferência: fora do horário de boot ele roda em escopo
+próprio, o pool "reader" tem `statement_timeout` de 5s e, sem banco pronto, a API responde `503` e a UI mostra
+"Banco indisponível".
+
+| Variável | Padrão | Descrição |
+| :--- | :--- | :--- |
+| `ADMIN_USER` | `admin` | Usuário do painel |
+| `ADMIN_PASSWORD` | — | Senha do painel. Fora de produção, ausente vira `admin/admin` com um aviso no log |
+| `ADMIN_TZ` | `America/Sao_Paulo` | Fuso (IANA) de filtros, séries por dia/semana e rótulos |
+| `TRUST_PROXY` | `false` | Confie no proxy reverso para `request.ip` e `X-Forwarded-Proto` (cookie `Secure`). Só ative atrás de um proxy |
+
+**Regra de produção:** com `NODE_ENV=production`, `ADMIN_PASSWORD` ausente, igual a `admin` ou com menos de
+12 caracteres desliga o painel por completo (`/admin` e `/admin/api/*` respondem `404`) e o app sobe normalmente.
+
+**Seed de demonstração** (só fora de produção, em `localhost` ou, dentro do compose, com `ALLOW_REMOTE_SEED=1`),
+para ter telas cheias no painel:
+
+```bash
+bun run seed:admin:demo               # 14 dias de sessões/transferências fictícias
+bun run seed:admin:demo -- --days=7   # período menor (1 a 90)
+bun run seed:admin:demo -- --clean    # remove só os dados DEMO-* e sai
+```
+
+---
+
 ## Testes & Garantia de Qualidade
 
 ### 1. Testes Automatizados (Backend e Front-end)

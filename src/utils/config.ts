@@ -1,5 +1,16 @@
 import { resolve } from "node:path";
 
+/**
+ * Resolved admin credentials. `undefined` means the /admin routes are not
+ * registered at all (they must not even resolve to a 404 JSON route).
+ */
+export interface AdminConfig {
+  user: string;
+  password: string;
+  /** IANA timezone used by the dashboard; validated before it is exported. */
+  tz: string;
+}
+
 export interface Config {
   host: string;
   port: number;
@@ -15,6 +26,7 @@ export interface Config {
   wsAuthTimeoutMs: number;
   cleanupMaxAttempts: number;
   cleanupInitialDelayMs: number;
+  admin?: AdminConfig;
 }
 
 function requireEnv(name: string): string {
@@ -29,6 +41,45 @@ function optionalEnv(name: string, fallback: string): string {
   const value = process.env[name];
   if (value === undefined || value === "") return fallback;
   return value;
+}
+
+const ADMIN_DEFAULT_USER = "admin";
+const ADMIN_DEFAULT_PASSWORD = "admin";
+const ADMIN_MIN_PRODUCTION_PASSWORD = 12;
+const DEFAULT_ADMIN_TZ = "America/Sao_Paulo";
+
+/** Falls back to UTC when the value is not a valid IANA zone (never throws at boot). */
+function resolveTimeZone(raw: string | undefined): string {
+  const candidate = raw && raw.trim() !== "" ? raw.trim() : DEFAULT_ADMIN_TZ;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate });
+    return candidate;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * Production rule: /admin only exists with a password that is neither the
+ * default nor shorter than 12 characters. The dev fallback is admin/admin.
+ */
+export function resolveAdminConfig(env: NodeJS.ProcessEnv = process.env): AdminConfig | undefined {
+  const isProduction = env.NODE_ENV === "production";
+  const user = env.ADMIN_USER && env.ADMIN_USER !== "" ? env.ADMIN_USER : ADMIN_DEFAULT_USER;
+  const password = env.ADMIN_PASSWORD ?? "";
+  const tz = resolveTimeZone(env.ADMIN_TZ);
+
+  if (isProduction) {
+    if (password === "" || password === ADMIN_DEFAULT_PASSWORD) return undefined;
+    if (password.length < ADMIN_MIN_PRODUCTION_PASSWORD) return undefined;
+    return { user, password, tz };
+  }
+
+  return {
+    user,
+    password: password !== "" ? password : ADMIN_DEFAULT_PASSWORD,
+    tz,
+  };
 }
 
 function parsePositiveInt(name: string, raw: string): number {
@@ -79,6 +130,12 @@ export function loadConfig(): Config {
     "CLEANUP_INITIAL_DELAY_MS",
     optionalEnv("CLEANUP_INITIAL_DELAY_MS", "100"),
   );
+  let admin: AdminConfig | undefined;
+  try {
+    admin = resolveAdminConfig();
+  } catch {
+    admin = undefined;
+  }
 
   return {
     host,
@@ -95,5 +152,6 @@ export function loadConfig(): Config {
     wsAuthTimeoutMs,
     cleanupMaxAttempts,
     cleanupInitialDelayMs,
+    ...(admin ? { admin } : {}),
   };
 }
