@@ -208,7 +208,8 @@ próprio, o pool "reader" tem `statement_timeout` de 5s e, sem banco pronto, a A
 **Regra de produção:** com `NODE_ENV=production`, `ADMIN_PASSWORD` ausente, igual a `admin` ou com menos de
 12 caracteres desliga o painel por completo (`/admin` e `/admin/api/*` respondem `404`) e o app sobe normalmente.
 
-**Seed de demonstração** (só fora de produção e fora de banco remoto), para ter telas cheias no painel:
+**Seed de demonstração** (só fora de produção, em `localhost` ou, dentro do compose, com `ALLOW_REMOTE_SEED=1`),
+para ter telas cheias no painel:
 
 ```bash
 bun run seed:admin:demo               # 14 dias de sessões/transferências fictícias

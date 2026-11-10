@@ -29,7 +29,6 @@ export function isOriginAllowed(request: FastifyRequest, publicBaseUrl?: string)
   if (raw === undefined) return true;
   const origin = normalizeOrigin(raw);
   if (origin === null) return false;
-  if (request.headers["sec-fetch-site"] === "same-origin") return true;
   if (hostMatches(request, origin)) return true;
   if (publicBaseUrl) {
     const allowed = normalizeOrigin(publicBaseUrl);

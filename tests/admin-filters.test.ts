@@ -110,6 +110,16 @@ describe("ida e volta parse/serialize", () => {
   });
 });
 
+describe("datas inválidas no calendário", () => {
+  it("descarta 2026-02-30 (Date.parse rolava para março)", () => {
+    // Que bug pega: from=2026-02-30 virava 02/03 silenciosamente.
+    const { filters, warnings } = parseAdminFilters("from=2026-02-30&to=2026-03-05");
+    expect(filters.from).toBeUndefined();
+    expect(warnings).toContain("from");
+    expect(filters.to).toBe("2026-03-05");
+  });
+});
+
 describe("resolvePeriod", () => {
   it("usa limites explícitos", () => {
     const period = resolvePeriod(

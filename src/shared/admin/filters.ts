@@ -259,7 +259,10 @@ export function dateTuple(plainDate: string): [number, number, number] {
 function readBound(params: URLSearchParams, key: string, warnings: string[]): string | undefined {
   const value = cleanText(params.get(key));
   if (value !== undefined && isPlainDate(value)) {
-    return Number.isNaN(Date.parse(value)) ? (warnings.push(key), undefined) : value;
+    // Round-trip rejects impossible days ("2026-02-30", "2026-99-99") that Date.parse rolls over or rejects.
+    const parsed = new Date(`${value}T00:00:00Z`);
+    const valid = !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    return valid ? value : (warnings.push(key), undefined);
   }
   return readIso(params, key, warnings);
 }

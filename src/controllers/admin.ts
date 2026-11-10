@@ -15,6 +15,9 @@ export interface AdminRouteOptions {
 }
 
 const NO_STORE = "no-store, max-age=0";
+/** Session ids are UUIDs and transfer ids UUID/ULID; anything else is a miss. */
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const ADMIN_PAGE_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
   "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; " +
@@ -190,7 +193,10 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
   app.get("/api/timeseries", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const { filters, period } = readFilters(request);
-    const buckets = buildBuckets(new Date(period.from), new Date(period.to), filters.granularity, tz, MAX_BUCKETS);
+    // "day" alone walks every day before trimming to MAX_BUCKETS; clamp first so
+    // a period like from=1970 cannot burn CPU in the event loop.
+    const fromMs = Math.max(Date.parse(period.from), Date.parse(period.to) - MAX_BUCKETS * DAY_MS);
+    const buckets = buildBuckets(new Date(fromMs), new Date(period.to), filters.granularity, tz, MAX_BUCKETS);
     const rows = await queries().timeseries(filters, buckets);
     return reply.send({ granularity: filters.granularity, points: fillBuckets(buckets, rows) });
   });
@@ -214,6 +220,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
   app.get<{ Params: { id: string } }>("/api/transfers/:id", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const id = String(request.params.id).slice(0, 128);
+    if (!ID_RE.test(id)) return sendAdminError(reply, 404, "not_found", "Transferência não encontrada");
     const detail = await queries().getTransfer(id);
     if (!detail) return sendAdminError(reply, 404, "not_found", "Transferência não encontrada");
     return reply.send(detail);
@@ -222,6 +229,7 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
   app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const id = String(request.params.id).slice(0, 128);
+    if (!ID_RE.test(id)) return sendAdminError(reply, 404, "not_found", "Sessão não encontrada");
     const rows = await queries().getSessionDetail(id);
     if (!rows) return sendAdminError(reply, 404, "not_found", "Sessão não encontrada");
 

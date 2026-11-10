@@ -43,7 +43,8 @@ function isLocalDatabase(url: string): boolean {
     const parsed = new URL(url);
     const host = parsed.hostname;
     // `postgres` is the docker-compose service name (internal network only).
-    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "postgres";
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+    return host === "postgres" && process.env.ALLOW_REMOTE_SEED === "1";
   } catch {
     return false;
   }
@@ -76,7 +77,9 @@ async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) refuse("DATABASE_URL não definido");
   if (!isLocalDatabase(databaseUrl)) {
-    refuse("recusado: DATABASE_URL precisa apontar para localhost, 127.0.0.1 ou o host 'postgres' do compose");
+    refuse(
+      "recusado: DATABASE_URL precisa apontar para localhost/127.0.0.1 (host 'postgres' só com ALLOW_REMOTE_SEED=1)",
+    );
   }
 
   const clean = Bun.argv.includes("--clean");
