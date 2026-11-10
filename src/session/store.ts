@@ -7,7 +7,6 @@ import { SystemClock } from "./clock.js";
 import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
-import { fileEvents } from "../utils/events.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 
@@ -44,7 +43,7 @@ interface PendingCleanup {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
+export const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
   maxAttempts: 5,
   initialDelayMs: 100,
   baseDelayMs: 200,
@@ -83,7 +82,6 @@ export class SessionStore {
     if (!session.lastSeen) {
       session.lastSeen = { computer: null, phone: null };
     }
-    if (session.phoneLostAt === undefined) session.phoneLostAt = null;
     if (session.closedReason === undefined) session.closedReason = null;
     this.sessions.set(session.id, session);
   }
@@ -168,7 +166,6 @@ export class SessionStore {
 
     if (role === "phone" && session.state === "DISCONNECTED") {
       transition(session, "PAIRED");
-      session.phoneLostAt = null;
     }
 
     this.update(session);
@@ -332,7 +329,6 @@ export class SessionStore {
 
     // 3. Notify connected WS
     this.notifyWs(sessionId, { type: "session_closed", reason });
-    fileEvents.emitSessionClosed(sessionId);
 
     // 4. Close connected WS
     this.closeWs(sessionId);
@@ -443,16 +439,12 @@ export class SessionStore {
       if (session.state === "PAIRED" || session.state === "TRANSFERRING") {
         if (!phonePresent) {
           transition(session, "DISCONNECTED");
-          if (session.phoneLostAt === null) {
-            session.phoneLostAt = now;
-          }
           this.abortUploads(session.id);
           this.update(session);
         }
       } else if (session.state === "DISCONNECTED") {
         if (phonePresent) {
           transition(session, "PAIRED");
-          session.phoneLostAt = null;
           this.update(session);
         }
       }

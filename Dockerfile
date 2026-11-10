@@ -8,6 +8,8 @@ RUN bun install --frozen-lockfile
 
 # Copiar código-fonte do front-end e gerar build
 COPY web/ ./
+# web/src importa ../../../../src/*: o contexto precisa espelhar a raiz do repo
+COPY src/ /app/src/
 RUN bun run build
 
 # Stage 2: Runtime da aplicação

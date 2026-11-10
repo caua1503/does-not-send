@@ -27,7 +27,7 @@ describe("session wiring (integration)", () => {
     }>();
 
     const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionRepository.getById(id);
+    const session = appCtx.sessionStore.getById(id);
 
     expect(session.state).toBe("WAITING");
     expect(session.qrTokenHash).toBeDefined();
@@ -48,7 +48,7 @@ describe("session wiring (integration)", () => {
     expect(del.statusCode).toBe(204);
 
     const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionRepository.getById(id);
+    const session = appCtx.sessionStore.getById(id);
     expect(session?.state).toBe("CLOSED");
   });
 });

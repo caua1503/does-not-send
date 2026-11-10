@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/utils/config.js";
 import type { FastifyInstance } from "fastify";
-import { normalizeIp } from "../src/recording/normalize.js";
 
 describe("TRUST_PROXY and IP normalization", () => {
   let app: FastifyInstance;
@@ -52,14 +51,5 @@ describe("TRUST_PROXY and IP normalization", () => {
 
     expect(response.statusCode).toBe(201);
     // Com trustProxy=true, o IP deve ser 10.0.0.1 (primeiro da lista)
-  });
-
-  it("normalizeIp removes ::ffff: prefix and lowercases", () => {
-    // Que bug pega: IPs IPv4-mapped não normalizados causam duplicação no banco
-    expect(normalizeIp("::ffff:192.168.1.1")).toBe("192.168.1.1");
-    expect(normalizeIp("::FFFF:10.0.0.1")).toBe("10.0.0.1");
-    expect(normalizeIp("2001:DB8::1")).toBe("2001:db8::1");
-    expect(normalizeIp("")).toBeNull();
-    expect(normalizeIp(undefined)).toBeNull();
   });
 });

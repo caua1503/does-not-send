@@ -1,5 +1,5 @@
 import type { AdminFilters, Paginated } from "../../../../src/shared/admin/types.ts";
-import { SORT_KEYS } from "../../../../src/admin/queries.ts";
+import { SORT_KEYS } from "../../../../src/shared/admin/sorts.ts";
 import type { AdminApi } from "../api.ts";
 import { filterKey, readListSort, withPeriod } from "../filter-url.ts";
 import { useRemote, type RemoteState } from "../use-remote.ts";

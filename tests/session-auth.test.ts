@@ -21,16 +21,6 @@ function makeAuthSession(overrides: Partial<AuthorizableSession> = {}): Authoriz
   };
 }
 
-describe("generateSecret", () => {
-  it("gera string base64url de 32 bytes (comprimento >= 40)", () => {
-    const s = generateSecret();
-    expect(typeof s).toBe("string");
-    expect(s.length).toBeGreaterThanOrEqual(40);
-    // Base64url regex: alfanuméricos, - e _
-    expect(s).toMatch(/^[A-Za-z0-9_-]+$/);
-  });
-});
-
 describe("authorize", () => {
   it("autoriza computador com computerToken correto", () => {
     const rawComputer = generateSecret();

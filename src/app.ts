@@ -109,9 +109,7 @@ class RedactedLogController extends LogController {
 export interface AppContext {
   config: Config;
   clock: Clock;
-  store: SessionStore;
   sessionStore: SessionStore;
-  sessionRepository: SessionStore;
   sessionService: SessionService;
   fileService: FileService;
   db?: DbClient & { isReady(): boolean };
@@ -281,9 +279,7 @@ export async function buildApp(
   const ctx: AppContext = {
     config,
     clock,
-    store: sessionStore,
     sessionStore,
-    sessionRepository: sessionStore,
     sessionService,
     fileService,
     db,

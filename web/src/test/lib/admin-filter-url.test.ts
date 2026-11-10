@@ -7,7 +7,7 @@ import {
   withPeriod,
   writeFilterParams,
 } from "../../admin/filter-url.ts";
-import { SORT_KEYS } from "../../../../src/admin/queries.ts";
+import { SORT_KEYS } from "../../../../src/shared/admin/sorts.ts";
 
 describe("admin filter URL", () => {
   it("descarta valores inválidos vindos de URL editada à mão", () => {

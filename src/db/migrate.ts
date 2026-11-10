@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
 import { migrate } from "drizzle-orm/bun-sql/migrator";
+import { isTransientError } from "../recording/store.js";
 
 const INITIAL_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
@@ -11,6 +12,18 @@ const CONNECTION_TIMEOUT_S = 2;
 function redactUrl(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return message.replace(/:\/\/[^\s/@:]+:[^\s/@]*@/g, "://***@");
+}
+
+// Only connectivity/transient SQLSTATEs are worth retrying; anything else
+// (bad migration, auth, missing schema) is permanent and must stop the loop.
+// Reuses the recorder's classifier so driver-wrapped errors (Bun codes and
+// SQLSTATE on `cause`) behave identically in both loops.
+export function isRetryable(err: unknown): boolean {
+  const code =
+    (err as { code?: unknown } | null)?.code ??
+    (err as { cause?: { code?: unknown } | null } | null)?.cause?.code;
+  if (typeof code !== "string") return true; // no code at all (network/unknown): retry
+  return isTransientError(err);
 }
 
 export interface MigrationLogger {
@@ -77,6 +90,12 @@ export class MigrationRunner {
         return;
       } catch (err) {
         if (signal.aborted) return;
+        if (!isRetryable(err)) {
+          this.logger.error(
+            `Database migration failed permanently: ${redactUrl(err)}`,
+          );
+          return;
+        }
         this.logger.error(
           `Database migration failed, retrying in ${delayMs}ms: ${redactUrl(err)}`,
         );

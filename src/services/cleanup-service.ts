@@ -1,12 +1,12 @@
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionRepository } from "../repositories/session-repository.js";
+import type { SessionStore } from "../session/store.js";
 
 /**
  * Remove orphan directories in tempDir that don't belong to any active session.
  * Called on startup.
  */
-export async function cleanOrphans(tempDir: string, repository: SessionRepository): Promise<void> {
+export async function cleanOrphans(tempDir: string, repository: SessionStore): Promise<void> {
   let entries: string[];
   try {
     entries = await readdir(tempDir);

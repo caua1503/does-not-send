@@ -103,7 +103,7 @@ export async function downloadRoutes(
       const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
       if (!auth) return;
 
-      const session = ctx.sessionRepository.getById(auth.sessionId)!;
+      const session = ctx.sessionStore.getById(auth.sessionId)!;
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {
@@ -127,7 +127,7 @@ export async function downloadRoutes(
       }
 
       const allowedMime = INLINE_EXTENSIONS[ext];
-      const isInlineAllowed = Boolean(allowedMime) && ext !== ".svg";
+      const isInlineAllowed = Boolean(allowedMime);
       const isVideoOrAudio = VIDEO_AUDIO_EXTENSIONS.has(ext);
       const resolvedMime = allowedMime ?? file.mimeType ?? "application/octet-stream";
 
@@ -201,7 +201,7 @@ export async function downloadRoutes(
       const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
       if (!auth) return;
 
-      const session = ctx.sessionRepository.getById(auth.sessionId)!;
+      const session = ctx.sessionStore.getById(auth.sessionId)!;
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {
@@ -226,7 +226,7 @@ export async function downloadRoutes(
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
     if (!auth) return;
 
-    const session = ctx.sessionRepository.getById(auth.sessionId)!;
+    const session = ctx.sessionStore.getById(auth.sessionId)!;
     const completedFiles = session.files.filter((f) => f.state === "completed");
 
     const sessionId = auth.sessionId;

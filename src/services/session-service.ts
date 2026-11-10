@@ -41,7 +41,6 @@ export class SessionService {
       visualId,
       shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
-      isPaired: false,
       state: "WAITING",
       activeUploads: 0,
       createdAt: new Date(now).toISOString(),
@@ -51,7 +50,6 @@ export class SessionService {
         computer: now,
         phone: null,
       },
-      phoneLostAt: null,
       closedReason: null,
     };
 
@@ -77,12 +75,10 @@ export class SessionService {
     const result = consumePairing(session, qrToken);
     if (result.ok) {
       const now = this.clock.now();
-      session.isPaired = true;
       if (!session.lastSeen) {
         session.lastSeen = { computer: null, phone: null };
       }
       session.lastSeen.phone = now;
-      session.phoneLostAt = null;
       this.store.update(session);
       this.touchActivity(id);
     }
@@ -91,10 +87,6 @@ export class SessionService {
 
   getById(id: string): Session | undefined {
     return this.store.getById(id);
-  }
-
-  async close(id: string, reason = "closed"): Promise<void> {
-    await this.store.closeSession(id, reason);
   }
 
   heartbeat(id: string, role: "computer" | "phone" = "computer"): boolean {
@@ -111,14 +103,5 @@ export class SessionService {
 
   async tick(): Promise<void> {
     await this.store.tick();
-  }
-
-  /** Clear sweeper / resources on shutdown */
-  clearAllTimers(): void {
-    this.store.shutdown();
-  }
-
-  shutdown(): void {
-    this.store.shutdown();
   }
 }

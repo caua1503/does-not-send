@@ -1,6 +1,6 @@
 CREATE TYPE "public"."category" AS ENUM('images', 'videos', 'audios', 'pdfs', 'documents', 'archives', 'other');--> statement-breakpoint
-CREATE TYPE "public"."close_reason" AS ENUM('idle_timeout', 'computer_lost', 'phone_lost', 'user_closed', 'closed', 'server_restart');--> statement-breakpoint
-CREATE TYPE "public"."event_type" AS ENUM('pairing_refused', 'qr_reused');--> statement-breakpoint
+CREATE TYPE "public"."close_reason" AS ENUM('user_closed', 'closed', 'server_restart');--> statement-breakpoint
+CREATE TYPE "public"."event_type" AS ENUM('pairing_refused');--> statement-breakpoint
 CREATE TYPE "public"."transfer_status" AS ENUM('receiving', 'completed', 'failed');--> statement-breakpoint
 CREATE TABLE "events" (
 	"id" bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY (sequence name "events_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),

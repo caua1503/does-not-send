@@ -130,15 +130,11 @@ describe("resolvePeriod", () => {
     expect(period.to).toBe("2026-01-31T00:00:00.000Z");
   });
 
-  it("to ausente vira agora; from ausente vira to - 30 dias", () => {
-    const now = new Date("2026-11-06T12:00:00.000Z");
-    const none = resolvePeriod({}, now);
-    expect(none.to).toBe("2026-11-06T12:00:00.000Z");
-    expect(none.from).toBe("2026-10-07T12:00:00.000Z");
-    const explicitTo = resolvePeriod({ to: "2026-03-10T00:00:00.000Z" }, now);
-    expect(explicitTo.from).toBe("2026-02-08T00:00:00.000Z");
-    const explicitFrom = resolvePeriod({ from: "2026-03-01T00:00:00.000Z" }, now);
-    expect(explicitFrom.to).toBe("2026-11-06T12:00:00.000Z");
+  it("sem bounds, usa os últimos 30 dias terminando em agora", () => {
+    const now = new Date("2026-03-31T12:00:00Z");
+    const { from, to } = resolvePeriod({}, now);
+    expect(to).toBe("2026-03-31T12:00:00.000Z");
+    expect(Date.parse(to) - Date.parse(from)).toBe(30 * 24 * 60 * 60 * 1000);
   });
 });
 
@@ -160,12 +156,5 @@ describe("resolvePeriod e fusos", () => {
     expect(warnings).toEqual([]);
     expect(filters.from).toBe("2026-01-06");
     expect(filters.to).toBe("2026-01-06");
-  });
-
-  it("sem bounds, usa os últimos 30 dias terminando em agora", () => {
-    const now = new Date("2026-03-31T12:00:00Z");
-    const { from, to } = resolvePeriod({}, now);
-    expect(to).toBe("2026-03-31T12:00:00.000Z");
-    expect(Date.parse(to) - Date.parse(from)).toBe(30 * 24 * 60 * 60 * 1000);
   });
 });

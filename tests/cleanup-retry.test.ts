@@ -3,7 +3,6 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { SessionStore } from "../src/session/store.js";
-import type { LogEntry } from "../src/utils/logger.js";
 import { createTestApp, cleanupTestApp, createSession, type TestContext } from "./helpers.js";
 
 // Counts rm calls and lets tests inject failures; delegates to the real
@@ -27,6 +26,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const rmCallsFor = (sessionId: string) => rmState.calls.filter((p) => p.includes(sessionId)).length;
+
+/** Shape of the structured JSON lines pino writes to the captured stream. */
+interface LogEntry {
+  level: string;
+  msg: string;
+  timestamp: string;
+  [key: string]: unknown;
+}
 
 class CaptureStream extends Writable {
   lines: LogEntry[] = [];
@@ -57,14 +64,12 @@ function makeSession(store: SessionStore, id: string) {
     visualId: "AA-BB",
     shortId: "AA-BB",
     qrTokenHash: null,
-    isPaired: false,
     state: "WAITING" as const,
     activeUploads: 0,
     createdAt: new Date(now).toISOString(),
     lastActivity: new Date(now).toISOString(),
     files: [],
     lastSeen: { computer: now, phone: null },
-    phoneLostAt: null,
     closedReason: null,
   };
 }

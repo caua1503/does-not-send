@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/utils/config.js";
-import { MigrationRunner } from "../src/db/migrate.js";
+import { MigrationRunner, isRetryable } from "../src/db/migrate.js";
 
 type Ctx = { db?: { isReady(): boolean } };
 
@@ -29,6 +29,34 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<voi
   const deadline = Date.now() + timeoutMs;
   while (!predicate() && Date.now() < deadline) await Bun.sleep(10);
 }
+
+describe("isRetryable", () => {
+  test("permanent SQLSTATE (syntax/schema/auth) is not retried", () => {
+    expect(isRetryable(Object.assign(new Error("undefined_table"), { code: "42P01" }))).toBe(false);
+    expect(isRetryable(Object.assign(new Error("invalid_password"), { code: "28P01" }))).toBe(false);
+  });
+
+  test("network failure is retried, including via cause", () => {
+    expect(isRetryable(Object.assign(new Error("connect"), { code: "08S01" }))).toBe(true);
+    const wrapped = new Error("query failed", {
+      cause: Object.assign(new Error("cannot_connect_now"), { code: "57P03" }),
+    });
+    expect(isRetryable(wrapped)).toBe(true);
+    const wrappedConn = new Error("query failed", {
+      cause: Object.assign(new Error("conn"), { code: "ERR_POSTGRES_CONNECTION_REFUSED" }),
+    });
+    expect(isRetryable(wrappedConn)).toBe(true);
+    const permanentWrapped = new Error("migrate failed", {
+      cause: Object.assign(new Error("undefined_table"), { code: "42P01" }),
+    });
+    expect(isRetryable(permanentWrapped)).toBe(false);
+  });
+
+  test("error without a SQLSTATE is retried", () => {
+    expect(isRetryable(new Error("boom"))).toBe(true);
+    expect(isRetryable(undefined)).toBe(true);
+  });
+});
 
 describe("MigrationRunner background loop", () => {
   test("keeps retrying with exponential backoff and never throws", async () => {

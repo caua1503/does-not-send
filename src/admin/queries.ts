@@ -10,6 +10,8 @@ import type {
   TransferStatus,
 } from "../shared/admin/types.js";
 import { toIsoString } from "../shared/admin/format.js";
+import type { SortKey } from "../shared/admin/sorts.js";
+export { SESSION_SORTS, SORT_KEYS, TRANSFER_SORTS, type SortKey } from "../shared/admin/sorts.js";
 
 type ReaderDb = BunSQLDatabase<typeof schema>;
 
@@ -34,38 +36,6 @@ export function escapeLike(value: string): string {
 export function likePattern(value: string): string {
   return `%${escapeLike(value)}%`;
 }
-
-export type SortKey =
-  | "startedAt"
-  | "finishedAt"
-  | "name"
-  | "size"
-  | "status"
-  | "category"
-  | "createdAt"
-  | "pairedAt"
-  | "closedAt"
-  | "fileCount"
-  | "totalBytes";
-
-export const TRANSFER_SORTS: readonly SortKey[] = [
-  "startedAt",
-  "finishedAt",
-  "name",
-  "size",
-  "status",
-  "category",
-];
-export const SESSION_SORTS: readonly SortKey[] = [
-  "createdAt",
-  "pairedAt",
-  "closedAt",
-  "fileCount",
-  "totalBytes",
-];
-
-/** Shared with the admin frontend so its table headers match the whitelist. */
-export const SORT_KEYS = { transfers: TRANSFER_SORTS, sessions: SESSION_SORTS } as const;
 
 /** Only whitelisted keys ever reach an ORDER BY; anything else uses the default. */
 export function parseSort<T extends SortKey>(

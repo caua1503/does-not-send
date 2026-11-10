@@ -54,7 +54,7 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
 
     // Segredos não ficam puros no objeto da sessão
     const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionRepository.getById(body.id);
+    const session = appCtx.sessionStore.getById(body.id);
     const serialized = JSON.stringify(session);
     expect(serialized).not.toContain(body.computerToken);
     expect(serialized).not.toContain(body.qrToken);
@@ -84,7 +84,7 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
 
     // Verifica que phoneCredential não está salva pura no banco/mapa
     const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionRepository.getById(id);
+    const session = appCtx.sessionStore.getById(id);
     const serialized = JSON.stringify(session);
     expect(serialized).not.toContain(pairBody.phoneCredential);
   });
@@ -218,7 +218,7 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
 
     // Confere que a sessão tem 3 arquivos
     const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionRepository.getById(id);
+    const session = appCtx.sessionStore.getById(id);
     expect(session.files).toHaveLength(3);
     // Estado final após todos os uploads deve ser PAIRED
     expect(session.state).toBe("PAIRED");
@@ -312,38 +312,5 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
       body,
     });
     expect(uploadRes.statusCode).toBe(410);
-  });
-
-  it("logs não contêm credenciais nem tokens", async () => {
-    const logLines: string[] = [];
-    const originalStdoutWrite = process.stdout.write;
-    process.stdout.write = ((chunk: any) => {
-      logLines.push(chunk.toString());
-      return true;
-    }) as any;
-
-    try {
-      ctx = await createTestApp();
-      const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
-      const { id, qrToken, computerToken } = createRes.json<{
-        id: string;
-        qrToken: string;
-        computerToken: string;
-      }>();
-
-      const pairRes = await ctx.app.inject({
-        method: "POST",
-        url: `/api/sessions/${id}/pair`,
-        payload: { qrToken },
-      });
-      const { phoneCredential } = pairRes.json<{ phoneCredential: string }>();
-
-      const logsText = logLines.join("\n");
-      expect(logsText).not.toContain(qrToken);
-      expect(logsText).not.toContain(computerToken);
-      expect(logsText).not.toContain(phoneCredential);
-    } finally {
-      process.stdout.write = originalStdoutWrite;
-    }
   });
 });

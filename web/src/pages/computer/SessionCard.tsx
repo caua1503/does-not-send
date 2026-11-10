@@ -9,7 +9,6 @@ import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import { getSession, type SessionInfo } from "../../lib/api.ts";
 import { FileList } from "./FileList.tsx";
 import { createPortal } from "react-dom";
-import type { FileEntry } from "../../lib/api.ts";
 
 interface ActiveSession {
   id: string;
@@ -27,9 +26,6 @@ interface SessionCardProps {
   onClose: () => void;
   selected: boolean;
   onSelect: () => void;
-  // files can also be passed from parent for single-session view
-  externalFiles?: FileEntry[];
-  externalConnected?: boolean;
 }
 
 export function SessionCard({
@@ -38,14 +34,12 @@ export function SessionCard({
   onClose,
   selected,
   onSelect,
-  externalFiles,
-  externalConnected,
 }: SessionCardProps) {
   const [qrOpen, setQrOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
-  const { files: localFiles, connected: localConnected } = useSessionEvents(
+  const { files, connected } = useSessionEvents(
     session.id,
     session.ownerToken,
     { role: "computer" },
@@ -71,9 +65,6 @@ export function SessionCard({
       clearInterval(id);
     };
   }, [session.id, session.ownerToken]);
-
-  const files = externalFiles ?? localFiles;
-  const connected = externalConnected ?? localConnected;
 
   const visualId = session.visualId || session.shortId;
   const qrToken = session.qrToken || session.uploadToken || "";
