@@ -104,9 +104,4 @@ export class SessionService {
   async tick(): Promise<void> {
     await this.store.tick();
   }
-
-  /** Clear sweeper / resources on shutdown */
-  clearAllTimers(): void {
-    this.store.shutdown();
-  }
 }

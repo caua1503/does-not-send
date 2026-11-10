@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { DEFAULT_TIMING_CONFIG } from "../session/timing.js";
+// No cycle: nothing under src/session/ imports utils/config.
 import { DEFAULT_CLEANUP_RETRY } from "../session/store.js";
 
 /**

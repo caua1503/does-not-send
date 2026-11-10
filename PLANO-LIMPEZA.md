@@ -43,9 +43,9 @@ Fora de escopo (documentado): extrair `recordPairingRefused`, `extractBearerToke
 Verificação: `bun run typecheck`, `bun run lint`, `bun run test`, commit `refactor(backend): exporta defaults de retry e remove condição morta`.
 
 ### Status
-DONE — commit `ed8f609`. Aplicado: `export` em `DEFAULT_CLEANUP_RETRY`; comentário de `DEFAULT_TZ` corrigido (a reexportação alegada não existe: ninguém importa `DEFAULT_TZ` de `utils/config`, e `shared/admin/format.ts` declara o próprio); removida a condição morta `ext !== ".svg"`.
-**Pulado:** a chave `".png"` duplicada não existe em `src/controllers/download.ts` (nem em `main`, nem no histórico) — nada a remover. `Content-Disposition` intacto, como pedido.
-Verificação: typecheck OK. Lint segue com 23 erros pré-existentes de baseline (`no-empty`/`no-explicit-any`) em arquivos fora do escopo. Testes: 288 passam, 3 falham por ambiente (`static.test.ts` exige `web/dist`; `db-boot-resilience` exige Postgres) — falham igual com o diff revertido. Sem `PUBLIC_BASE_URL` no ambiente, 14 falham por `Missing required environment variable` (idem no baseline).
+DONE — commit `ed8f609`; retomado e verificado no worktree `wt-a-backend-src`, commit final `4f0f6d5`. Aplicado: `export` em `DEFAULT_CLEANUP_RETRY`; `DEFAULT_TZ` tem só um comentário curto e correto (grep em `src/`, `tests/`, `web/src`: nenhum import de `DEFAULT_TZ` de `utils/config` e nenhum `DEFAULT_ADMIN_TZ`; `shared/admin/format.ts` declara o próprio e `admin.ts` importa de lá); condição morta `&& ext !== ".svg"` removida (`INLINE_EXTENSIONS` não tem `.svg`).
+**Pulado:** chave `".png"` duplicada — só existe uma ocorrência em `INLINE_EXTENSIONS`; nada a remover. `Content-Disposition` intacto (não trocado por `rfc5987()`).
+Verificação (`PUBLIC_BASE_URL=http://localhost:3000`): typecheck OK; lint com os mesmos 23 erros pré-existentes (`no-empty`/`no-explicit-any`, todos fora do escopo); testes 288 passam, mesmas 3 falhas ambientais (`static.test.ts` sem `web/dist`, `db-boot-resilience` depende de Postgres/timing). Sem `PUBLIC_BASE_URL`, 14 falham por `Missing required environment variable` (idem baseline).
 
 ## T2 — backend: código morto confirmado
 
@@ -67,6 +67,11 @@ Verificação: `bun run typecheck`, `bun run lint`, `bun run test`, commit `refa
 DONE — commit `e285b5e`. Removidos: `emitSessionClosed` + a chamada em `closeSession` (com o import agora órfão de `fileEvents`); `SessionService.close()`, `.shutdown()` e `.clearAllTimers()` — grep em `src/`, `tests/`, `scripts/` dá zero callers. `SessionStore.shutdown()`/`tick()` mantidos (`app.ts` e testes usam).
 **Pulado:** item 3 (logger fallback em `store.ts:76`). `tests/session-simplified.test.ts` e `tests/session-presence-initial.test.ts` constroem `new SessionStore({ clock, tempDir })` sem `logger`; tornar a opção obrigatória obrigaria a editar testes fora do escopo. Os caminhos `this.log` (`closeSession` com recorder, `removeSessionDir`) não são atingidos nesses testes, então o fallback segue inofensivo. Deixado como está.
 Verificação: typecheck OK; lint e testes iguais ao T1 (23 erros de lint pré-existentes; 288 passam, as mesmas 3 falhas ambientais).
+
+### Status
+PARTIAL — commit `e285b5e`; complementado no worktree `wt-a-backend-src`, commit final `4f0f6d5`. Feito: `emitSessionClosed` removido de `events.ts` (grep de `"session:closed"` em `src/`, `tests/`, `web/` = zero listeners; `session_closed` restante é mensagem WS e tipo de recording, não este evento) e a chamada em `closeSession`; `SessionService.close()`, `shutdown()` e `clearAllTimers()` removidos (zero callers em `src/`, `tests/`, `scripts/`); `tick()` mantido (chamado por `store.startSweeper` e por testes).
+**Pulado:** item 3 (logger fallback `undefined as unknown as FastifyBaseLogger`). `tests/session-simplified.test.ts` e `tests/session-presence-initial.test.ts` constroem `SessionStore` sem `logger`; tornar `logger` obrigatório editaria arquivos de teste fora do escopo. Os usos de `this.log` não são atingidos nesses testes.
+Verificação: igual ao T1 (typecheck OK, 23 erros de lint pré-existentes, 288 passam / 3 falhas ambientais).
 
 ## T3 — testes backend: alinhar `pairing-domain` ao `SessionStore`
 
