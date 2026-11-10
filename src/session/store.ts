@@ -7,7 +7,6 @@ import { SystemClock } from "./clock.js";
 import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
-import { fileEvents } from "../utils/events.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 
@@ -330,7 +329,6 @@ export class SessionStore {
 
     // 3. Notify connected WS
     this.notifyWs(sessionId, { type: "session_closed", reason });
-    fileEvents.emitSessionClosed(sessionId);
 
     // 4. Close connected WS
     this.closeWs(sessionId);

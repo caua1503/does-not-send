@@ -35,11 +35,6 @@ class TypedEventEmitter extends EventEmitter {
   offFileEvent(type: FileEventType, sessionId: string, handler: (event: FileEvent) => void): void {
     this.off(`${type}:${sessionId}`, handler);
   }
-
-  /** Emit when a session is closed (triggers WS close) */
-  emitSessionClosed(sessionId: string): void {
-    this.emit("session:closed", sessionId);
-  }
 }
 
 export const fileEvents = new TypedEventEmitter();

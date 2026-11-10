@@ -89,10 +89,6 @@ export class SessionService {
     return this.store.getById(id);
   }
 
-  async close(id: string, reason = "closed"): Promise<void> {
-    await this.store.closeSession(id, reason);
-  }
-
   heartbeat(id: string, role: "computer" | "phone" = "computer"): boolean {
     return this.store.recordHeartbeat(id, role);
   }
@@ -111,10 +107,6 @@ export class SessionService {
 
   /** Clear sweeper / resources on shutdown */
   clearAllTimers(): void {
-    this.store.shutdown();
-  }
-
-  shutdown(): void {
     this.store.shutdown();
   }
 }
