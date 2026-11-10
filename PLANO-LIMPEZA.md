@@ -157,10 +157,23 @@ Subagent revisor sem contexto, recebeu `git diff dev...HEAD` de cada branch de t
 3. **Falso positivo** — `crypto.ts` duplicado: o revisor leu a árvore principal (pré-fix) em vez do worktree; A está correto.
 4. **Aceito (baixo)** — teste de CSP do `/admin` e o teste e2e de upload com nome no disco ficaram cobertos só em nível de unidade (`static.test.ts` cobre CSP do `/`; `sanitize.test.ts` cobre path traversal).
 5. **Fora de escopo registrado** — enums do Drizzle (`event_type`, `close_reason`) sem `qr_reused`/`idle_timeout`/etc. enquanto `src/types.ts` ainda os declara; incoerência já existente no snapshot base. Bug de `fitGranularity` idem.
+6. **Corrigido — Docker build nunca passou, nem em `dev`.** O stage 1 usa `/app/web` como contexto e `web/src` importa `src/*` fora do diretório. Correção mínima: `COPY src/ /app/src/` e `SORT_KEYS`/tipos de ordenação movidos de `src/admin/queries.ts` (que importa `drizzle-orm`) para `src/shared/admin/sorts.ts`, re-exportados para os consumidores do backend. Verificado: `docker build` exit 0.
+
+### Verificação final (branch `chore/cleanup` integrada)
+
+| Verificação | Resultado |
+|---|---|
+| `bun run typecheck` | OK |
+| `bun run typecheck:web` | OK |
+| `bun run test` (`PUBLIC_BASE_URL` setada) | 40 arquivos / 269 testes passam, 13 skipped, 0 falhas |
+| `bun run test:web` | 9 arquivos / 72 testes, 0 falhas |
+| `bun run lint` | 21 erros pré-existentes (dev: 25); nenhum novo arquivo com erro |
+| `cd web && bun run build` | OK |
+| `docker build` | OK (`does-not-send:cleanup-check`) |
 
 ## Riscos
 
-- T2: `clearAllTimers`/`shutdown`/`emitSessionClosed` removidos em A com grep de zero callers; em B/C o snapshot ainda os contém, a integração resolve em favor de A.
+- T2: `clearAllTimers`/`shutdown`/`emitSessionClosed` removidos com grep de zero callers.
 - T5: `fitGranularity` (`web/src/admin/pages/Dashboard.tsx:63`) tem bug pré-existente: período longo pedido em `day` devolve `day` (perde resolução do range). Servidor trunca em 400 buckets, então não há erro, só perda de detalhe. Fora de escopo desta limpeza.
 - T4: nenhuma remoção de teste cobre upload de arquivo único, ZIP ou autorização — esses ficam intactos.
 - Integração: a árvore suja original de `chore/cleanup` virou os commits `chore(snapshot)` nas três branches; o worktree principal foi resetado para `dev` e recebeu os merges. Backup em `/tmp/main-tree-uncommitted.patch` e no stash `chore-cleanup: snapshot pre-integracao`.
