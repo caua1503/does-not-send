@@ -19,7 +19,9 @@ function redactUrl(err: unknown): string {
 // Reuses the recorder's classifier so driver-wrapped errors (Bun codes and
 // SQLSTATE on `cause`) behave identically in both loops.
 export function isRetryable(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
+  const code =
+    (err as { code?: unknown } | null)?.code ??
+    (err as { cause?: { code?: unknown } | null } | null)?.cause?.code;
   if (typeof code !== "string") return true; // no code at all (network/unknown): retry
   return isTransientError(err);
 }

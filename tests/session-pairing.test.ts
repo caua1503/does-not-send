@@ -62,6 +62,17 @@ describe("consumePairing", () => {
     expect(session.state).toBe("PAIRED");
   });
 
+  it("QR continua válido em sessão PAIRED e DISCONNECTED", () => {
+    const raw = generateQrToken();
+
+    for (const state of ["PAIRED", "DISCONNECTED"] as const) {
+      const session = makeSession({ qrTokenHash: hashToken(raw), state });
+      const result = consumePairing(session, raw);
+      expect(result.ok).toBe(true);
+      expect(session.state).toBe(state);
+    }
+  });
+
   it("token errado não consome o QR", () => {
     const raw = generateQrToken();
     const session = makeSession({ qrTokenHash: hashToken(raw) });

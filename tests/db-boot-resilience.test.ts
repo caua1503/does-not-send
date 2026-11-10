@@ -42,6 +42,14 @@ describe("isRetryable", () => {
       cause: Object.assign(new Error("cannot_connect_now"), { code: "57P03" }),
     });
     expect(isRetryable(wrapped)).toBe(true);
+    const wrappedConn = new Error("query failed", {
+      cause: Object.assign(new Error("conn"), { code: "ERR_POSTGRES_CONNECTION_REFUSED" }),
+    });
+    expect(isRetryable(wrappedConn)).toBe(true);
+    const permanentWrapped = new Error("migrate failed", {
+      cause: Object.assign(new Error("undefined_table"), { code: "42P01" }),
+    });
+    expect(isRetryable(permanentWrapped)).toBe(false);
   });
 
   test("error without a SQLSTATE is retried", () => {

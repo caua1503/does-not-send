@@ -247,3 +247,17 @@ describe("produção sem credencial válida", () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe("página /admin", () => {
+  it("envia no-store, CSP restritiva e Referrer-Policy", async () => {
+    const app = await withAdmin();
+    const res = await app.inject({ method: "GET", url: "/admin" });
+    // 503 when web/dist/admin is absent, 200 when the shell was built.
+    expect([200, 503]).toContain(res.statusCode);
+    expect(res.headers["cache-control"]).toContain("no-store");
+    expect(String(res.headers["content-security-policy"])).toContain("frame-ancestors 'none'");
+    expect(String(res.headers["content-security-policy"])).toContain("script-src 'self'");
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+});
