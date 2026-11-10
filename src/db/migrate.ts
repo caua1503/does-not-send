@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
 import { migrate } from "drizzle-orm/bun-sql/migrator";
+import { isTransientError } from "../recording/store.js";
 
 const INITIAL_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
@@ -15,21 +16,12 @@ function redactUrl(err: unknown): string {
 
 // Only connectivity/transient SQLSTATEs are worth retrying; anything else
 // (bad migration, auth, missing schema) is permanent and must stop the loop.
-const RETRYABLE_CODES = new Set([
-  "40001", // serialization_failure
-  "40P01", // deadlock_detected
-  "57P01", // admin_shutdown
-  "57P02", // crash_shutdown
-  "57P03", // cannot_connect_now
-  "57P04", // database_dropped
-]);
-const RETRYABLE_CLASSES = ["08", "53"];
-
+// Reuses the recorder's classifier so driver-wrapped errors (Bun codes and
+// SQLSTATE on `cause`) behave identically in both loops.
 export function isRetryable(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code ??
-    (err as { cause?: { code?: unknown } } | null)?.cause?.code;
-  if (typeof code !== "string") return true; // no SQLSTATE (network/unknown): retry
-  return RETRYABLE_CODES.has(code) || RETRYABLE_CLASSES.includes(code.slice(0, 2));
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code !== "string") return true; // no code at all (network/unknown): retry
+  return isTransientError(err);
 }
 
 export interface MigrationLogger {
