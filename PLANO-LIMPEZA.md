@@ -157,7 +157,7 @@ Subagent revisor sem contexto, recebeu `git diff dev...HEAD` de cada branch de t
 3. **Falso positivo** — `crypto.ts` duplicado: o revisor leu a árvore principal (pré-fix) em vez do worktree; A está correto.
 4. **Aceito (baixo)** — teste de CSP do `/admin` e o teste e2e de upload com nome no disco ficaram cobertos só em nível de unidade (`static.test.ts` cobre CSP do `/`; `sanitize.test.ts` cobre path traversal).
 5. **Fora de escopo registrado** — enums do Drizzle (`event_type`, `close_reason`) sem `qr_reused`/`idle_timeout`/etc. enquanto `src/types.ts` ainda os declara; incoerência já existente no snapshot base. Bug de `fitGranularity` idem.
-6. **Corrigido — Docker build nunca passou, nem em `dev`.** O stage 1 usa `/app/web` como contexto e `web/src` importa `src/*` fora do diretório. Correção mínima: `COPY src/ /app/src/` e `SORT_KEYS`/tipos de ordenação movidos de `src/admin/queries.ts` (que importa `drizzle-orm`) para `src/shared/admin/sorts.ts`, re-exportados para os consumidores do backend. Verificado: `docker build` exit 0.
+6. **Corrigido — Docker build nunca passou, nem em `dev`** (commit `a4e2087`). O stage 1 usa `/app/web` como contexto e `web/src` importa `src/*` fora do diretório. Correção mínima: `COPY src/ /app/src/` e `SORT_KEYS`/tipos de ordenação movidos de `src/admin/queries.ts` (que importa `drizzle-orm`) para `src/shared/admin/sorts.ts`, re-exportados para os consumidores do backend. Verificado: `docker build` exit 0.
 
 ### Verificação final (branch `chore/cleanup` integrada)
 
