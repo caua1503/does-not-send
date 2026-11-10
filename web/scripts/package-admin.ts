@@ -1,10 +1,12 @@
-import { renameSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
+// Vite shares hashed chunks between both HTML entries, so copy (not move) —
+// the SPA's index.html still references the same chunk under /assets/.
 // The admin page is served from web/dist/admin and its CSP only allows assets
 // under /admin/assets/. Vite emits relative "./assets/" URLs (which browsers
-// resolve against "/" on /admin), so rewrite them to "/admin/assets/", move the
-// referenced files there, and keep the entry/chunk graph intact.
+// resolve against "/" on /admin), so rewrite them to "/admin/assets/" and copy
+// the referenced files there, keeping the entry/chunk graph intact.
 const dist = resolve(import.meta.dir, "../dist");
 const source = resolve(dist, "admin.html");
 const targetDir = resolve(dist, "admin");
@@ -43,7 +45,7 @@ for (const file of new Set([...referenced, ...fonts])) {
     console.error(`missing asset ${file}`);
     process.exit(1);
   }
-  renameSync(from, resolve(targetAssets, file));
+  copyFileSync(from, resolve(targetAssets, file));
 }
 
 writeFileSync(resolve(targetDir, "index.html"), html);
