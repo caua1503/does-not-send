@@ -171,6 +171,20 @@ Subagent revisor sem contexto, recebeu `git diff dev...HEAD` de cada branch de t
 | `cd web && bun run build` | OK |
 | `docker build` | OK (`does-not-send:cleanup-check`) |
 
+### Revisão independente pós-integração (commit `91fd0e9`)
+
+Três revisores sem contexto (backend `src/`, `tests/`, `web/`+Docker) sobre `dev...HEAD`. Achados:
+
+1. **Corrigido — teste de `isRetryable` não cobria o caso que o commit `89405b2` diz corrigir.** A versão final só lia `err.code` no topo; erro permanente embrulhado (`cause.code = "42P01"`) caía no early-return e era retentado para sempre. Passou a ler `code ?? cause.code`. Dois casos adicionados em `db-boot-resilience.test.ts`.
+2. **Corrigido — T4 item 1 não tinha sido implementado.** O caso "QR continua válido em PAIRED e DISCONNECTED" foi deletado, não restaurado. Restaurado em `session-pairing.test.ts`; sem ele, uma regressão em `consumePairing` para o telefone reconectando passaria verde.
+3. **Corrigido — headers do `/admin` sem cobertura.** Teste de CSP/`no-store`/`Referrer-Policy` removido sem substituto. Restaurado (tolera 503 quando não há `web/dist`).
+4. **Verificado como falso positivo** — revisores apontaram `fitGranularity("day","1970-01-01","2100-01-01")` retornando `year`; o código filtra por janela do passo (62/400/1900), não por largura do bucket, então `week` (119 buckets) é o retorno real e o teste está correto.
+5. **Verificado como falso positivo** — regressão no `download.ts` por remoção de `&& ext !== ".svg"`: a mudança é a planejada em T1; `.svg` não está em `INLINE_EXTENSIONS` e `serveInline` depende só da whitelist (com sniffing de magic bytes).
+6. **Aceito** — path traversal e2e de upload removido (sanitize unit permanece); import de `DEFAULT_CLEANUP_RETRY` de `session/store` em `utils/config` (sem ciclo, sem custo relevante).
+7. **Registrado** — `__BASE_URL__` do frontend vem de `VITE_PUBLIC_BASE_URL`, que o Dockerfile não define; QR cai em `window.location.origin`. Pré-existente, fora de escopo.
+
+Verificação final re-executada: `typecheck` OK, `typecheck:web` OK, `test` 271 passam / 13 skipped, `test:web` 72 passam, `lint` 21 erros pré-existentes (`any`/`no-empty` em `dev`), `docker build --no-cache` OK, smoke manual (servidor sobe, `/health` 200, `POST /api/sessions` 201).
+
 ## Riscos
 
 - T2: `clearAllTimers`/`shutdown`/`emitSessionClosed` removidos com grep de zero callers.
