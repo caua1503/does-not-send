@@ -48,7 +48,6 @@ describe("pairing domain", () => {
         visualId: "A7K92F",
         shortId: "A7K92F",
         qrTokenHash: "hash-of-qr-token",
-        qrConsumedAt: null,
         isPaired: false,
         activeUploads: 0,
         pairedAt: undefined,
@@ -59,12 +58,10 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
 
       expect(session.shortId).toBe("A7K92F");
       expect(session.qrTokenHash).toBe("hash-of-qr-token");
-      expect(session.qrConsumedAt).toBeNull();
       expect(session.isPaired).toBe(false);
       expect(session.pairedAt).toBeUndefined();
       expect(session.phoneDisconnectedAt).toBeUndefined();
@@ -72,14 +69,12 @@ describe("pairing domain", () => {
       // Paired state simulation
       const pairedSession: Session = {
         ...session,
-        qrConsumedAt: "2026-10-30T12:01:00.000Z",
         isPaired: true,
         state: "PAIRED",
         pairedAt: "2026-10-30T12:01:00.000Z",
         phoneDisconnectedAt: "2026-10-30T12:05:00.000Z",
       };
 
-      expect(pairedSession.qrConsumedAt).toBe("2026-10-30T12:01:00.000Z");
       expect(pairedSession.isPaired).toBe(true);
       expect(pairedSession.state).toBe("PAIRED");
       expect(pairedSession.pairedAt).toBe("2026-10-30T12:01:00.000Z");
@@ -97,7 +92,6 @@ describe("pairing domain", () => {
         visualId: "K92FA7",
         shortId: "K92FA7",
         qrTokenHash: "hash-1",
-        qrConsumedAt: null,
         isPaired: false,
         activeUploads: 0,
         state: "WAITING",
@@ -106,7 +100,6 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
 
       repo.create(session);
@@ -126,7 +119,6 @@ describe("pairing domain", () => {
         visualId: "ABCDEF",
         shortId: "ABCDEF",
         qrTokenHash: "hash-1",
-        qrConsumedAt: null,
         isPaired: false,
         activeUploads: 0,
         state: "WAITING",
@@ -135,7 +127,6 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
 
       repo.create(session);
@@ -157,7 +148,6 @@ describe("pairing domain", () => {
         visualId: "AAAAAA",
         shortId: "AAAAAA",
         qrTokenHash: "hash-1",
-        qrConsumedAt: null,
         isPaired: false,
         activeUploads: 0,
         state: "WAITING",
@@ -166,7 +156,6 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
       const s2: Session = {
         id: "sess-2",
@@ -175,7 +164,6 @@ describe("pairing domain", () => {
         visualId: "BBBBBB",
         shortId: "BBBBBB",
         qrTokenHash: "hash-2",
-        qrConsumedAt: "2026-10-30T12:01:00.000Z",
         isPaired: true,
         activeUploads: 0,
         state: "PAIRED",
@@ -184,7 +172,6 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
 
       repo.create(s1);
@@ -203,7 +190,6 @@ describe("pairing domain", () => {
         visualId: "DELETE",
         shortId: "DELETE",
         qrTokenHash: "hash-1",
-        qrConsumedAt: null,
         isPaired: false,
         activeUploads: 0,
         state: "WAITING",
@@ -212,7 +198,6 @@ describe("pairing domain", () => {
         files: [],
         lastSeen: { computer: null, phone: null },
         phoneLostAt: null,
-        computerLostAt: null,
       };
 
       repo.create(session);

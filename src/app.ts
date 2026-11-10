@@ -258,11 +258,8 @@ export async function buildApp(
   const sessionStore = new SessionStore({
     clock,
     tempDir: config.tempDir,
-    sessionIdleTimeout: config.sessionIdleTimeout,
     timingConfig: {
       heartbeatTimeoutMs: config.heartbeatTimeoutMs,
-      computerGraceMs: config.computerGraceMs,
-      phoneGraceMs: config.phoneGraceMs,
       wsAuthTimeoutMs: config.wsAuthTimeoutMs,
     },
     cleanupRetry: {

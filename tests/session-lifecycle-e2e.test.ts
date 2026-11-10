@@ -40,14 +40,13 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     expect(store.isPhonePresent(session.id)).toBe(true);
   });
 
-  it("2. Tentativa duplicada de pareamento retorna 409 ALREADY_CONSUMED", async () => {
+  it("2. Repetir a leitura do mesmo QR emite nova credencial e substitui a anterior", async () => {
     const clock = new FakeClock(1000);
     ctx = await createTestApp({}, { clock, startSweeper: false });
 
     const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
     const session = createRes.json();
 
-    // Primeiro pareamento consome o token
     const pair1 = await ctx.app.inject({
       method: "POST",
       url: `/api/sessions/${session.id}/pair`,
@@ -55,14 +54,27 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     });
     expect(pair1.statusCode).toBe(200);
 
-    // Segundo pareamento com o mesmo qrToken falha com 409
     const pair2 = await ctx.app.inject({
       method: "POST",
       url: `/api/sessions/${session.id}/pair`,
       payload: { qrToken: session.qrToken },
     });
-    expect(pair2.statusCode).toBe(409);
-    expect(pair2.json().code).toBe("ALREADY_CONSUMED");
+    expect(pair2.statusCode).toBe(200);
+    expect(pair2.json().phoneCredential).not.toBe(pair1.json().phoneCredential);
+
+    // O celular antigo deixa de autenticar; o novo assume o upload
+    const oldUpload = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/files`,
+      headers: { authorization: `Bearer ${pair1.json().phoneCredential}` },
+    });
+    expect(oldUpload.statusCode).toBe(401);
+    const newUpload = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/files`,
+      headers: { authorization: `Bearer ${pair2.json().phoneCredential}` },
+    });
+    expect(newUpload.statusCode).not.toBe(401);
   });
 
   it("3. Autenticação do telefone e do computador no WebSocket atualiza presença imediatamente", async () => {

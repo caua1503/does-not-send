@@ -58,33 +58,6 @@ describe("cleanup", () => {
     expect(entries).not.toContain(session.id);
   });
 
-  it("expired session removes its directory", async () => {
-    const shortCtx = await createTestApp({ sessionIdleTimeout: 200 });
-    try {
-      const session = await createSession(shortCtx.app);
-
-      // Upload a file
-      const { body, contentType } = createMultipartPayload([
-        { name: "file", content: Buffer.from("data"), filename: "f.txt" },
-      ]);
-      await shortCtx.app.inject({
-        method: "POST",
-        url: `/api/sessions/${session.id}/files`,
-        headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
-        body,
-      });
-
-      // Wait for expiration
-      await new Promise((r) => setTimeout(r, 400));
-
-      // Directory should be gone
-      const entries = await readdir(shortCtx.config.tempDir).catch(() => []);
-      expect(entries).not.toContain(session.id);
-    } finally {
-      await cleanupTestApp(shortCtx);
-    }
-  });
-
   it("orphan directories are cleaned on startup", async () => {
     // Create orphan directory
     const orphanDir = join(ctx.config.tempDir, "orphan-session-id");

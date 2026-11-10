@@ -109,7 +109,6 @@ export class SqlStore implements Store {
         break;
 
       case "pairing_refused":
-      case "qr_reused":
         await tx.insert(schema.events).values({
           at: event.at.toISOString(),
           type: event.type,

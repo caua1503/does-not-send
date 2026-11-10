@@ -105,7 +105,7 @@ export async function sessionRoutes(
     });
   });
 
-  // Pair phone to session using single-use QR token
+  // Pair phone to session using the session's reusable QR token
   app.post<{
     Params: { id: string };
     Body: { qrToken?: string };
@@ -143,26 +143,14 @@ export async function sessionRoutes(
 
     const pairResult = ctx.sessionService.pair(id, qrToken);
     if (!pairResult.ok) {
-      // Emit pairing_refused or qr_reused AFTER checking result, always with normalized IP
-      const normalizedPhoneIp = normalizeIp(request.ip) ?? undefined;
-      if (pairResult.error.code === "ALREADY_CONSUMED") {
-        safeRecord(
-          ctx.recorder,
-          {
-            type: "qr_reused",
-            at: new Date(),
-            ip: normalizedPhoneIp,
-            sessionId: id,
-          },
-          request.log,
-        );
-      } else if (pairResult.error.code === "INVALID") {
+      // Emit pairing_refused AFTER checking result, always with normalized IP
+      if (pairResult.error.code === "INVALID") {
         safeRecord(
           ctx.recorder,
           {
             type: "pairing_refused",
             at: new Date(),
-            ip: normalizedPhoneIp,
+            ip: normalizeIp(request.ip) ?? undefined,
             sessionId: id,
           },
           request.log,
@@ -170,12 +158,6 @@ export async function sessionRoutes(
       }
 
       switch (pairResult.error.code) {
-        case "ALREADY_CONSUMED":
-          return reply.status(409).send({
-            error: "QR code already consumed",
-            code: "ALREADY_CONSUMED",
-            statusCode: 409,
-          });
         case "CLOSED":
           return reply.status(410).send({
             error: "Session is closed",

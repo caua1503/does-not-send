@@ -100,31 +100,22 @@ describe("sessions", () => {
   });
 
   describe("expiration", () => {
-    it("expires session after idle timeout", async () => {
-      const shortCtx = await createTestApp({ sessionIdleTimeout: 200 });
+    it("sessão sem atividade não encerra sozinha", async () => {
+      const idleCtx = await createTestApp({});
       try {
-        const session = await createSession(shortCtx.app);
+        const session = await createSession(idleCtx.app);
 
-        // Session is active
-        const res1 = await shortCtx.app.inject({
-          method: "GET",
-          url: `/api/sessions/${session.id}`,
-          headers: { authorization: `Bearer ${session.ownerToken}` },
-        });
-        expect(res1.statusCode).toBe(200);
-
-        // Wait for expiration
         await new Promise((r) => setTimeout(r, 400));
 
-        // Session should be expired/closed
-        const res2 = await shortCtx.app.inject({
+        const res = await idleCtx.app.inject({
           method: "GET",
           url: `/api/sessions/${session.id}`,
           headers: { authorization: `Bearer ${session.ownerToken}` },
         });
-        expect(res2.statusCode).toBe(401);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().state).toBe("PAIRED");
       } finally {
-        await cleanupTestApp(shortCtx);
+        await cleanupTestApp(idleCtx);
       }
     });
   });

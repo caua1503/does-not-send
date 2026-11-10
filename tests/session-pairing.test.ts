@@ -5,7 +5,6 @@ import {
   hashToken,
 } from "../src/session/pairing.js";
 import type { PairableSession } from "../src/session/pairing.js";
-import { PairingError } from "../src/session/errors.js";
 
 function makeSession(overrides: Partial<PairableSession> = {}): PairableSession {
   const raw = generateQrToken();
@@ -13,7 +12,6 @@ function makeSession(overrides: Partial<PairableSession> = {}): PairableSession 
     id: "sess-test",
     state: "WAITING",
     qrTokenHash: hashToken(raw),
-    qrConsumedAt: null,
     pairedAt: null,
     ...overrides,
   };
@@ -56,7 +54,6 @@ describe("consumePairing", () => {
       expect(typeof result.pairedAt).toBe("string");
     }
     expect(session.state).toBe("PAIRED");
-    expect(session.qrConsumedAt).not.toBeNull();
     expect(session.pairedAt).not.toBeNull();
   });
 
@@ -74,7 +71,7 @@ describe("consumePairing", () => {
     }
   });
 
-  it("segundo telefone com o mesmo QR é recusado (ALREADY_CONSUMED)", () => {
+  it("o mesmo QR pode ser lido várias vezes; a nova leitura substitui a credencial", () => {
     const raw = generateQrToken();
     const session = makeSession({ qrTokenHash: hashToken(raw) });
 
@@ -82,25 +79,22 @@ describe("consumePairing", () => {
     expect(first.ok).toBe(true);
 
     const second = consumePairing(session, raw);
-    expect(second.ok).toBe(false);
-    if (!second.ok) {
-      expect(second.error).toBeInstanceOf(PairingError);
-      expect(second.error.code).toBe("ALREADY_CONSUMED");
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      expect(second.phoneCredential).not.toBe(first.phoneCredential);
+      expect(session.phoneCredentialHash).toBe(hashToken(second.phoneCredential));
     }
+    expect(session.state).toBe("PAIRED");
   });
 
-  it("QR consumido não pode ser reutilizado, mesmo com token correto", () => {
+  it("QR continua válido em sessão PAIRED e DISCONNECTED", () => {
     const raw = generateQrToken();
-    const session = makeSession({
-      qrTokenHash: hashToken(raw),
-      qrConsumedAt: new Date().toISOString(),
-      state: "PAIRED",
-    });
 
-    const result = consumePairing(session, raw);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe("ALREADY_CONSUMED");
+    for (const state of ["PAIRED", "DISCONNECTED"] as const) {
+      const session = makeSession({ qrTokenHash: hashToken(raw), state });
+      const result = consumePairing(session, raw);
+      expect(result.ok).toBe(true);
+      expect(session.state).toBe(state);
     }
   });
 
@@ -114,7 +108,6 @@ describe("consumePairing", () => {
       expect(result.error.code).toBe("INVALID");
     }
     expect(session.state).toBe("WAITING");
-    expect(session.qrConsumedAt).toBeNull();
     expect(session.pairedAt).toBeNull();
   });
 
@@ -140,7 +133,7 @@ describe("consumePairing", () => {
     }
   });
 
-  it("concorrência: Promise.all com 20 chamadas de consumePairing, exatamente 1 sucesso", async () => {
+  it("concorrência: 20 leituras simultâneas do mesmo QR todas têm sucesso", async () => {
     const raw = generateQrToken();
     const session = makeSession({ qrTokenHash: hashToken(raw) });
 
@@ -150,16 +143,7 @@ describe("consumePairing", () => {
       ),
     );
 
-    const successes = results.filter((r) => r.ok);
-    const failures = results.filter((r) => !r.ok);
-
-    expect(successes).toHaveLength(1);
-    expect(failures).toHaveLength(19);
-    for (const f of failures) {
-      if (!f.ok) {
-        expect(f.error.code).toBe("ALREADY_CONSUMED");
-      }
-    }
+    expect(results.filter((r) => r.ok)).toHaveLength(20);
   });
 
   it("sessões isoladas: consumir o QR da sessão A não afeta a B", () => {
@@ -171,10 +155,8 @@ describe("consumePairing", () => {
     const resA = consumePairing(sessionA, rawA);
     expect(resA.ok).toBe(true);
     expect(sessionA.state).toBe("PAIRED");
-    expect(sessionA.qrConsumedAt).not.toBeNull();
 
     expect(sessionB.state).toBe("WAITING");
-    expect(sessionB.qrConsumedAt).toBeNull();
     expect(sessionB.pairedAt).toBeNull();
 
     const resB = consumePairing(sessionB, rawB);

@@ -26,18 +26,8 @@ export const CATEGORIES: readonly Category[] = [
   "other",
 ];
 
-export type CloseReason =
-  | "idle_timeout"
-  | "computer_lost"
-  | "phone_lost"
-  | "user_closed"
-  | "closed"
-  | "server_restart";
+export type CloseReason = "user_closed" | "closed" | "server_restart";
 
-/**
- * qr_reused still exists in the database enum (the emitter is untouched), but
- * since QRs are reusable it no longer means anything: the panel ignores it.
- */
 export type EventType = "pairing_refused";
 
 export type Granularity = "day" | "week" | "month" | "year";
@@ -146,7 +136,6 @@ export interface AdminSummary {
   byCategory: Array<{ category: Category; count: number; volumeBytes: number }>;
   topExtensions: Array<{ extension: string; count: number; volumeBytes: number }>;
   topPhoneIps: Array<{ ip: string; count: number }>;
-  /** Sum of pairing_refused events only (qr_reused is intentionally ignored). */
   refusedPairings: number;
 }
 
