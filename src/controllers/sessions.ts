@@ -202,6 +202,31 @@ export async function sessionRoutes(
     });
   });
 
+  // Join by session id + numeric code (devices that cannot read the QR Code).
+  // Every failure answers exactly the same, so the reason never leaks.
+  app.post<{ Body: { sessionId?: unknown; code?: unknown } }>(
+    "/sessions/join",
+    async (request, reply) => {
+      const { sessionId, code } = request.body ?? {};
+      const phoneCredential =
+        typeof sessionId === "string" && typeof code === "string"
+          ? ctx.sessionService.joinByCode(sessionId, code)
+          : null;
+
+      if (!phoneCredential) {
+        return reply.status(401).send({
+          error: "Invalid session or code",
+          statusCode: 401,
+        });
+      }
+
+      return reply.status(200).send({
+        success: true,
+        phoneCredential,
+      });
+    },
+  );
+
   // Get session info (owner/computer/phone)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);
