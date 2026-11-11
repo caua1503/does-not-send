@@ -44,10 +44,28 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
       category === "video" ||
       category === "audio" ||
       category === "pdf");
+  const rowOpensPreview = file.state === "completed" && category === "image";
+  const openPreview = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setPreviewOpen(true);
+  };
+  const handleRowKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openPreview();
+    }
+  };
 
   return (
     <>
-      <div className="animate-slide-in flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-accent-light)]/40 transition-colors group">
+      <div
+        onClick={rowOpensPreview ? openPreview : undefined}
+        onKeyDown={rowOpensPreview ? handleRowKeyDown : undefined}
+        role={rowOpensPreview ? "button" : undefined}
+        tabIndex={rowOpensPreview ? 0 : undefined}
+        className={`animate-slide-in flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-accent-light)]/40 transition-colors group${rowOpensPreview ? " cursor-pointer" : ""}`}
+      >
         {/* Thumbnail / Icon */}
         <div className="flex-shrink-0 w-10 h-10 rounded-xl overflow-hidden bg-[var(--color-border)] flex items-center justify-center">
           {category === "image" && file.state === "completed" ? (
@@ -87,7 +105,7 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
         <div className="flex items-center gap-1 flex-shrink-0">
           {canPreview && (
             <button
-              onClick={() => setPreviewOpen(true)}
+              onClick={openPreview}
               className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
               aria-label={`Pré-visualizar ${file.originalName}`}
             >
