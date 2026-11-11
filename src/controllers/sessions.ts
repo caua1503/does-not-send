@@ -50,11 +50,11 @@ export async function authorize(
     }
   }
 
-  // Check phone / upload role
-  if (!matchedRole && (allowedRoles.includes("upload") || allowedRoles.includes("phone"))) {
+  // Check phone role (route-level grant; not interchangeable with "upload")
+  if (!matchedRole && allowedRoles.includes("phone")) {
     const phoneAuth = domainAuthorize(session, "phone", token);
     if (phoneAuth.ok) {
-      matchedRole = allowedRoles.includes("phone") ? "phone" : "upload";
+      matchedRole = "phone";
     }
   }
 
@@ -202,9 +202,9 @@ export async function sessionRoutes(
     });
   });
 
-  // Get session info (owner/computer only)
+  // Get session info (owner/computer/phone)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
-    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);
     if (!auth) return;
 
     const session = ctx.sessionStore.getById(auth.sessionId)!;

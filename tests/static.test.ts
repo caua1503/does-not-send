@@ -34,6 +34,25 @@ describe("Static routes and SPA fallback", () => {
     expect(res.headers["content-type"]).toContain("text/html");
   });
 
+  it("SPA fallback uses absolute /assets/ so nested routes load scripts", async () => {
+    // Que bug pega: "./assets/" em /enviar/<id> virava /enviar/assets/* → HTML → tela em branco.
+    ctx = await createTestApp();
+    const res = await ctx.app.inject({
+      method: "GET",
+      url: "/enviar/some-token",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('"./assets/');
+    const assets = [...res.body.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]!);
+    expect(assets.length).toBeGreaterThan(0);
+    for (const asset of assets) {
+      const file = await ctx.app.inject({ method: "GET", url: asset });
+      expect(file.statusCode).toBe(200);
+      expect(file.headers["content-type"]).not.toContain("text/html");
+    }
+  });
+
   it("keeps default-src 'none' on API routes", async () => {
     ctx = await createTestApp();
     const res = await ctx.app.inject({

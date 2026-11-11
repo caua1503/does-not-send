@@ -62,14 +62,16 @@ describe("authorization", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("uploadToken cannot get session info", async () => {
+  it("phone credential can get session info", async () => {
+    // O celular consulta o estado da sessão a cada 3s; 401 aqui deixa a tela sem carregar.
     const session = await createSession(ctx.app);
     const res = await ctx.app.inject({
       method: "GET",
       url: `/api/sessions/${session.id}`,
       headers: { authorization: `Bearer ${session.uploadToken}` },
     });
-    expect(res.statusCode).toBe(401);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toBe(session.id);
   });
 
   it("closed session denies access", async () => {
