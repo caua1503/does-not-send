@@ -155,6 +155,18 @@ describe("login e sessão do painel", () => {
     expect(sameOrigin.statusCode).toBe(200);
   });
 
+  it("login pelo IP da LAN (origin = host do request) é aceito", async () => {
+    // Que bug pega: hostMatches comparava "http://ip:porta" com "ip" e recusava acesso fora de PUBLIC_BASE_URL.
+    ctx = await createTestApp({ admin: ADMIN, publicBaseUrl: "http://localhost:3000" }, { startSweeper: false });
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/admin/api/login",
+      headers: { ...JSON_HEADERS, origin: "http://10.0.1.243:3000", host: "10.0.1.243:3000" },
+      payload: { username: "admin", password: "admin" },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
   it("5 falhas bloqueiam o IP com 429 e Retry-After; senha certa também é barrada", async () => {
     // Que bug pega: força bruta sem bloqueio no endpoint real.
     const app = await withAdmin();
