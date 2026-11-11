@@ -59,7 +59,8 @@ export function useLoginCode(
           const data = JSON.parse(event.data as string) as { type?: string };
           if (data.type !== "login_code") return;
           const message = data as LoginCodeMessage;
-          setState({ code: message.code, deadline: Date.now() + message.expiresInMs });
+          // The same code may arrive twice (issue + reconnect resend)
+          setState((prev) => (prev?.code === message.code ? prev : { code: message.code, deadline: Date.now() + message.expiresInMs }));
         } catch {
           // Malformed message — ignore
         }

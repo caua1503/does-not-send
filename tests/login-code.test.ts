@@ -100,6 +100,21 @@ describe("LoginCodeManager", () => {
     expect(manager.consume("EXISTS", sent[1]!.code)).toBe(true);
   });
 
+  it("current devolve o código vigente e ignora expirado ou inexistente", () => {
+    expect(manager.current("NONE")).toBeNull();
+
+    manager.issue("EXISTS");
+    clock.advance(30_000);
+    expect(manager.current("EXISTS")).toMatchObject({
+      sessionId: "EXISTS",
+      code: sent[0]!.code,
+      expiresInMs: LOGIN_CODE_TTL_MS - 30_000,
+    });
+
+    clock.advance(LOGIN_CODE_TTL_MS);
+    expect(manager.current("EXISTS")).toBeNull();
+  });
+
   it("drop descarta o código da sessão", () => {
     manager.issue("EXISTS");
     const code = sent[0]!.code;
@@ -123,13 +138,18 @@ describe("POST /api/sessions/join", () => {
     ws: WebSocket,
     type: string = "login_code",
   ): Promise<Record<string, string>> {
+    const queued = inbox.get(ws)!.shift();
+    if (queued) return Promise.resolve(queued as Record<string, string>);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`ws message timeout: ${type}`)), 5000);
+      const timer = setTimeout(() => {
+        waiters.delete(ws);
+        reject(new Error(`ws message timeout: ${type}`));
+      }, 5000);
       waiters.set(ws, () => {
         clearTimeout(timer);
+        waiters.delete(ws);
         resolve(inbox.get(ws)!.shift() as Record<string, string>);
       });
-      if (inbox.get(ws)!.length > 0) waiters.get(ws)!();
     });
   }
 
@@ -143,7 +163,13 @@ describe("POST /api/sessions/join", () => {
     });
     await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve()));
     ws.send(JSON.stringify({ type: "auth", role: "computer", secret: computerToken }));
-    expect((await nextMessage(ws, "auth_ok")).type).toBe("auth_ok");
+    // A reconnect is greeted with the pending login_code before auth_ok: keep it queued
+    let message = await nextMessage(ws, "auth_ok");
+    while (message.type !== "auth_ok") {
+      inbox.get(ws)!.push(message);
+      message = await nextMessage(ws, "auth_ok");
+    }
+    expect(message.type).toBe("auth_ok");
     return ws;
   }
 
@@ -205,6 +231,46 @@ describe("POST /api/sessions/join", () => {
 
     const res = await join(` ${session.id.toUpperCase()} `, code);
     expect(res.statusCode).toBe(200);
+    // The canonical id comes back: routes and WS never normalize
+    expect(JSON.parse(res.body).sessionId).toBe(session.id);
+  });
+
+  it("computador que reconecta recebe o código vigente na hora", async () => {
+    const session = await createSession(ctx.app, false);
+    const ws = await openComputer(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
+    const oldSocket = ws;
+    ws.close();
+    await new Promise<void>((resolve) => oldSocket.addEventListener("close", () => resolve()));
+
+    // The browser reconnect (the ws event loop cannot finish one test twice)
+    const again = new WebSocket(`${baseUrl}/api/sessions/${session.id}/ws`);
+    sockets.push(again);
+    const received: Array<{ type: string; code?: string }> = [];
+    again.addEventListener("message", (event) => received.push(JSON.parse(String(event.data))));
+    await new Promise<void>((resolve) => again.addEventListener("open", () => resolve()));
+    again.send(JSON.stringify({ type: "auth", role: "computer", secret: session.computerToken }));
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no resume")), 5000);
+      const poll = setInterval(() => {
+        if (received.some((m) => m.type === "login_code")) {
+          clearTimeout(timer);
+          clearInterval(poll);
+          resolve();
+        }
+      }, 20);
+    });
+    expect(received.find((m) => m.type === "login_code")!.code).toBe(code);
+  });
+
+  it("corpo malformado não consome a cota de IP", async () => {
+    for (let i = 0; i < IP_FAILURE_LIMIT + 2; i++) {
+      const res = await ctx.app.inject({ method: "POST", url: "/api/sessions/join", payload: {} });
+      expect(res.statusCode).toBe(401);
+    }
+    // Budget untouched: a real wrong guess is still a plain 401, not a 429
+    expect((await join("00000000-0000-4000-8000-000000000000", "000000")).statusCode).toBe(401);
   });
 
   it("falhas retornam a mesma resposta genérica", async () => {

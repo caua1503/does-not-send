@@ -91,7 +91,7 @@ export class SessionService {
    * Any failure is reported as one opaque false, never why. Wrong codes feed
    * the per-session counter; hitting it rotates the code for the computer.
    */
-  joinByCode(rawSessionId: string, code: string): string | null {
+  joinByCode(rawSessionId: string, code: string): { sessionId: string; phoneCredential: string } | null {
     const session = this.store.getByNormalizedId(rawSessionId);
     if (
       !session ||
@@ -124,7 +124,7 @@ export class SessionService {
 
     // Discard the used code and hand the computer the next one right away
     this.store.loginCodes.issue(session.id);
-    return phoneCredential;
+    return { sessionId: session.id, phoneCredential };
   }
 
   getById(id: string): Session | undefined {

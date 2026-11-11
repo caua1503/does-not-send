@@ -17,7 +17,6 @@ import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
 import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
 import { JoinSessionForm } from "./JoinSessionForm.tsx";
-import { normalizeSessionId } from "../../lib/loginCode.ts";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
@@ -130,7 +129,6 @@ export default function PhonePage({
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
-    connected: wsConnected,
   } = useSessionEvents(sessionId, credential, {
     role: "phone",
     reconnectInterval: 2000,
@@ -149,9 +147,11 @@ export default function PhonePage({
     !isSessionClosed && !isReconnecting && remoteSession?.computerPresent === false;
 
   useEffect(() => {
-    if (isSessionClosed && sessionId) {
-      clearStoredSession(sessionId);
-    }
+    if (!isSessionClosed || !sessionId) return;
+    clearStoredSession(sessionId);
+    try {
+      if (localStorage.getItem(JOINED_KEY) === sessionId) localStorage.removeItem(JOINED_KEY);
+    } catch {}
   }, [isSessionClosed, sessionId]);
 
   // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
@@ -442,27 +442,32 @@ export default function PhonePage({
   };
 
   const leaveSession = () => {
-    clearStoredSession(sessionId);
+    if (sessionId) clearStoredSession(sessionId);
     setItems([]);
     setVisualId(null);
     setRemoteSession(null);
     setCredential(null);
     if (joinedSessionId) {
-      clearStoredSession(joinedSessionId);
       try {
         localStorage.removeItem(JOINED_KEY);
       } catch {}
       setJoinedSessionId(null);
-    } else if (!qrToken) {
-      setSessionError(SCAN_AGAIN_MESSAGE);
     }
+    // Always back to the entry screen, never to the dead session URL
+    if (window.location.pathname !== "/") {
+      try {
+        window.history.replaceState({}, "", "/");
+      } catch {}
+    }
+    setSessionError(SCAN_AGAIN_MESSAGE);
   };
 
   // Manual login: same credential the QR pairs give, so the flow below is unchanged.
   const joinWithManualCode = async (rawId: string, rawCode: string) => {
     try {
       const data = await joinWithCode(rawId, rawCode);
-      const id = normalizeSessionId(rawId);
+      // The canonical id: routes and WS never normalize, only the join lookup does
+      const id = data.sessionId;
       try {
         localStorage.setItem(
           `dns_phone_cred_${id}`,
@@ -566,7 +571,7 @@ export default function PhonePage({
           <span className="text-xs text-[var(--color-text-muted)] tabular">
             {completedFiles}/{totalFiles} enviados
           </span>
-          {wsConnected && !isSessionClosed && (
+          {!isSessionClosed && (
             <Button variant="ghost" size="sm" onClick={leaveSession}>
               Sair da sessão
             </Button>

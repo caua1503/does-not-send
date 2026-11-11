@@ -207,6 +207,15 @@ export async function sessionRoutes(
   app.post<{ Body: { sessionId?: unknown; code?: unknown } }>(
     "/sessions/join",
     async (request, reply) => {
+      const { sessionId, code } = request.body ?? {};
+      // A malformed body is never a code guess: it must not burn the IP budget
+      if (typeof sessionId !== "string" || typeof code !== "string") {
+        return reply.status(401).send({
+          error: "Invalid session or code",
+          statusCode: 401,
+        });
+      }
+
       // Already throttled: no lookup, and the body is the same whatever the id
       const retryAfterMs = ctx.sessionStore.loginGuard.ipRetryAfterMs(request.ip);
       if (retryAfterMs > 0) {
@@ -216,13 +225,9 @@ export async function sessionRoutes(
           .send({ error: "Too many attempts", statusCode: 429 });
       }
 
-      const { sessionId, code } = request.body ?? {};
-      const phoneCredential =
-        typeof sessionId === "string" && typeof code === "string"
-          ? ctx.sessionService.joinByCode(sessionId, code)
-          : null;
+      const joined = ctx.sessionService.joinByCode(sessionId, code);
 
-      if (!phoneCredential) {
+      if (!joined) {
         ctx.sessionStore.loginGuard.recordIpFailure(request.ip);
         return reply.status(401).send({
           error: "Invalid session or code",
@@ -232,7 +237,8 @@ export async function sessionRoutes(
 
       return reply.status(200).send({
         success: true,
-        phoneCredential,
+        sessionId: joined.sessionId,
+        phoneCredential: joined.phoneCredential,
       });
     },
   );

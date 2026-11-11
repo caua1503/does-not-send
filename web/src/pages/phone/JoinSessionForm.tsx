@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, KeyRound } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
-import { digitsOnly } from "../../lib/loginCode.ts";
+import { digitsOnly, normalizeSessionId } from "../../lib/loginCode.ts";
 
 interface JoinSessionFormProps {
   /** Resolves to an error message, or null on success. */
@@ -21,7 +21,7 @@ export function JoinSessionForm({ onSubmit, onCancel }: JoinSessionFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = sessionId.trim() !== "" && code.length === 6 && !submitting;
+  const canSubmit = normalizeSessionId(sessionId).length >= 8 && code.length === 6 && !submitting;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

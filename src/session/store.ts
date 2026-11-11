@@ -249,7 +249,6 @@ export class SessionStore {
       }
     }
 
-    // Check if role already has active socket -> replace (close previous)
     const conn: { computer?: WebSocketLike; phone?: WebSocketLike } =
       this.activeSockets.get(sessionId) ?? {};
     const existing = conn[role];
@@ -264,6 +263,18 @@ export class SessionStore {
 
     // Registra presença imediata na autenticação WebSocket
     this.recordHeartbeat(sessionId, role);
+
+    // A reconnect missed every rotation: send the current login code straight
+    // to the new socket, before any stale one can be closed and unregistered
+    if (role === "computer") {
+      const connection = this.activeSockets.get(sessionId);
+      const current = this.loginCodes.current(sessionId);
+      if (current) {
+        try {
+          connection?.computer?.send(JSON.stringify(current));
+        } catch {}
+      }
+    }
 
     return { ok: true };
   }

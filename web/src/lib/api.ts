@@ -90,6 +90,7 @@ export async function pairSession(id: string, qrToken: string): Promise<PairResp
 
 export interface JoinResponse {
   success: boolean;
+  sessionId: string;
   phoneCredential: string;
 }
 

@@ -25,13 +25,16 @@ function hashCode(code: string): Buffer {
 
 interface StoredLoginCode {
   hash: Buffer;
+  /** Kept only to hand the same code to a computer that reconnects. */
+  code: string;
   expiresAt: number;
 }
 
 /**
- * Numeric login codes for devices that cannot read the QR Code. Only the hash
- * and the expiry are kept; the code reaches the session computer over its
- * WebSocket on every issue/rotation, and dies once used or expired.
+ * Numeric login codes for devices that cannot read the QR Code. The code
+ * reaches the session computer over its WebSocket on every issue/rotation and
+ * dies once used or expired. Plaintext is held only until then, so a computer
+ * that reconnects can receive the code it missed.
  */
 export class LoginCodeManager {
   private codes = new Map<string, StoredLoginCode>();
@@ -48,16 +51,23 @@ export class LoginCodeManager {
   /** Issues and sends a fresh code, replacing any previous one. */
   issue(sessionId: string): void {
     const code = generateLoginCode();
-    this.codes.set(sessionId, {
-      hash: hashCode(code),
-      expiresAt: this.deps.clock.now() + LOGIN_CODE_TTL_MS,
-    });
+    const expiresAt = this.deps.clock.now() + LOGIN_CODE_TTL_MS;
+    this.codes.set(sessionId, { hash: hashCode(code), code, expiresAt });
     this.deps.notify({
       type: "login_code",
       sessionId,
       code,
-      expiresInMs: LOGIN_CODE_TTL_MS,
+      expiresInMs: expiresAt - this.deps.clock.now(),
     });
+  }
+
+  /** The code still in force for a computer that just connected, if any. */
+  current(sessionId: string): LoginCodeMessage | null {
+    const stored = this.codes.get(sessionId);
+    if (!stored) return null;
+    const expiresInMs = stored.expiresAt - this.deps.clock.now();
+    if (expiresInMs <= 0) return null;
+    return { type: "login_code", sessionId, code: stored.code, expiresInMs };
   }
 
   /** Single-use: a successful match drops the stored code. */
