@@ -207,6 +207,15 @@ export async function sessionRoutes(
   app.post<{ Body: { sessionId?: unknown; code?: unknown } }>(
     "/sessions/join",
     async (request, reply) => {
+      // Already throttled: no lookup, and the body is the same whatever the id
+      const retryAfterMs = ctx.sessionStore.loginGuard.ipRetryAfterMs(request.ip);
+      if (retryAfterMs > 0) {
+        return reply
+          .status(429)
+          .header("Retry-After", String(Math.ceil(retryAfterMs / 1000)))
+          .send({ error: "Too many attempts", statusCode: 429 });
+      }
+
       const { sessionId, code } = request.body ?? {};
       const phoneCredential =
         typeof sessionId === "string" && typeof code === "string"
@@ -214,6 +223,7 @@ export async function sessionRoutes(
           : null;
 
       if (!phoneCredential) {
+        ctx.sessionStore.loginGuard.recordIpFailure(request.ip);
         return reply.status(401).send({
           error: "Invalid session or code",
           statusCode: 401,

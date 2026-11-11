@@ -6,6 +6,7 @@ import {
   LOGIN_CODE_TTL_MS,
   type LoginCodeMessage,
 } from "../src/session/login-code.js";
+import { SESSION_FAILURE_LIMIT, IP_FAILURE_LIMIT } from "../src/session/login-guard.js";
 import { FakeClock } from "../src/session/clock.js";
 import { WebSocket } from "ws";
 import type { SessionStore } from "../src/session/store.js";
@@ -256,5 +257,143 @@ describe("POST /api/sessions/join", () => {
 
     expect((await join(session.id, code)).statusCode).toBe(401);
     expect((await join(session.id, nextCode)).statusCode).toBe(200);
+  });
+});
+
+describe("POST /api/sessions/join — proteção contra adivinhação", () => {
+  let ctx: TestContext;
+  let clock: FakeClock;
+  let baseUrl: string;
+  const sockets: WebSocket[] = [];
+
+  const inbox = new WeakMap<WebSocket, unknown[]>();
+
+  function nextLoginCode(ws: WebSocket): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const poll = () => {
+        const list = inbox.get(ws)!;
+        const index = list.findIndex(
+          (m) => (m as { type?: string }).type === "login_code",
+        );
+        if (index !== -1) {
+          const [message] = list.splice(index, 1) as Array<{ code: string }>;
+          return resolve(message!.code);
+        }
+        if (Date.now() - started > 5000) return reject(new Error("login_code timeout"));
+        setTimeout(poll, 10);
+      };
+      poll();
+    });
+  }
+
+  async function openComputer(sessionId: string, computerToken: string): Promise<WebSocket> {
+    const ws = new WebSocket(`${baseUrl}/api/sessions/${sessionId}/ws`);
+    sockets.push(ws);
+    inbox.set(ws, []);
+    ws.addEventListener("message", (event) => inbox.get(ws)!.push(JSON.parse(String(event.data))));
+    await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve()));
+    ws.send(JSON.stringify({ type: "auth", role: "computer", secret: computerToken }));
+    return ws;
+  }
+
+  function store() {
+    return (ctx.app as unknown as { ctx: { sessionStore: SessionStore } }).ctx.sessionStore;
+  }
+
+  async function join(sessionId: string, code: string, remoteAddress?: string) {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/api/sessions/join",
+      payload: { sessionId, code },
+      ...(remoteAddress
+        ? { remoteAddress, headers: { "x-forwarded-for": "203.0.113.9" } }
+        : { remoteAddress }),
+    });
+    return { statusCode: res.statusCode, body: res.body, headers: res.headers };
+  }
+
+  beforeEach(async () => {
+    clock = new FakeClock(Date.now());
+    ctx = await createTestApp(undefined, { clock, startSweeper: true });
+    await ctx.app.listen({ port: 0, host: "127.0.0.1" });
+    const address = ctx.app.server.address() as { port: number };
+    baseUrl = `ws://127.0.0.1:${address.port}`;
+  });
+
+  afterEach(async () => {
+    for (const ws of sockets.splice(0)) ws.close();
+    await cleanupTestApp(ctx);
+  });
+
+  it("5 códigos errados invalidam o código atual e enviam outro ao computador", async () => {
+    const session = await createSession(ctx.app, false);
+    const ws = await openComputer(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
+    const wrong = code === "000000" ? "111111" : "000000";
+
+    const results = [];
+    for (let i = 0; i < SESSION_FAILURE_LIMIT; i++) {
+      results.push(await join(session.id, wrong, `10.0.0.${i}`));
+    }
+    expect(results.every((r) => r.statusCode === 401)).toBe(true);
+
+    const fresh = await nextLoginCode(ws);
+    expect(fresh).not.toBe(code);
+    expect((await join(session.id, code, "10.0.1.1")).statusCode).toBe(401);
+    expect((await join(session.id, fresh, "10.0.1.2")).statusCode).toBe(200);
+    expect((await store().loginGuard.ipFailures("10.0.0.0"))).toBe(1);
+  });
+
+  it("acerto zera o contador de falhas da sessão", async () => {
+    const session = await createSession(ctx.app, false);
+    const ws = await openComputer(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
+    const wrong = code === "000000" ? "111111" : "000000";
+
+    for (let i = 0; i < SESSION_FAILURE_LIMIT - 1; i++) {
+      await join(session.id, wrong, `10.0.2.${i}`);
+    }
+    expect((await join(session.id, code, "10.0.3.1")).statusCode).toBe(200);
+
+    for (let i = 0; i < SESSION_FAILURE_LIMIT - 1; i++) {
+      expect((await join(session.id, wrong, `10.0.4.${i}`)).statusCode).toBe(401);
+    }
+  });
+
+  it("10 falhas por IP retornam 429, com corpo que não revela o ID", async () => {
+    const session = await createSession(ctx.app, false);
+    const ws = await openComputer(session.id, session.computerToken!);
+    await nextLoginCode(ws);
+    const wrong = "000000";
+
+    for (let i = 0; i < IP_FAILURE_LIMIT; i++) {
+      expect((await join(session.id, wrong, "10.1.0.1")).statusCode).toBe(401);
+    }
+
+    const known = await join(session.id, wrong, "10.1.0.1");
+    const unknown = await join("nope", wrong, "10.1.0.1");
+    expect(known.statusCode).toBe(429);
+    expect(unknown.statusCode).toBe(429);
+    expect(unknown.body).toBe(known.body);
+    expect(known.headers["retry-after"]).toBe("60");
+
+    // Outro IP continua livre
+    expect((await join(session.id, wrong, "10.1.0.2")).statusCode).toBe(401);
+  });
+
+  it("ignora X-Forwarded-For sem proxy confiável configurado", async () => {
+    const session = await createSession(ctx.app, false);
+    const original = process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY;
+    try {
+      for (let i = 0; i < IP_FAILURE_LIMIT; i++) {
+        await join(session.id, "000000", "10.2.0.1");
+      }
+      // Mesmo IP de conexão com cabeçalho forjado: continua bloqueado
+      expect((await join(session.id, "000000", "10.2.0.1")).statusCode).toBe(429);
+    } finally {
+      if (original !== undefined) process.env.TRUST_PROXY = original;
+    }
   });
 });
