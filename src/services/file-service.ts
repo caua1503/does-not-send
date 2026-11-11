@@ -39,6 +39,15 @@ export interface UploadResult {
   file: SessionFile;
 }
 
+// Client-supplied filename failures are 400s, not server errors.
+function sanitizeFilenameOr400(name: string): string {
+  try {
+    return sanitizeFilename(name);
+  } catch (err) {
+    throw Object.assign(new Error((err as Error).message), { statusCode: 400 });
+  }
+}
+
 export class FileService {
   constructor(
     private config: Config,
@@ -256,7 +265,7 @@ export class FileService {
     }
 
     const nextMimeType = mimeType || "application/octet-stream";
-    const safeName = sanitizeFilename(originalName);
+    const safeName = sanitizeFilenameOr400(originalName);
     const ownExtension = extractExtension(safeName);
     const baseName = ownExtension
       ? safeName.slice(0, safeName.length - ownExtension.length - 1)
@@ -267,7 +276,8 @@ export class FileService {
     const finalName = `${baseName}${nextExtension ? `.${nextExtension}` : ""}`;
 
     const finalPath = this.getFilePath(sessionId, fileRecord.storageName);
-    const tempPath = `${finalPath}.tmp`;
+    // Unique per request: two concurrent replaces must not share a temp file.
+    const tempPath = `${finalPath}.${generateStorageName()}.tmp`;
     const tempRecord: SessionFile = {
       ...fileRecord,
       size: 0,
@@ -293,10 +303,8 @@ export class FileService {
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.finishedAt = new Date().toISOString();
       fileRecord.version += 1;
-      if (nextExtension && nextExtension !== fileRecord.extension) {
-        fileRecord.extension = nextExtension;
-        fileRecord.category = categorize(nextExtension, fileRecord.mimeType);
-      }
+      if (nextExtension) fileRecord.extension = nextExtension;
+      fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
       this.repository.update(session);
 
       fileEvents.emitFileEvent({

@@ -61,7 +61,6 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
         }
         opened = createImageEditor(file, decoded);
         setLoad({ phase: "ready", editor: opened });
-        layerRef.current?.focus({ preventScroll: true });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -78,7 +77,14 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
     const release = () => {
       if (editorRef.current && !editorRef.current.closed) editorRef.current.close();
     };
-    const onPageHide = () => release();
+    // The session may survive pagehide (iOS app switch): free only the bitmap.
+    const releaseBitmap = () => {
+      const current = editorRef.current;
+      if (!current || current.closed) return;
+      current.dispose();
+      setLoad({ phase: "error", message: "Imagem liberada. Abra novamente para continuar editando." });
+    };
+    const onPageHide = () => releaseBitmap();
     window.addEventListener("pagehide", onPageHide);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
@@ -186,6 +192,14 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
         {load.phase === "error" && (
           <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center text-sm text-white/80">
             <p>{load.message}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-white"
+              onClick={() => setLoad({ phase: "loading" })}
+            >
+              Reabrir
+            </Button>
             <Button variant="ghost" size="sm" className="text-white" onClick={onCancel}>
               Cancelar
             </Button>

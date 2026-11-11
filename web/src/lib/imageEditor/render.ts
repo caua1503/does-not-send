@@ -47,15 +47,6 @@ function drawText(ctx: Ctx2D, text: TextOp): void {
   ctx.restore();
 }
 
-/**
- * Draw `state` into `ctx` at its current size. Scale is fixed at 1: the
- * canvas must already be sized to state.width × state.height.
- */
-export function renderState(ctx: Ctx2D, state: EditorState): void {
-  ctx.clearRect(0, 0, state.width, state.height);
-  drawOps(ctx, state);
-}
-
 /** Replay drawn ops over existing pixels (no clear). */
 function drawOps(ctx: Ctx2D, state: EditorState): void {
   for (const op of state.ops) drawOp(ctx, op);

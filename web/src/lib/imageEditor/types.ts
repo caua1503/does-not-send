@@ -67,8 +67,6 @@ export interface TextOp {
 
 export type ImageOp = CropOp | RotationOp | FlipOp | StrokeOp | TextOp;
 
-export type OpType = ImageOp["type"];
-
 /** Immutable editor state: applying an op returns a new state. */
 export interface EditorState {
   /** Computed from ops; ops were already clipped/transformed to it. */

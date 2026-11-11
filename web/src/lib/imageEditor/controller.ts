@@ -32,6 +32,8 @@ export interface ImageEditorController {
   export(options?: Partial<ExportOptions>): Promise<File>;
   /** Release canvas/bitmap. Idempotent; any later call throws. */
   close(): void;
+  /** Release only the decoded bitmap, keeping the editing session alive. */
+  dispose(): void;
   readonly closed: boolean;
 }
 
@@ -104,6 +106,11 @@ export function createImageEditor(input: File, decoded: DecodedImage): ImageEdit
       closed = true;
       decoded.source.close?.();
       history = createHistory(1, 1);
+    },
+
+    dispose() {
+      if (closed) return;
+      decoded.source.close?.();
     },
   };
 

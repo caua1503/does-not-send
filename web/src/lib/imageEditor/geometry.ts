@@ -92,13 +92,6 @@ export function transformCropRect(
 }
 
 /**
- * Inverse of a quarter turn: rotate=(W,H)→(H,W), CCW=(W,H)→(H,W) too.
- */
-export function inverseRotateSize(after: Size): Size {
-  return { width: after.height, height: after.width };
-}
-
-/**
  * Pointer → image pixel coords. `view` is the image rect on screen
  * (object-fit: contain inside the canvas), measured in CSS pixels.
  */

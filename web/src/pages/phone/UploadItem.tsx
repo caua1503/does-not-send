@@ -1,6 +1,6 @@
 import { CheckCircle2, RefreshCw, Loader2, File, Pencil } from "lucide-react";
 import { formatBytes } from "../../lib/format.ts";
-import { isEditableImage } from "../../lib/editableImage.ts";
+import { isEditableImage, byExtension } from "../../lib/editableImage.ts";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 
 export interface PhoneUploadItem {
@@ -20,8 +20,9 @@ interface UploadItemProps {
 }
 
 export function UploadItem({ item, onRetry, onEdit }: UploadItemProps) {
-  const canEdit = item.state === "completed" && Boolean(item.remoteId) && isEditableImage(item.file.type);
-  return (
+  // Some phones hand over an empty MIME: fall back to the file name.
+  const editable = isEditableImage(item.file.type) || isEditableImage(byExtension(item.file.name));
+  const canEdit = item.state === "completed" && Boolean(item.remoteId) && editable;  return (
     <div className="flex items-center gap-3 p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl animate-slide-in">
       <div className="w-10 h-10 rounded-lg bg-[var(--color-border)]/50 flex items-center justify-center flex-shrink-0">
         <File size={18} strokeWidth={1.5} className="text-[var(--color-text-muted)]" />

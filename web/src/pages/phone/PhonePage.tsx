@@ -362,12 +362,25 @@ export default function PhonePage({
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("files", file, file.name);
-    const fail = (error: string) =>
-      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, error } : i)));
+    // The old content is gone once the replace starts: never show it as fine.
+    const fail = (error: string) => {
+      if (xhr.status === 410) {
+        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+      }
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error } : i))
+      );
+    };
 
     xhr.onload = () => {
       if (xhr.status !== 200) {
-        fail(xhr.status === 410 ? "Sessão encerrada" : xhr.status === 404 ? "Arquivo não encontrado" : `Erro ${xhr.status}`);
+        if (xhr.status === 401) fail("Falha de autorização na edição");
+        else if (xhr.status === 410) fail("Sessão encerrada");
+        else if (xhr.status === 404) fail("Arquivo não encontrado");
+        else if (xhr.status === 409) fail("Sessão não aceita envios");
+        else if (xhr.status === 413) fail("Arquivo muito grande ou limite excedido");
+        else if (xhr.status >= 500) fail("Servidor temporariamente indisponível");
+        else fail(`Erro ${xhr.status}`);
         return;
       }
       setItems((prev) =>
@@ -402,7 +415,16 @@ export default function PhonePage({
 
   const retryUpload = (id: string) => {
     const item = items.find((i) => i.id === id);
-    if (item) uploadSingleFile(item);
+    if (!item) return;
+    // A file that already reached the server is retried by replace, not POST.
+    if (item.remoteId) {
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", error: undefined } : i))
+      );
+      replaceEditedImage(item, item.file);
+      return;
+    }
+    uploadSingleFile(item);
   };
 
   const editingItem = editingId ? items.find((i) => i.id === editingId) : undefined;

@@ -246,7 +246,7 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
       | null;
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType === "mouse" && e.button > 2) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const target = hitTarget(e);
     const p = clientToImage({ x: e.clientX, y: e.clientY });
