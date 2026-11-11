@@ -9,6 +9,7 @@ import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
+import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 
@@ -83,6 +84,7 @@ export default function PhonePage({
   });
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pairingInProgressRef = useRef<boolean>(false);
 
@@ -355,6 +357,53 @@ export default function PhonePage({
     });
   };
 
+  // PUT replaces the file content keeping the same remote id: no new item.
+  const replaceEditedImage = (item: PhoneUploadItem, file: File) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append("files", file, file.name);
+    // The old content is gone once the replace starts: never show it as fine.
+    const fail = (error: string) => {
+      if (xhr.status === 410) {
+        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+      }
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error } : i))
+      );
+    };
+
+    xhr.onload = () => {
+      if (xhr.status !== 200) {
+        if (xhr.status === 401) fail("Falha de autorização na edição");
+        else if (xhr.status === 410) fail("Sessão encerrada");
+        else if (xhr.status === 404) fail("Arquivo não encontrado");
+        else if (xhr.status === 409) fail("Sessão não aceita envios");
+        else if (xhr.status === 413) fail("Arquivo muito grande ou limite excedido");
+        else if (xhr.status >= 500) fail("Servidor temporariamente indisponível");
+        else fail(`Erro ${xhr.status}`);
+        return;
+      }
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                file,
+                edited: true,
+                error: undefined,
+              }
+            : i
+        )
+      );
+    };
+    xhr.onerror = () => fail("Sem conexão com o servidor");
+    xhr.open("PUT", `${BASE_URL}/api/sessions/${urlSessionId}/files/${item.remoteId}`);
+    if (credential) {
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+    }
+    xhr.send(formData);
+  };
+
   const leaveSession = () => {
     clearStoredSession(urlSessionId);
     setItems([]);
@@ -366,8 +415,19 @@ export default function PhonePage({
 
   const retryUpload = (id: string) => {
     const item = items.find((i) => i.id === id);
-    if (item) uploadSingleFile(item);
+    if (!item) return;
+    // A file that already reached the server is retried by replace, not POST.
+    if (item.remoteId) {
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", error: undefined } : i))
+      );
+      replaceEditedImage(item, item.file);
+      return;
+    }
+    uploadSingleFile(item);
   };
+
+  const editingItem = editingId ? items.find((i) => i.id === editingId) : undefined;
 
   const totalFiles = items.length;
   const completedFiles = items.filter((i) => i.state === "completed").length;
@@ -534,7 +594,12 @@ export default function PhonePage({
         {/* Upload List */}
         <div className="flex-1 space-y-2 overflow-y-auto">
           {items.map((item) => (
-            <UploadItem key={item.id} item={item} onRetry={retryUpload} />
+            <UploadItem
+              key={item.id}
+              item={item}
+              onRetry={retryUpload}
+              onEdit={isSessionClosed ? undefined : setEditingId}
+            />
           ))}
         </div>
 
@@ -558,6 +623,17 @@ export default function PhonePage({
           </div>
         )}
       </main>
+
+      {editingItem && (
+        <ImageEditor
+          file={editingItem.file}
+          onCancel={() => setEditingId(null)}
+          onSave={(file) => {
+            setEditingId(null);
+            replaceEditedImage(editingItem, file);
+          }}
+        />
+      )}
     </div>
   );
 }
