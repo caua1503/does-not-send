@@ -7,6 +7,7 @@ import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
 import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
+import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
@@ -292,6 +293,18 @@ export default function PhonePage({
 
     if (isSessionClosedRef.current) return;
 
+    // HEIC com falha de conversão não vira upload cru: sem JPEG não há pré-visualização.
+    try {
+      finalFile = await convertHeicToJpeg(finalFile);
+    } catch {
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === id ? { ...i, state: "error", error: "Não foi possível converter a imagem HEIC" } : i
+        )
+      );
+      return;
+    }
+
     // Drop reference to initialFile from React state and set finalFile
     setItems((prev) =>
       prev.map((i) =>
@@ -316,7 +329,7 @@ export default function PhonePage({
       id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
-      state: isCompressiblePhoto(file) ? "optimizing" : "pending",
+      state: isHeic(file) || isCompressiblePhoto(file) ? "optimizing" : "pending",
     }));
 
     setItems((prev) => [...prev, ...newItems]);
