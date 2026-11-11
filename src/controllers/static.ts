@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,14 @@ export async function staticRoutes(app: FastifyInstance): Promise<void> {
     prefix: "/",
   });
 
+  // Vite emits relative "./assets/" URLs (needed by the admin shell). Served
+  // from a nested route like /enviar/<id> they would resolve to
+  // /enviar/assets/... and hit the SPA fallback as HTML, leaving a blank page.
+  const spaIndex = readFileSync(resolve(distPath, "index.html"), "utf8").replace(
+    /((?:src|href)=")\.\/assets\//g,
+    "$1/assets/",
+  );
+
   // SPA fallback for frontend paths
   app.setNotFoundHandler(async (request, reply) => {
     // API and health 404s stay JSON; /admin/api never falls back to the app SPA
@@ -32,6 +40,6 @@ export async function staticRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Direct browser navigation (HTML) receives index.html
-    return reply.sendFile("index.html");
+    return reply.type("text/html").send(spaIndex);
   });
 }

@@ -89,6 +89,29 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     expect(serialized).not.toContain(pairBody.phoneCredential);
   });
 
+  it("telefone consulta GET /sessions/:id com a própria credencial", async () => {
+    // Que bug pega: rota restrita a owner/computer devolvia 401 e a tela do telefone ficava sem carregar.
+    ctx = await createTestApp();
+    const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
+    const { id, qrToken, visualId } = createRes.json<{ id: string; qrToken: string; visualId: string }>();
+
+    const pair = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${id}/pair`,
+      payload: { qrToken },
+    });
+    const { phoneCredential } = pair.json<{ phoneCredential: string }>();
+
+    const getRes = await ctx.app.inject({
+      method: "GET",
+      url: `/api/sessions/${id}`,
+      headers: { authorization: `Bearer ${phoneCredential}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.json().visualId).toBe(visualId);
+    expect(getRes.json().phonePresent).toBe(true);
+  });
+
   it("ID visual igual na resposta do computador e na do telefone para a mesma sessão", async () => {
     ctx = await createTestApp();
     const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
