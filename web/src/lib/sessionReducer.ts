@@ -13,6 +13,7 @@ export type WsEvent =
       size: number;
       bytesReceived: number;
       mimeType?: string;
+      version?: number;
     }
   | {
       type: "file:progress";
@@ -35,7 +36,15 @@ export function sessionReducer(state: SessionState, event: WsEvent): SessionStat
       return {
         files: state.files.map((f) =>
           f.id === event.fileId
-            ? { ...f, state: event.state, bytesReceived: event.bytesReceived, size: event.size }
+            ? {
+                ...f,
+                state: event.state,
+                bytesReceived: event.bytesReceived,
+                size: event.size,
+                originalName: event.originalName,
+                mimeType: event.mimeType ?? f.mimeType,
+                version: event.version ?? f.version,
+              }
             : f,
         ),
       };
@@ -48,6 +57,7 @@ export function sessionReducer(state: SessionState, event: WsEvent): SessionStat
       size: event.size,
       bytesReceived: event.bytesReceived,
       state: event.state,
+      version: event.version ?? 1,
       createdAt: new Date().toISOString(),
     };
     return { files: [...state.files, newFile] };

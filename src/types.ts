@@ -17,6 +17,7 @@ export interface SessionFile {
   createdAt: string;
   startedAt: string; // Alias para createdAt (usado em eventos)
   finishedAt?: string; // Timestamp quando completed/failed
+  version: number; // 1 no primeiro upload, +1 a cada substituição
   extension: string; // Calculado de originalName
   category: string; // Calculado de extension+mimeType
 }

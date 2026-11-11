@@ -8,6 +8,13 @@
       "when": 1793810449887,
       "tag": "0000_curly_clea",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794400000000,
+      "tag": "0001_transfer_version",
+      "breakpoints": true
     }
   ]
 }

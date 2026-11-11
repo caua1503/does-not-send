@@ -14,6 +14,7 @@
   "dependencies": {
     "@fontsource-variable/inter": "5.2.5",
     "browser-image-compression": "^2.0.2",
+    "heic2any": "0.0.4",
     "lucide-react": "0.511.0",
     "qrcode.react": "4.2.0",
     "react": "19.1.0",

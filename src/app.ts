@@ -160,7 +160,7 @@ export async function buildApp(
   // CORS
   await app.register(cors, {
     origin: config.allowedOrigins.includes("*") ? true : config.allowedOrigins,
-    methods: ["GET", "POST", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   });
 

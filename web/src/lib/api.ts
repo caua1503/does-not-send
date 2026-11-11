@@ -49,6 +49,7 @@ export interface FileEntry {
   size: number;
   bytesReceived: number;
   state: "receiving" | "completed" | "failed";
+  version: number;
   createdAt: string;
 }
 
@@ -141,13 +142,15 @@ export async function listFiles(id: string, token: string): Promise<FileEntry[]>
 }
 
 /** URL for inline preview (used in <img>, <video>, <audio>, <iframe>) */
-export function previewUrl(sessionId: string, fileId: string, token: string): string {
-  return `${BASE}/api/sessions/${sessionId}/files/${fileId}/preview?token=${encodeURIComponent(token)}`;
+export function previewUrl(sessionId: string, fileId: string, token: string, version?: number): string {
+  const v = version === undefined ? "" : `&v=${version}`;
+  return `${BASE}/api/sessions/${sessionId}/files/${fileId}/preview?token=${encodeURIComponent(token)}${v}`;
 }
 
 /** URL for individual file download */
-export function downloadUrl(sessionId: string, fileId: string, token: string): string {
-  return `${BASE}/api/sessions/${sessionId}/files/${fileId}/download?token=${encodeURIComponent(token)}`;
+export function downloadUrl(sessionId: string, fileId: string, token: string, version?: number): string {
+  const v = version === undefined ? "" : `&v=${version}`;
+  return `${BASE}/api/sessions/${sessionId}/files/${fileId}/download?token=${encodeURIComponent(token)}${v}`;
 }
 
 /** URL for ZIP download of all completed files */
