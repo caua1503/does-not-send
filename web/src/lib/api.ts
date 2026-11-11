@@ -88,6 +88,33 @@ export async function pairSession(id: string, qrToken: string): Promise<PairResp
   return res.json() as Promise<PairResponse>;
 }
 
+export interface JoinResponse {
+  success: boolean;
+  phoneCredential: string;
+}
+
+/** Thrown by joinWithCode; `status` alone decides the user-facing message. */
+export class JoinError extends Error {
+  status: number;
+
+  constructor(status: number) {
+    super(`Join failed: ${status}`);
+    this.name = "JoinError";
+    this.status = status;
+  }
+}
+
+/** POST /api/sessions/join — manual login, same credential the QR delivers. */
+export async function joinWithCode(sessionId: string, code: string): Promise<JoinResponse> {
+  const res = await apiFetch("/api/sessions/join", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, code }),
+  });
+  if (!res.ok) throw new JoinError(res.status);
+  return res.json() as Promise<JoinResponse>;
+}
+
 export interface SessionInfo {
   id: string;
   visualId?: string;
