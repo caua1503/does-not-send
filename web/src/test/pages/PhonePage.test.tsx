@@ -10,6 +10,12 @@ vi.mock("browser-image-compression", () => {
   };
 });
 
+const heic2any = vi.fn();
+
+vi.mock("heic2any", () => {
+  return { default: heic2any };
+});
+
 describe("PhonePage", () => {
   const fetchMock = vi.fn();
 
@@ -269,12 +275,18 @@ describe("PhonePage", () => {
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
+    const compressedPhoto = new File(
+      [new Uint8Array(900 * 1024)],
+      "foto-pesada.jpg",
+      { type: "image/jpeg" }
+    );
     let resolveCompression: (file: File) => void = () => {};
     vi.mocked(imageCompression).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveCompression = resolve;
         })
+        .then(() => compressedPhoto)
     );
 
     render(<PhonePage />);
@@ -296,12 +308,7 @@ describe("PhonePage", () => {
     expect(input).not.toBeDisabled();
     expect(xhrInstances.length).toBe(0);
 
-    // Resolve a compressão para um arquivo menor
-    const compressedPhoto = new File(
-      [new Uint8Array(900 * 1024)],
-      "foto-pesada.jpg",
-      { type: "image/jpeg" }
-    );
+    // Resolve a compressão com o arquivo menor
     await act(async () => {
       resolveCompression(compressedPhoto);
     });
@@ -318,6 +325,53 @@ describe("PhonePage", () => {
       "/api/sessions/session-test-id/files"
     );
     expect(xhr.send).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("falha só no item HEIC quando a conversão falha, sem travar os demais", async () => {
+    localStorage.setItem(
+      "dns_phone_cred_session-test-id",
+      JSON.stringify({
+        phoneCredential: "secret-phone-credential-xyz",
+        visualId: "B2K9",
+      })
+    );
+
+    const xhrInstances: any[] = [];
+    class MockXHR {
+      open = vi.fn();
+      setRequestHeader = vi.fn();
+      send = vi.fn();
+      upload = { onprogress: null };
+      status = 201;
+      onload: any = null;
+      onerror: any = null;
+
+      constructor() {
+        xhrInstances.push(this);
+      }
+    }
+
+    vi.stubGlobal("XMLHttpRequest", MockXHR);
+    heic2any.mockReset();
+    heic2any.mockRejectedValue(new Error("libheif error"));
+
+    render(<PhonePage />);
+
+    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const heic = new File(["heic-content"], "IMG_0001.HEIC", { type: "image/heic" });
+    const pdf = new File(["pdf-content"], "doc.pdf", { type: "application/pdf" });
+
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [heic, pdf] } });
+    });
+
+    expect(await screen.findByText("Não foi possível converter a imagem HEIC")).toBeInTheDocument();
+    expect(heic2any).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Otimizando...")).not.toBeInTheDocument();
+    // PDF segue direto para o upload
+    expect(xhrInstances.length).toBe(1);
 
     vi.unstubAllGlobals();
   });
