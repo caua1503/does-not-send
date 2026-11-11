@@ -88,7 +88,8 @@ export class SessionService {
 
   /**
    * Manual login: session id + numeric code in place of reading the QR Code.
-   * Any failure is reported as one opaque false, never why.
+   * Any failure is reported as one opaque false, never why. Wrong codes feed
+   * the per-session counter; hitting it rotates the code for the computer.
    */
   joinByCode(rawSessionId: string, code: string): string | null {
     const session = this.store.getByNormalizedId(rawSessionId);
@@ -98,8 +99,15 @@ export class SessionService {
       !/^\d{6}$/.test(code) ||
       !this.store.loginCodes.consume(session.id, code)
     ) {
+      if (session && session.state !== "CLOSED") {
+        this.store.loginGuard.recordSessionFailure(session.id, (id) =>
+          this.store.loginCodes.issue(id),
+        );
+      }
       return null;
     }
+
+    this.store.loginGuard.recordSessionSuccess(session.id);
 
     const phoneCredential = generateSecret();
     session.phoneCredentialHash = hashToken(phoneCredential);

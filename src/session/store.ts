@@ -8,6 +8,7 @@ import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
 import { LoginCodeManager, normalizeSessionId, type LoginCodeMessage } from "./login-code.js";
+import { LoginGuard } from "./login-guard.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 
@@ -66,6 +67,7 @@ export class SessionStore {
   private activeUploadControllers = new Map<string, Set<AbortController>>();
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
   readonly loginCodes: LoginCodeManager;
+  readonly loginGuard: LoginGuard;
 
   constructor(options: SessionStoreOptions) {
     this.clock = options.clock ?? new SystemClock();
@@ -73,6 +75,7 @@ export class SessionStore {
       clock: this.clock,
       notify: (message) => this.sendToComputer(message),
     });
+    this.loginGuard = new LoginGuard({ clock: this.clock });
     this.tempDir = options.tempDir;
     this.timingConfig = {
       ...DEFAULT_TIMING_CONFIG,
@@ -475,7 +478,9 @@ export class SessionStore {
     }
 
     // 3. Keep exactly one fresh login code per live session
-    this.loginCodes.tick(this.getAllActive());
+    const active = this.getAllActive();
+    this.loginCodes.tick(active);
+    this.loginGuard.sweep(new Set(active.map((session) => session.id)));
   }
 
   startSweeper(intervalMs = 1000): void {
