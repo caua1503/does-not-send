@@ -9,6 +9,7 @@ import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
+import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 
@@ -83,6 +84,7 @@ export default function PhonePage({
   });
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pairingInProgressRef = useRef<boolean>(false);
 
@@ -355,6 +357,40 @@ export default function PhonePage({
     });
   };
 
+  // PUT replaces the file content keeping the same remote id: no new item.
+  const replaceEditedImage = (item: PhoneUploadItem, file: File) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append("files", file, file.name);
+    const fail = (error: string) =>
+      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, error } : i)));
+
+    xhr.onload = () => {
+      if (xhr.status !== 200) {
+        fail(xhr.status === 410 ? "Sessão encerrada" : xhr.status === 404 ? "Arquivo não encontrado" : `Erro ${xhr.status}`);
+        return;
+      }
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                file,
+                edited: true,
+                error: undefined,
+              }
+            : i
+        )
+      );
+    };
+    xhr.onerror = () => fail("Sem conexão com o servidor");
+    xhr.open("PUT", `${BASE_URL}/api/sessions/${urlSessionId}/files/${item.remoteId}`);
+    if (credential) {
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+    }
+    xhr.send(formData);
+  };
+
   const leaveSession = () => {
     clearStoredSession(urlSessionId);
     setItems([]);
@@ -368,6 +404,8 @@ export default function PhonePage({
     const item = items.find((i) => i.id === id);
     if (item) uploadSingleFile(item);
   };
+
+  const editingItem = editingId ? items.find((i) => i.id === editingId) : undefined;
 
   const totalFiles = items.length;
   const completedFiles = items.filter((i) => i.state === "completed").length;
@@ -534,7 +572,12 @@ export default function PhonePage({
         {/* Upload List */}
         <div className="flex-1 space-y-2 overflow-y-auto">
           {items.map((item) => (
-            <UploadItem key={item.id} item={item} onRetry={retryUpload} />
+            <UploadItem
+              key={item.id}
+              item={item}
+              onRetry={retryUpload}
+              onEdit={isSessionClosed ? undefined : setEditingId}
+            />
           ))}
         </div>
 
@@ -558,6 +601,17 @@ export default function PhonePage({
           </div>
         )}
       </main>
+
+      {editingItem && (
+        <ImageEditor
+          file={editingItem.file}
+          onCancel={() => setEditingId(null)}
+          onSave={(file) => {
+            setEditingId(null);
+            replaceEditedImage(editingItem, file);
+          }}
+        />
+      )}
     </div>
   );
 }
