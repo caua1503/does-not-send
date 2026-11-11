@@ -55,6 +55,24 @@ function readStoredSession(id: string): { phoneCredential: string | null; visual
   }
 }
 
+/** Session ids whose credential was entered by code, restored on open. */
+const JOINED_KEY = "dns_joined_session";
+
+function rememberJoinedSession(id: string): void {
+  try {
+    localStorage.setItem(JOINED_KEY, id);
+  } catch {}
+}
+
+function readJoinedSession(): string | null {
+  try {
+    const id = localStorage.getItem(JOINED_KEY);
+    return id && readStoredSession(id).phoneCredential ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function clearStoredSession(id: string): void {
   if (!id) return;
   try {
@@ -74,8 +92,12 @@ export default function PhonePage({
   const qrToken = propQrToken || searchParams.get("qrToken") || "";
   const legacyToken = propToken || searchParams.get("token") || "";
 
-  const storageKey = urlSessionId ? `dns_phone_cred_${urlSessionId}` : "";
-  const initialStored = readStoredSession(urlSessionId);
+  // A session entered by code (no URL) resumes from the same stored credential
+  const restoredJoinedId = !urlSessionId ? readJoinedSession() : null;
+  const storedSessionId = urlSessionId || restoredJoinedId || "";
+
+  const storageKey = storedSessionId ? `dns_phone_cred_${storedSessionId}` : "";
+  const initialStored = readStoredSession(storedSessionId);
 
   const [credential, setCredential] = useState<string | null>(
     initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
@@ -85,7 +107,9 @@ export default function PhonePage({
     return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
   });
   const [sessionError, setSessionError] = useState<string | null>(() => {
-    if (!urlSessionId) return SCAN_AGAIN_MESSAGE;
+    if (!urlSessionId) {
+      return initialStored.phoneCredential ? null : SCAN_AGAIN_MESSAGE;
+    }
     if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
       return SCAN_AGAIN_MESSAGE;
     }
@@ -95,7 +119,7 @@ export default function PhonePage({
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Session entered by id + code instead of the QR; wins over the URL lookup
-  const [joinedSessionId, setJoinedSessionId] = useState<string | null>(null);
+  const [joinedSessionId, setJoinedSessionId] = useState<string | null>(restoredJoinedId);
   const [joining, setJoining] = useState(false);
   const sessionId = joinedSessionId ?? urlSessionId;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -424,6 +448,10 @@ export default function PhonePage({
     setRemoteSession(null);
     setCredential(null);
     if (joinedSessionId) {
+      clearStoredSession(joinedSessionId);
+      try {
+        localStorage.removeItem(JOINED_KEY);
+      } catch {}
       setJoinedSessionId(null);
     } else if (!qrToken) {
       setSessionError(SCAN_AGAIN_MESSAGE);
@@ -434,9 +462,17 @@ export default function PhonePage({
   const joinWithManualCode = async (rawId: string, rawCode: string) => {
     try {
       const data = await joinWithCode(rawId, rawCode);
+      const id = normalizeSessionId(rawId);
+      try {
+        localStorage.setItem(
+          `dns_phone_cred_${id}`,
+          JSON.stringify({ phoneCredential: data.phoneCredential }),
+        );
+        rememberJoinedSession(id);
+      } catch {}
       setCredential(data.phoneCredential);
       setSessionError(null);
-      setJoinedSessionId(normalizeSessionId(rawId));
+      setJoinedSessionId(id);
       return null;
     } catch (err) {
       if (err instanceof JoinError && err.status === 429) {
