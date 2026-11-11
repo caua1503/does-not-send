@@ -36,8 +36,8 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const category = fileCategory(file.mimeType, file.originalName);
   const Icon = categoryIcon[category];
-  const preview = previewUrl(sessionId, file.id, ownerToken);
-  const download = downloadUrl(sessionId, file.id, ownerToken);
+  const preview = previewUrl(sessionId, file.id, ownerToken, file.version);
+  const download = downloadUrl(sessionId, file.id, ownerToken, file.version);
   const canPreview =
     file.state === "completed" &&
     (category === "image" ||

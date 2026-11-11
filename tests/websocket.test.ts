@@ -3,6 +3,7 @@ import {
   createTestApp,
   cleanupTestApp,
   createSession,
+  createMultipartPayload,
   uploadFile,
   type TestContext,
 } from "./helpers.js";
@@ -46,6 +47,24 @@ function collectMessages(ws: WebSocket, count: number, timeout = 5000): Promise<
         resolve(msgs);
       }
     });
+  });
+}
+
+function waitForEvent(
+  ws: WebSocket,
+  predicate: (msg: Record<string, unknown>) => boolean,
+  timeout = 5000,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout waiting for event")), timeout);
+    const onMsg = (data: Buffer) => {
+      const parsed = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (parsed.type === "auth_ok" || !predicate(parsed)) return;
+      clearTimeout(t);
+      ws.off("message", onMsg);
+      resolve(parsed);
+    };
+    ws.on("message", onMsg);
   });
 }
 
@@ -149,7 +168,44 @@ describe("websocket", () => {
     // receiving → (at least one progress) → completed
     expect(msgs[0]).toMatchObject({ type: "file:state-changed", state: "receiving" });
     const last = msgs[msgs.length - 1] as { type: string; state?: string };
-    expect(last).toMatchObject({ type: "file:state-changed", state: "completed" });
+    expect(last).toMatchObject({ type: "file:state-changed", state: "completed", version: 1 });
+
+    ws.close();
+    await waitForClose(ws);
+  });
+
+  it("notifies the computer when a file is replaced (same fileId, new version)", async () => {
+    const session = await createSession(ctx.app);
+    const file = await uploadFile(ctx.app, session, "v1", "photo.jpg");
+    const ws = await wsConnectAndAuth(baseUrl, session.id, "computer", session.ownerToken);
+
+    const { body, contentType } = createMultipartPayload([
+      { name: "file", content: Buffer.from("v2-content"), filename: "photo.jpg" },
+    ]);
+    const put = await ctx.app.inject({
+      method: "PUT",
+      url: `/api/sessions/${session.id}/files/${file.id}`,
+      headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
+      body,
+    });
+    expect(put.statusCode).toBe(200);
+
+    const completed = (await waitForEvent(
+      ws,
+      (m) => m.type === "file:state-changed" && m.state === "completed",
+    )) as Record<string, unknown>;
+
+    expect(completed).toMatchObject({
+      type: "file:state-changed",
+      fileId: file.id,
+      state: "completed",
+      originalName: "photo.jpg",
+      size: "v2-content".length,
+      version: 2,
+      mimeType: "application/octet-stream",
+      extension: "jpg",
+      category: "images",
+    });
 
     ws.close();
     await waitForClose(ws);

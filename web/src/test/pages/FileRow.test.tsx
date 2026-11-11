@@ -11,6 +11,7 @@ function makeFile(overrides: Partial<FileEntry> = {}): FileEntry {
     size: 1024,
     bytesReceived: 1024,
     state: "completed",
+    version: 1,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };

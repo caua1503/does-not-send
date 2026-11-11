@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, bigint, pgEnum, index, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, bigint, integer, pgEnum, index, customType } from "drizzle-orm/pg-core";
 
 // drizzle/bun-sql decodes timestamptz as "2026-01-05 13:05:00.000+00",
 // not ISO: anything parsing the value as ISO (the admin panel) would drop it.
@@ -63,6 +63,7 @@ export const transfers = pgTable(
     category: categoryEnum("category").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
     status: transferStatusEnum("status").notNull(),
+    version: integer("version").notNull().default(1),
     startedAt: timestamp("started_at")
       .notNull()
       .default(sql`now()`),

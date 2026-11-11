@@ -233,8 +233,17 @@ export default function PhonePage({
 
     xhr.onload = () => {
       if (xhr.status === 201) {
+        let remoteId: string | undefined;
+        try {
+          const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
+          remoteId = body.files?.[0]?.id;
+        } catch {
+          // resposta sem corpo válido: upload concluído, sem id remoto
+        }
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "completed", progress: 1 } : i))
+          prev.map((i) =>
+            i.id === item.id ? { ...i, state: "completed", progress: 1, remoteId } : i
+          )
         );
       } else if (xhr.status === 401) {
         setItems((prev) =>

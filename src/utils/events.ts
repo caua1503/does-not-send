@@ -10,6 +10,11 @@ export interface FileStateChangedEvent {
   originalName: string;
   size: number;
   bytesReceived: number;
+  version: number;
+  mimeType: string;
+  finishedAt?: string;
+  extension: string;
+  category: string;
 }
 
 export interface FileProgressEvent {
