@@ -8,6 +8,7 @@ export interface PhoneUploadItem {
   progress: number; // 0 - 1
   state: "pending" | "optimizing" | "uploading" | "completed" | "error";
   error?: string;
+  remoteId?: string;
 }
 
 interface UploadItemProps {

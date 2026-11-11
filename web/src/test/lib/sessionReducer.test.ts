@@ -57,6 +57,40 @@ describe("sessionReducer", () => {
     expect(s1.files).toHaveLength(1);
   });
 
+  it("atualiza item existente com metadados e version na substituição", () => {
+    const s0 = sessionReducer(empty, {
+      type: "file:state-changed",
+      fileId: "f1",
+      state: "completed",
+      originalName: "notes.txt",
+      size: 10,
+      bytesReceived: 10,
+      mimeType: "text/plain",
+      version: 1,
+    });
+    expect(s0.files[0]!.version).toBe(1);
+
+    const s1 = sessionReducer(s0, {
+      type: "file:state-changed",
+      fileId: "f1",
+      state: "completed",
+      originalName: "notes.jpg",
+      size: 42,
+      bytesReceived: 42,
+      mimeType: "image/jpeg",
+      version: 2,
+    });
+    expect(s1.files).toHaveLength(1);
+    expect(s1.files[0]).toMatchObject({
+      id: "f1",
+      originalName: "notes.jpg",
+      mimeType: "image/jpeg",
+      size: 42,
+      bytesReceived: 42,
+      version: 2,
+    });
+  });
+
   it("não duplica arquivo existente", () => {
     const ev = {
       type: "file:state-changed" as const,

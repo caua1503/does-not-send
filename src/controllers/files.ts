@@ -120,6 +120,84 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     }
   });
 
+  // Replace file content, keeping the same fileId (phone only)
+  app.put<{ Params: { id: string; fileId: string } }>(
+    "/sessions/:id/files/:fileId",
+    async (request, reply) => {
+      const auth = await authorize(request, reply, ctx, request.params.id, ["phone"]);
+      if (!auth) return;
+
+      const session = ctx.sessionStore.getById(auth.sessionId)!;
+      if (session.state !== "PAIRED" && session.state !== "TRANSFERRING") {
+        return reply.status(409).send({
+          error: `Invalid session state for upload: ${session.state}`,
+          code: "INVALID_STATE",
+          statusCode: 409,
+        });
+      }
+
+      startUpload(session);
+      ctx.sessionService.touchActivity(session.id);
+
+      const abortController = new AbortController();
+      const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
+        session.id,
+        abortController,
+      );
+
+      try {
+        for await (const part of request.parts()) {
+          if (part.type !== "file") continue;
+
+          try {
+            const result = await ctx.fileService.replaceFile(
+              session.id,
+              request.params.fileId,
+              part.filename,
+              part.mimetype,
+              part.file,
+              abortController.signal,
+            );
+
+            return reply.status(200).send({
+              file: {
+                id: result.file.id,
+                originalName: result.file.originalName,
+                mimeType: result.file.mimeType,
+                size: result.file.size,
+                bytesReceived: result.file.bytesReceived,
+                state: result.file.state,
+                version: result.file.version,
+                finishedAt: result.file.finishedAt,
+              },
+            });
+          } catch (err) {
+            const error = err as Error & { statusCode?: number };
+            if (error.statusCode === 413 || error.statusCode === 404) {
+              return reply.status(error.statusCode).send({
+                error: error.message,
+                statusCode: error.statusCode,
+              });
+            }
+            if (error.statusCode === 410) {
+              return reply.status(410).send({
+                error: "Session closed during upload",
+                statusCode: 410,
+              });
+            }
+            throw err;
+          }
+        }
+
+        return reply.status(400).send({ error: "Missing file", statusCode: 400 });
+      } finally {
+        unregisterUpload();
+        endUpload(session);
+        ctx.sessionStore.update(session);
+      }
+    },
+  );
+
   // List files (owner only)
   app.get<{ Params: { id: string } }>("/sessions/:id/files", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
@@ -134,6 +212,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
         size: f.size,
         bytesReceived: f.bytesReceived,
         state: f.state,
+        version: f.version,
         createdAt: f.createdAt,
       })),
     };

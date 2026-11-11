@@ -1,5 +1,5 @@
 import type { BunSQLDatabase } from "drizzle-orm/bun-sql";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, or, sql } from "drizzle-orm";
 import * as schema from "../db/schema.js";
 import type { Store, Logger } from "./store.js";
 import { ConstraintViolationError } from "./store.js";
@@ -101,10 +101,20 @@ export class SqlStore implements Store {
           .set({
             status: event.status,
             size: event.size,
+            version: sql`${schema.transfers.version} + 1`,
             finishedAt: event.at.toISOString(),
           })
           .where(
-            and(eq(schema.transfers.id, event.id), eq(schema.transfers.status, "receiving")),
+            and(
+              eq(schema.transfers.id, event.id),
+              or(
+                eq(schema.transfers.status, "receiving"),
+                and(
+                  eq(schema.transfers.status, "completed"),
+                  sql`${event.status} = 'completed'`,
+                ),
+              ),
+            ),
           );
         break;
 
