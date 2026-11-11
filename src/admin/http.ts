@@ -14,9 +14,18 @@ function normalizeOrigin(value: string): string | null {
   }
 }
 
-function hostMatches(request: FastifyRequest, host: string): boolean {
-  const normalize = (h: string): string => h.trim().toLowerCase().replace(/:\d+$/, "");
-  return normalize(host) === normalize(request.headers.host ?? "");
+function hostMatches(request: FastifyRequest, origin: string): boolean {
+  // `origin` carries a scheme (http://host:port); the Host header does not.
+  const hostname = (value: string): string | null => {
+    try {
+      return new URL(value.includes("://") ? value : `http://${value}`).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  };
+  const originHost = hostname(origin);
+  const requestHost = hostname(request.headers.host ?? "");
+  return originHost !== null && originHost === requestHost;
 }
 
 /**
