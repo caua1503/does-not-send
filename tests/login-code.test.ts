@@ -211,7 +211,7 @@ describe("POST /api/sessions/join", () => {
     const session = await createSession(ctx.app, false);
     const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
 
-    const res = await join(session.id, code);
+    const res = await join(session.visualId!, code);
     expect(res.statusCode).toBe(200);
 
     const { phoneCredential } = JSON.parse(res.body) as { phoneCredential: string };
@@ -229,7 +229,7 @@ describe("POST /api/sessions/join", () => {
     const session = await createSession(ctx.app, false);
     const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
 
-    const res = await join(` ${session.id.toUpperCase()} `, code);
+    const res = await join(` ${session.visualId!.toLowerCase()} `, code);
     expect(res.statusCode).toBe(200);
     // The canonical id comes back: routes and WS never normalize
     expect(JSON.parse(res.body).sessionId).toBe(session.id);
@@ -270,24 +270,24 @@ describe("POST /api/sessions/join", () => {
       expect(res.statusCode).toBe(401);
     }
     // Budget untouched: a real wrong guess is still a plain 401, not a 429
-    expect((await join("00000000-0000-4000-8000-000000000000", "000000")).statusCode).toBe(401);
+    expect((await join("ZZZZZZ", "000000")).statusCode).toBe(401);
   });
 
   it("falhas retornam a mesma resposta genérica", async () => {
     const session = await createSession(ctx.app, false);
     const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
 
-    const wrong = await join(session.id, code === "000000" ? "111111" : "000000");
-    const missing = await join("00000000-0000-4000-8000-000000000000", code);
+    const wrong = await join(session.visualId!, code === "000000" ? "111111" : "000000");
+    const missing = await join("ZZZZZZ", code);
 
     clock.advance(LOGIN_CODE_TTL_MS + 1);
     await store().tick();
-    const expired = await join(session.id, code);
+    const expired = await join(session.visualId!, code);
 
     const other = await createSession(ctx.app, false);
     const otherCode = await nextLoginCode(await openComputer(other.id, other.computerToken!));
-    expect((await join(other.id, otherCode)).statusCode).toBe(200);
-    const reused = await join(other.id, otherCode);
+    expect((await join(other.visualId!, otherCode)).statusCode).toBe(200);
+    const reused = await join(other.visualId!, otherCode);
 
     expect(wrong.statusCode).toBe(401);
     for (const result of [wrong, missing, expired, reused]) {
@@ -307,8 +307,8 @@ describe("POST /api/sessions/join", () => {
     const newCode = await nextLoginCode(ws);
     expect(newCode).not.toBe(oldCode);
 
-    expect((await join(session.id, oldCode)).statusCode).toBe(401);
-    expect((await join(session.id, newCode)).statusCode).toBe(200);
+    expect((await join(session.visualId!, oldCode)).statusCode).toBe(401);
+    expect((await join(session.visualId!, newCode)).statusCode).toBe(200);
   });
 
   it("após entrada bem-sucedida há um novo código e o antigo não vale", async () => {
@@ -316,13 +316,13 @@ describe("POST /api/sessions/join", () => {
     const ws = await openComputer(session.id, session.computerToken!);
     const code = await nextLoginCode(ws);
 
-    expect((await join(session.id, code)).statusCode).toBe(200);
+    expect((await join(session.visualId!, code)).statusCode).toBe(200);
 
     const nextCode = await nextLoginCode(ws);
     expect(nextCode).not.toBe(code);
 
-    expect((await join(session.id, code)).statusCode).toBe(401);
-    expect((await join(session.id, nextCode)).statusCode).toBe(200);
+    expect((await join(session.visualId!, code)).statusCode).toBe(401);
+    expect((await join(session.visualId!, nextCode)).statusCode).toBe(200);
   });
 });
 
@@ -400,14 +400,14 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
 
     const results = [];
     for (let i = 0; i < SESSION_FAILURE_LIMIT; i++) {
-      results.push(await join(session.id, wrong, `10.0.0.${i}`));
+      results.push(await join(session.visualId!, wrong, `10.0.0.${i}`));
     }
     expect(results.every((r) => r.statusCode === 401)).toBe(true);
 
     const fresh = await nextLoginCode(ws);
     expect(fresh).not.toBe(code);
-    expect((await join(session.id, code, "10.0.1.1")).statusCode).toBe(401);
-    expect((await join(session.id, fresh, "10.0.1.2")).statusCode).toBe(200);
+    expect((await join(session.visualId!, code, "10.0.1.1")).statusCode).toBe(401);
+    expect((await join(session.visualId!, fresh, "10.0.1.2")).statusCode).toBe(200);
     expect((await store().loginGuard.ipFailures("10.0.0.0"))).toBe(1);
   });
 
@@ -418,12 +418,12 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
     const wrong = code === "000000" ? "111111" : "000000";
 
     for (let i = 0; i < SESSION_FAILURE_LIMIT - 1; i++) {
-      await join(session.id, wrong, `10.0.2.${i}`);
+      await join(session.visualId!, wrong, `10.0.2.${i}`);
     }
-    expect((await join(session.id, code, "10.0.3.1")).statusCode).toBe(200);
+    expect((await join(session.visualId!, code, "10.0.3.1")).statusCode).toBe(200);
 
     for (let i = 0; i < SESSION_FAILURE_LIMIT - 1; i++) {
-      expect((await join(session.id, wrong, `10.0.4.${i}`)).statusCode).toBe(401);
+      expect((await join(session.visualId!, wrong, `10.0.4.${i}`)).statusCode).toBe(401);
     }
   });
 
@@ -434,10 +434,10 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
     const wrong = "000000";
 
     for (let i = 0; i < IP_FAILURE_LIMIT; i++) {
-      expect((await join(session.id, wrong, "10.1.0.1")).statusCode).toBe(401);
+      expect((await join(session.visualId!, wrong, "10.1.0.1")).statusCode).toBe(401);
     }
 
-    const known = await join(session.id, wrong, "10.1.0.1");
+    const known = await join(session.visualId!, wrong, "10.1.0.1");
     const unknown = await join("nope", wrong, "10.1.0.1");
     expect(known.statusCode).toBe(429);
     expect(unknown.statusCode).toBe(429);
@@ -445,7 +445,7 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
     expect(known.headers["retry-after"]).toBe("60");
 
     // Outro IP continua livre
-    expect((await join(session.id, wrong, "10.1.0.2")).statusCode).toBe(401);
+    expect((await join(session.visualId!, wrong, "10.1.0.2")).statusCode).toBe(401);
   });
 
   it("ignora X-Forwarded-For sem proxy confiável configurado", async () => {
@@ -454,10 +454,10 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
     delete process.env.TRUST_PROXY;
     try {
       for (let i = 0; i < IP_FAILURE_LIMIT; i++) {
-        await join(session.id, "000000", "10.2.0.1");
+        await join(session.visualId!, "000000", "10.2.0.1");
       }
       // Mesmo IP de conexão com cabeçalho forjado: continua bloqueado
-      expect((await join(session.id, "000000", "10.2.0.1")).statusCode).toBe(429);
+      expect((await join(session.visualId!, "000000", "10.2.0.1")).statusCode).toBe(429);
     } finally {
       if (original !== undefined) process.env.TRUST_PROXY = original;
     }

@@ -112,11 +112,11 @@ export class SessionStore {
     return this.getByShortId(visualId);
   }
 
-  /** Lookup by full id ignoring case, spaces and hyphens (manual login). */
-  getByNormalizedId(id: string): Session | undefined {
+  /** Lookup by visual id ignoring case, spaces and hyphens (manual login). */
+  getByNormalizedVisualId(id: string): Session | undefined {
     const target = normalizeSessionId(id);
     for (const session of this.sessions.values()) {
-      if (normalizeSessionId(session.id) === target) return session;
+      if (normalizeSessionId(session.visualId) === target) return session;
     }
     return undefined;
   }

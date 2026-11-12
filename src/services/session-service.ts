@@ -92,7 +92,7 @@ export class SessionService {
    * the per-session counter; hitting it rotates the code for the computer.
    */
   joinByCode(rawSessionId: string, code: string): { sessionId: string; phoneCredential: string } | null {
-    const session = this.store.getByNormalizedId(rawSessionId);
+    const session = this.store.getByNormalizedVisualId(rawSessionId);
     if (
       !session ||
       session.state === "CLOSED" ||
