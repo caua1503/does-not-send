@@ -202,6 +202,47 @@ export async function sessionRoutes(
     });
   });
 
+  // Join by session id + numeric code (devices that cannot read the QR Code).
+  // Every failure answers exactly the same, so the reason never leaks.
+  app.post<{ Body: { sessionId?: unknown; code?: unknown } }>(
+    "/sessions/join",
+    async (request, reply) => {
+      const { sessionId, code } = request.body ?? {};
+      // A malformed body is never a code guess: it must not burn the IP budget
+      if (typeof sessionId !== "string" || typeof code !== "string") {
+        return reply.status(401).send({
+          error: "Invalid session or code",
+          statusCode: 401,
+        });
+      }
+
+      // Already throttled: no lookup, and the body is the same whatever the id
+      const retryAfterMs = ctx.sessionStore.loginGuard.ipRetryAfterMs(request.ip);
+      if (retryAfterMs > 0) {
+        return reply
+          .status(429)
+          .header("Retry-After", String(Math.ceil(retryAfterMs / 1000)))
+          .send({ error: "Too many attempts", statusCode: 429 });
+      }
+
+      const joined = ctx.sessionService.joinByCode(sessionId, code);
+
+      if (!joined) {
+        ctx.sessionStore.loginGuard.recordIpFailure(request.ip);
+        return reply.status(401).send({
+          error: "Invalid session or code",
+          statusCode: 401,
+        });
+      }
+
+      return reply.status(200).send({
+        success: true,
+        sessionId: joined.sessionId,
+        phoneCredential: joined.phoneCredential,
+      });
+    },
+  );
+
   // Get session info (owner/computer/phone)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);

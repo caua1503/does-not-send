@@ -6,6 +6,7 @@ import { generateSecret } from "../session/auth.js";
 import { generateVisualId } from "../session/visual-id.js";
 import { hashToken, consumePairing, type PairingResult } from "../session/pairing.js";
 import { PairingError } from "../session/errors.js";
+import { transition } from "../session/states.js";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock } from "../session/clock.js";
@@ -83,6 +84,47 @@ export class SessionService {
       this.touchActivity(id);
     }
     return result;
+  }
+
+  /**
+   * Manual login: session id + numeric code in place of reading the QR Code.
+   * Any failure is reported as one opaque false, never why. Wrong codes feed
+   * the per-session counter; hitting it rotates the code for the computer.
+   */
+  joinByCode(rawSessionId: string, code: string): { sessionId: string; phoneCredential: string } | null {
+    const session = this.store.getByNormalizedVisualId(rawSessionId);
+    if (
+      !session ||
+      session.state === "CLOSED" ||
+      !/^\d{6}$/.test(code) ||
+      !this.store.loginCodes.consume(session.id, code)
+    ) {
+      if (session && session.state !== "CLOSED") {
+        this.store.loginGuard.recordSessionFailure(session.id, (id) =>
+          this.store.loginCodes.issue(id),
+        );
+      }
+      return null;
+    }
+
+    this.store.loginGuard.recordSessionSuccess(session.id);
+
+    const phoneCredential = generateSecret();
+    session.phoneCredentialHash = hashToken(phoneCredential);
+    session.pairedAt = new Date(this.clock.now()).toISOString();
+    if (session.state === "WAITING") {
+      transition(session, "PAIRED");
+    }
+    if (!session.lastSeen) {
+      session.lastSeen = { computer: null, phone: null };
+    }
+    session.lastSeen.phone = this.clock.now();
+    this.store.update(session);
+    this.touchActivity(session.id);
+
+    // Discard the used code and hand the computer the next one right away
+    this.store.loginCodes.issue(session.id);
+    return { sessionId: session.id, phoneCredential };
   }
 
   getById(id: string): Session | undefined {

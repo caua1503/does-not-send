@@ -5,6 +5,8 @@ import { Card } from "../../components/ui/Card.tsx";
 import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
+import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
+import { formatCodeGroups } from "../../lib/loginCode.ts";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import { getSession, type SessionInfo } from "../../lib/api.ts";
 import { FileList } from "./FileList.tsx";
@@ -47,6 +49,8 @@ export function SessionCard({
   useHeartbeat(session.id, session.ownerToken);
 
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
+  const { code: loginCode, deadline } = useLoginCode(session.id, session.ownerToken);
+  const countdown = useCountdownSeconds(deadline);
 
   useEffect(() => {
     let active = true;
@@ -150,6 +154,7 @@ export function SessionCard({
                 ID: {visualId}
               </span>
             )}
+            <ManualLoginCode code={loginCode} seconds={countdown} />
           </div>
 
           {/* Session info */}
@@ -252,5 +257,32 @@ export function SessionCard({
         document.body,
       )}
     </>
+  );
+}
+
+/** Rotating numeric code, for devices that cannot read the QR. */
+function ManualLoginCode({
+  code,
+  seconds,
+}: {
+  code: string | null;
+  seconds: number;
+}) {
+  return (
+    <div
+      data-testid="manual-login-code"
+      className="mt-1 w-full flex flex-col items-center gap-0.5 text-center"
+    >
+      <span className="text-[10px] text-[var(--color-text-muted)]">Código</span>
+      <span
+        data-testid="manual-login-code-value"
+        className="font-mono font-bold text-sm tracking-widest tabular text-[var(--color-accent)]"
+      >
+        {code ? formatCodeGroups(code) : "··· ···"}
+      </span>
+      <span className="text-[10px] tabular text-[var(--color-text-muted)]">
+        {code ? `troca em ${seconds}s` : "aguardando…"}
+      </span>
+    </div>
   );
 }

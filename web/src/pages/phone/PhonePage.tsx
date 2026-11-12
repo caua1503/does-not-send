@@ -1,17 +1,25 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
+import { Upload, Smartphone, AlertCircle, Plus, KeyRound } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
-import { pairSession, getSession, type SessionInfo } from "../../lib/api.ts";
+import {
+  pairSession,
+  getSession,
+  joinWithCode,
+  JoinError,
+  type SessionInfo,
+} from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
 import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
+import { JoinSessionForm } from "./JoinSessionForm.tsx";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
+const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
 
 interface PhonePageProps {
   sessionId?: string;
@@ -46,6 +54,24 @@ function readStoredSession(id: string): { phoneCredential: string | null; visual
   }
 }
 
+/** Session ids whose credential was entered by code, restored on open. */
+const JOINED_KEY = "dns_joined_session";
+
+function rememberJoinedSession(id: string): void {
+  try {
+    localStorage.setItem(JOINED_KEY, id);
+  } catch {}
+}
+
+function readJoinedSession(): string | null {
+  try {
+    const id = localStorage.getItem(JOINED_KEY);
+    return id && readStoredSession(id).phoneCredential ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function clearStoredSession(id: string): void {
   if (!id) return;
   try {
@@ -65,8 +91,12 @@ export default function PhonePage({
   const qrToken = propQrToken || searchParams.get("qrToken") || "";
   const legacyToken = propToken || searchParams.get("token") || "";
 
-  const storageKey = urlSessionId ? `dns_phone_cred_${urlSessionId}` : "";
-  const initialStored = readStoredSession(urlSessionId);
+  // A session entered by code (no URL) resumes from the same stored credential
+  const restoredJoinedId = !urlSessionId ? readJoinedSession() : null;
+  const storedSessionId = urlSessionId || restoredJoinedId || "";
+
+  const storageKey = storedSessionId ? `dns_phone_cred_${storedSessionId}` : "";
+  const initialStored = readStoredSession(storedSessionId);
 
   const [credential, setCredential] = useState<string | null>(
     initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
@@ -76,7 +106,9 @@ export default function PhonePage({
     return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
   });
   const [sessionError, setSessionError] = useState<string | null>(() => {
-    if (!urlSessionId) return SCAN_AGAIN_MESSAGE;
+    if (!urlSessionId) {
+      return initialStored.phoneCredential ? null : SCAN_AGAIN_MESSAGE;
+    }
     if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
       return SCAN_AGAIN_MESSAGE;
     }
@@ -85,6 +117,10 @@ export default function PhonePage({
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Session entered by id + code instead of the QR; wins over the URL lookup
+  const [joinedSessionId, setJoinedSessionId] = useState<string | null>(restoredJoinedId);
+  const [joining, setJoining] = useState(false);
+  const sessionId = joinedSessionId ?? urlSessionId;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pairingInProgressRef = useRef<boolean>(false);
 
@@ -93,8 +129,7 @@ export default function PhonePage({
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
-    connected: wsConnected,
-  } = useSessionEvents(urlSessionId, credential, {
+  } = useSessionEvents(sessionId, credential, {
     role: "phone",
     reconnectInterval: 2000,
   });
@@ -112,27 +147,29 @@ export default function PhonePage({
     !isSessionClosed && !isReconnecting && remoteSession?.computerPresent === false;
 
   useEffect(() => {
-    if (isSessionClosed && urlSessionId) {
-      clearStoredSession(urlSessionId);
-    }
-  }, [isSessionClosed, urlSessionId]);
+    if (!isSessionClosed || !sessionId) return;
+    clearStoredSession(sessionId);
+    try {
+      if (localStorage.getItem(JOINED_KEY) === sessionId) localStorage.removeItem(JOINED_KEY);
+    } catch {}
+  }, [isSessionClosed, sessionId]);
 
   // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
   useEffect(() => {
-    if (!urlSessionId || !credential || isSessionClosed) return;
+    if (!sessionId || !credential || isSessionClosed) return;
 
     let active = true;
 
     async function check() {
       try {
-        const data = await getSession(urlSessionId, credential!);
+        const data = await getSession(sessionId, credential!);
         if (!active) return;
         setRemoteSession(data);
       } catch (err: any) {
         if (!active) return;
         if (err?.status === 410) {
-          setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
-          clearStoredSession(urlSessionId);
+          setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+          clearStoredSession(sessionId);
         }
       }
     }
@@ -142,10 +179,10 @@ export default function PhonePage({
       active = false;
       clearInterval(id);
     };
-  }, [urlSessionId, credential, isSessionClosed]);
+  }, [sessionId, credential, isSessionClosed]);
 
   useEffect(() => {
-    if (credential || sessionError || !urlSessionId || !qrToken) {
+    if (credential || sessionError || !urlSessionId || !qrToken || joinedSessionId) {
       return;
     }
     if (pairingInProgressRef.current) {
@@ -210,7 +247,7 @@ export default function PhonePage({
       isCancelled = true;
       pairingInProgressRef.current = false;
     };
-  }, [urlSessionId, qrToken, credential, sessionError, storageKey]);
+  }, [urlSessionId, qrToken, credential, sessionError, storageKey, joinedSessionId]);
 
   const uploadSingleFile = (item: PhoneUploadItem) => {
     if (isSessionClosed) return;
@@ -252,7 +289,7 @@ export default function PhonePage({
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Falha de autorização no envio" } : i))
         );
       } else if (xhr.status === 410) {
-        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
         );
@@ -285,7 +322,7 @@ export default function PhonePage({
       );
     };
 
-    xhr.open("POST", `${BASE_URL}/api/sessions/${urlSessionId}/files`);
+    xhr.open("POST", `${BASE_URL}/api/sessions/${sessionId}/files`);
     if (credential) {
       xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     }
@@ -365,7 +402,7 @@ export default function PhonePage({
     // The old content is gone once the replace starts: never show it as fine.
     const fail = (error: string) => {
       if (xhr.status === 410) {
-        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: urlSessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
+        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
       }
       setItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, state: "error", error } : i))
@@ -397,7 +434,7 @@ export default function PhonePage({
       );
     };
     xhr.onerror = () => fail("Sem conexão com o servidor");
-    xhr.open("PUT", `${BASE_URL}/api/sessions/${urlSessionId}/files/${item.remoteId}`);
+    xhr.open("PUT", `${BASE_URL}/api/sessions/${sessionId}/files/${item.remoteId}`);
     if (credential) {
       xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     }
@@ -405,12 +442,49 @@ export default function PhonePage({
   };
 
   const leaveSession = () => {
-    clearStoredSession(urlSessionId);
+    if (sessionId) clearStoredSession(sessionId);
     setItems([]);
     setVisualId(null);
     setRemoteSession(null);
     setCredential(null);
-    if (!qrToken) setSessionError(SCAN_AGAIN_MESSAGE);
+    if (joinedSessionId) {
+      try {
+        localStorage.removeItem(JOINED_KEY);
+      } catch {}
+      setJoinedSessionId(null);
+    }
+    // Always back to the entry screen, never to the dead session URL
+    if (window.location.pathname !== "/") {
+      try {
+        window.history.replaceState({}, "", "/");
+      } catch {}
+    }
+    setSessionError(SCAN_AGAIN_MESSAGE);
+  };
+
+  // Manual login: same credential the QR pairs give, so the flow below is unchanged.
+  const joinWithManualCode = async (rawId: string, rawCode: string) => {
+    try {
+      const data = await joinWithCode(rawId, rawCode);
+      // The canonical id: routes and WS never normalize, only the join lookup does
+      const id = data.sessionId;
+      try {
+        localStorage.setItem(
+          `dns_phone_cred_${id}`,
+          JSON.stringify({ phoneCredential: data.phoneCredential }),
+        );
+        rememberJoinedSession(id);
+      } catch {}
+      setCredential(data.phoneCredential);
+      setSessionError(null);
+      setJoinedSessionId(id);
+      return null;
+    } catch (err) {
+      if (err instanceof JoinError && err.status === 429) {
+        return "Muitas tentativas, aguarde um pouco";
+      }
+      return JOIN_ERROR_MESSAGE;
+    }
   };
 
   const retryUpload = (id: string) => {
@@ -436,6 +510,9 @@ export default function PhonePage({
   );
 
   if (sessionError) {
+    if (joining) {
+      return <JoinSessionForm onSubmit={joinWithManualCode} onCancel={() => setJoining(false)} />;
+    }
     return (
       <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
         <Card className="max-w-md w-full p-6 text-center space-y-4">
@@ -450,6 +527,10 @@ export default function PhonePage({
               {sessionError}
             </p>
           </div>
+          <Button variant="ghost" size="md" onClick={() => setJoining(true)}>
+            <KeyRound size={16} strokeWidth={1.75} />
+            Entrar com código
+          </Button>
         </Card>
       </div>
     );
@@ -490,7 +571,7 @@ export default function PhonePage({
           <span className="text-xs text-[var(--color-text-muted)] tabular">
             {completedFiles}/{totalFiles} enviados
           </span>
-          {wsConnected && !isSessionClosed && (
+          {!isSessionClosed && (
             <Button variant="ghost" size="sm" onClick={leaveSession}>
               Sair da sessão
             </Button>

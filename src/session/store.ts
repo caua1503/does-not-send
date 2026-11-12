@@ -7,6 +7,8 @@ import { SystemClock } from "./clock.js";
 import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
+import { LoginCodeManager, normalizeSessionId, type LoginCodeMessage } from "./login-code.js";
+import { LoginGuard } from "./login-guard.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 
@@ -64,9 +66,16 @@ export class SessionStore {
   private activeSockets = new Map<string, { computer?: WebSocketLike; phone?: WebSocketLike }>();
   private activeUploadControllers = new Map<string, Set<AbortController>>();
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
+  readonly loginCodes: LoginCodeManager;
+  readonly loginGuard: LoginGuard;
 
   constructor(options: SessionStoreOptions) {
     this.clock = options.clock ?? new SystemClock();
+    this.loginCodes = new LoginCodeManager({
+      clock: this.clock,
+      notify: (message) => this.sendToComputer(message),
+    });
+    this.loginGuard = new LoginGuard({ clock: this.clock });
     this.tempDir = options.tempDir;
     this.timingConfig = {
       ...DEFAULT_TIMING_CONFIG,
@@ -101,6 +110,15 @@ export class SessionStore {
 
   getByVisualId(visualId: string): Session | undefined {
     return this.getByShortId(visualId);
+  }
+
+  /** Lookup by visual id ignoring case, spaces and hyphens (manual login). */
+  getByNormalizedVisualId(id: string): Session | undefined {
+    const target = normalizeSessionId(id);
+    for (const session of this.sessions.values()) {
+      if (normalizeSessionId(session.visualId) === target) return session;
+    }
+    return undefined;
   }
 
   getActiveVisualIds(): Set<string> {
@@ -231,7 +249,6 @@ export class SessionStore {
       }
     }
 
-    // Check if role already has active socket -> replace (close previous)
     const conn: { computer?: WebSocketLike; phone?: WebSocketLike } =
       this.activeSockets.get(sessionId) ?? {};
     const existing = conn[role];
@@ -246,6 +263,18 @@ export class SessionStore {
 
     // Registra presença imediata na autenticação WebSocket
     this.recordHeartbeat(sessionId, role);
+
+    // A reconnect missed every rotation: send the current login code straight
+    // to the new socket, before any stale one can be closed and unregistered
+    if (role === "computer") {
+      const connection = this.activeSockets.get(sessionId);
+      const current = this.loginCodes.current(sessionId);
+      if (current) {
+        try {
+          connection?.computer?.send(JSON.stringify(current));
+        } catch {}
+      }
+    }
 
     return { ok: true };
   }
@@ -294,6 +323,14 @@ export class SessionStore {
     }
   }
 
+  private sendToComputer(message: LoginCodeMessage): void {
+    const conn = this.activeSockets.get(message.sessionId);
+    if (!conn?.computer || conn.computer.readyState !== 1) return;
+    try {
+      conn.computer.send(JSON.stringify(message));
+    } catch {}
+  }
+
   closeWs(sessionId: string): void {
     const conn = this.activeSockets.get(sessionId);
     if (!conn) return;
@@ -324,8 +361,9 @@ export class SessionStore {
     session.closedReason = reason;
     session.closedAt = closedAt.toISOString();
 
-    // 2. Abort active uploads
+    // 2. Abort active uploads and forget the login code
     this.abortUploads(sessionId);
+    this.loginCodes.drop(sessionId);
 
     // 3. Notify connected WS
     this.notifyWs(sessionId, { type: "session_closed", reason });
@@ -449,6 +487,11 @@ export class SessionStore {
         }
       }
     }
+
+    // 3. Keep exactly one fresh login code per live session
+    const active = this.getAllActive();
+    this.loginCodes.tick(active);
+    this.loginGuard.sweep(new Set(active.map((session) => session.id)));
   }
 
   startSweeper(intervalMs = 1000): void {
