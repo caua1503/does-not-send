@@ -6,7 +6,7 @@ import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
-import { formatCodeGroups, formatSessionIdForDisplay } from "../../lib/loginCode.ts";
+import { formatCodeGroups } from "../../lib/loginCode.ts";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import { getSession, type SessionInfo } from "../../lib/api.ts";
 import { FileList } from "./FileList.tsx";
@@ -154,11 +154,7 @@ export function SessionCard({
                 ID: {visualId}
               </span>
             )}
-            <ManualLoginCode
-              sessionId={session.id}
-              code={loginCode}
-              seconds={countdown}
-            />
+            <ManualLoginCode code={loginCode} seconds={countdown} />
           </div>
 
           {/* Session info */}
@@ -264,13 +260,11 @@ export function SessionCard({
   );
 }
 
-/** Session id + rotating numeric code, for devices that cannot read the QR. */
+/** Rotating numeric code, for devices that cannot read the QR. */
 function ManualLoginCode({
-  sessionId,
   code,
   seconds,
 }: {
-  sessionId: string;
   code: string | null;
   seconds: number;
 }) {
@@ -279,11 +273,7 @@ function ManualLoginCode({
       data-testid="manual-login-code"
       className="mt-1 w-full flex flex-col items-center gap-0.5 text-center"
     >
-      <span className="text-[10px] text-[var(--color-text-muted)]">ID da sessão</span>
-      <span className="font-mono text-[11px] font-semibold tracking-wider text-[var(--color-text)] break-all">
-        {formatSessionIdForDisplay(sessionId)}
-      </span>
-      <span className="text-[10px] text-[var(--color-text-muted)] mt-1">Código</span>
+      <span className="text-[10px] text-[var(--color-text-muted)]">Código</span>
       <span
         data-testid="manual-login-code-value"
         className="font-mono font-bold text-sm tracking-widest tabular text-[var(--color-accent)]"

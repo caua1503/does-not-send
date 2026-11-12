@@ -20,12 +20,6 @@ export function digitsOnly(value: string, max = 6): string {
   return value.replace(/\D/g, "").slice(0, max);
 }
 
-/** First 8 characters, hyphenated: "A1B2C3D4" → "A1B2-C3D4". */
-export function formatSessionIdForDisplay(id: string): string {
-  const key = normalizeSessionId(id).slice(0, 8);
-  return key.length > 4 ? `${key.slice(0, 4)}-${key.slice(4)}` : key;
-}
-
 /**
  * Remaining seconds from a countdown deadline, never negative.
  * The `expiresInMs` the server sends is a duration, not a timestamp.

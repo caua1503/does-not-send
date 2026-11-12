@@ -21,7 +21,7 @@ export function JoinSessionForm({ onSubmit, onCancel }: JoinSessionFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = normalizeSessionId(sessionId).length >= 8 && code.length === 6 && !submitting;
+  const canSubmit = normalizeSessionId(sessionId).length >= 6 && code.length === 6 && !submitting;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -66,7 +66,7 @@ export function JoinSessionForm({ onSubmit, onCancel }: JoinSessionFormProps) {
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="A1B2-C3D4"
+              placeholder="P79XFJ"
               className={`${inputClass} font-mono`}
               disabled={submitting}
             />

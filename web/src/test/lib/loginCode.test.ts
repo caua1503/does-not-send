@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   digitsOnly,
   formatCodeGroups,
-  formatSessionIdForDisplay,
   normalizeSessionId,
   remainingSeconds,
 } from "../../lib/loginCode.ts";
@@ -22,9 +21,9 @@ describe("formatCodeGroups", () => {
 
 describe("normalizeSessionId", () => {
   it("aceita maiúsculas, espaços e hífens", () => {
-    expect(normalizeSessionId(" a1b2-c3d4 ")).toBe("A1B2C3D4");
-    expect(normalizeSessionId("A1B2 C3D4")).toBe("A1B2C3D4");
-    expect(normalizeSessionId("a1b2c3d4")).toBe("A1B2C3D4");
+    expect(normalizeSessionId(" p79-xfj ")).toBe("P79XFJ");
+    expect(normalizeSessionId("P79 XFJ")).toBe("P79XFJ");
+    expect(normalizeSessionId("p79xfj")).toBe("P79XFJ");
   });
 });
 
@@ -32,13 +31,6 @@ describe("digitsOnly", () => {
   it("mantém só dígitos e limita o tamanho", () => {
     expect(digitsOnly("48a2 91")).toBe("48291");
     expect(digitsOnly("1234567890")).toBe("123456");
-  });
-});
-
-describe("formatSessionIdForDisplay", () => {
-  it("hifeniza os 8 primeiros caracteres", () => {
-    expect(formatSessionIdForDisplay("a1b2-c3d4-0000-4000-8000-000000000000")).toBe("A1B2-C3D4");
-    expect(formatSessionIdForDisplay("abc")).toBe("ABC");
   });
 });
 
