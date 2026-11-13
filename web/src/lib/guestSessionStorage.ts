@@ -6,7 +6,13 @@ export interface StoredGuestSession {
   visualId: string | null;
 }
 
-function parseStored(raw: string): StoredGuestSession {
+function parseStored(
+  raw: string,
+  allowPlainString: boolean,
+): StoredGuestSession | null {
+  const plain: StoredGuestSession | null = allowPlainString
+    ? { credential: raw, visualId: null }
+    : null;
   try {
     const parsed = JSON.parse(raw) as {
       guestCredential?: string;
@@ -19,9 +25,9 @@ function parseStored(raw: string): StoredGuestSession {
         visualId: parsed.visualId || null,
       };
     }
-    return { credential: raw, visualId: null };
+    return plain;
   } catch {
-    return { credential: raw, visualId: null };
+    return plain;
   }
 }
 
@@ -33,7 +39,7 @@ export function readGuestSession(id: string): StoredGuestSession {
     const legacyKey = `${LEGACY_KEY_PREFIX}${id}`;
     const newRaw = localStorage.getItem(key);
     const legacyRaw = localStorage.getItem(legacyKey);
-    const fromNew = newRaw ? parseStored(newRaw) : null;
+    const fromNew = newRaw ? parseStored(newRaw, false) : null;
 
     if (fromNew?.credential) {
       if (legacyRaw !== null) localStorage.removeItem(legacyKey);
@@ -41,7 +47,7 @@ export function readGuestSession(id: string): StoredGuestSession {
     }
 
     // A broken/empty new key must not discard a still-valid legacy credential.
-    const fromLegacy = legacyRaw ? parseStored(legacyRaw) : null;
+    const fromLegacy = legacyRaw ? parseStored(legacyRaw, true) : null;
     if (fromLegacy?.credential) {
       try {
         localStorage.setItem(
