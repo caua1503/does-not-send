@@ -18,6 +18,10 @@ export interface WebSocketLike {
   close(code?: number, reason?: string): void;
 }
 
+function roleSlot(role: SessionRole): "host" | "guest" {
+  return role === "computer" ? "host" : "guest";
+}
+
 export interface PendingWs {
   sessionId: string;
   socket: WebSocketLike;
@@ -65,7 +69,7 @@ export class SessionStore {
   private pendingSockets = new Set<PendingWs>();
   private activeSockets = new Map<
     string,
-    { computer: Set<WebSocketLike>; phone: Set<WebSocketLike> }
+    { host: Set<WebSocketLike>; guest: Set<WebSocketLike> }
   >();
   private activeUploadControllers = new Map<string, Set<AbortController>>();
   private textUploadTimes = new Map<string, number[]>();
@@ -77,7 +81,7 @@ export class SessionStore {
     this.clock = options.clock ?? new SystemClock();
     this.loginCodes = new LoginCodeManager({
       clock: this.clock,
-      notify: (message) => this.sendToComputer(message),
+      notify: (message) => this.sendToHost(message),
     });
     this.loginGuard = new LoginGuard({ clock: this.clock });
     this.tempDir = options.tempDir;
@@ -93,7 +97,7 @@ export class SessionStore {
   // Repository-compatible methods
   create(session: Session): void {
     if (!session.lastSeen) {
-      session.lastSeen = { computer: null, phone: null };
+      session.lastSeen = { host: null, guest: null };
     }
     if (session.closedReason === undefined) session.closedReason = null;
     this.sessions.set(session.id, session);
@@ -166,16 +170,16 @@ export class SessionStore {
   }
 
   // Presence queries
-  isPhonePresent(sessionId: string): boolean {
+  isGuestPresent(sessionId: string): boolean {
     const session = this.getById(sessionId);
-    if (!session || session.lastSeen.phone === null) return false;
-    return this.clock.now() - session.lastSeen.phone <= this.timingConfig.heartbeatTimeoutMs;
+    if (!session || session.lastSeen.guest === null) return false;
+    return this.clock.now() - session.lastSeen.guest <= this.timingConfig.heartbeatTimeoutMs;
   }
 
-  isComputerPresent(sessionId: string): boolean {
+  isHostPresent(sessionId: string): boolean {
     const session = this.getById(sessionId);
-    if (!session || session.lastSeen.computer === null) return false;
-    return this.clock.now() - session.lastSeen.computer <= this.timingConfig.heartbeatTimeoutMs;
+    if (!session || session.lastSeen.host === null) return false;
+    return this.clock.now() - session.lastSeen.host <= this.timingConfig.heartbeatTimeoutMs;
   }
 
   // Heartbeat handler
@@ -184,7 +188,7 @@ export class SessionStore {
     if (!session || session.state === "CLOSED") return false;
 
     const now = this.clock.now();
-    session.lastSeen[role] = now;
+    session.lastSeen[roleSlot(role)] = now;
     session.lastActivity = new Date(now).toISOString();
 
     if (role === "phone" && session.state === "DISCONNECTED") {
@@ -272,10 +276,10 @@ export class SessionStore {
     // Multiple sockets per role are expected: the computer tab keeps one for
     // file events and another for the login code, and both must stay open.
     const conn = this.activeSockets.get(sessionId) ?? {
-      computer: new Set<WebSocketLike>(),
-      phone: new Set<WebSocketLike>(),
+      host: new Set<WebSocketLike>(),
+      guest: new Set<WebSocketLike>(),
     };
-    conn[role].add(socket);
+    conn[roleSlot(role)].add(socket);
     this.activeSockets.set(sessionId, conn);
 
     // Registra presença imediata na autenticação WebSocket
@@ -310,12 +314,12 @@ export class SessionStore {
     const conn = this.activeSockets.get(sessionId);
     if (conn) {
       if (role) {
-        conn[role].delete(socket);
+        conn[roleSlot(role)].delete(socket);
       } else {
-        conn.computer.delete(socket);
-        conn.phone.delete(socket);
+        conn.host.delete(socket);
+        conn.guest.delete(socket);
       }
-      if (conn.computer.size === 0 && conn.phone.size === 0) {
+      if (conn.host.size === 0 && conn.guest.size === 0) {
         this.activeSockets.delete(sessionId);
       }
     }
@@ -326,7 +330,7 @@ export class SessionStore {
     if (!conn) return;
 
     const payload = JSON.stringify(message);
-    for (const socket of [...conn.phone, ...conn.computer]) {
+    for (const socket of [...conn.guest, ...conn.host]) {
       if (socket.readyState !== 1) continue;
       try {
         socket.send(payload);
@@ -336,11 +340,11 @@ export class SessionStore {
     }
   }
 
-  private sendToComputer(message: LoginCodeEvent): void {
+  private sendToHost(message: LoginCodeEvent): void {
     const conn = this.activeSockets.get(message.sessionId);
     if (!conn) return;
     const payload = JSON.stringify(message);
-    for (const socket of conn.computer) {
+    for (const socket of conn.host) {
       if (socket.readyState !== 1) continue;
       try {
         socket.send(payload);
@@ -354,7 +358,7 @@ export class SessionStore {
     const conn = this.activeSockets.get(sessionId);
     if (!conn) return;
 
-    for (const socket of [...conn.phone, ...conn.computer]) {
+    for (const socket of [...conn.guest, ...conn.host]) {
       try {
         socket.close(4000, "Session closed");
       } catch {
@@ -392,8 +396,8 @@ export class SessionStore {
     await this.removeSessionDir(sessionId, 1);
 
     // 6. Remove secrets from memory
-    session.computerTokenHash = "";
-    session.phoneCredentialHash = null;
+    session.hostTokenHash = "";
+    session.guestCredentialHash = null;
     session.qrTokenHash = null;
     session.ownerToken = undefined;
     session.uploadToken = undefined;
@@ -488,19 +492,19 @@ export class SessionStore {
 
     // 2. Check each active session
     for (const session of this.getAllActive()) {
-      // Phone checks
-      const phonePresent =
-        session.lastSeen.phone !== null &&
-        now - session.lastSeen.phone <= this.timingConfig.heartbeatTimeoutMs;
+      // Guest checks
+      const guestPresent =
+        session.lastSeen.guest !== null &&
+        now - session.lastSeen.guest <= this.timingConfig.heartbeatTimeoutMs;
 
       if (session.state === "PAIRED" || session.state === "TRANSFERRING") {
-        if (!phonePresent) {
+        if (!guestPresent) {
           transition(session, "DISCONNECTED");
           this.abortUploads(session.id);
           this.update(session);
         }
       } else if (session.state === "DISCONNECTED") {
-        if (phonePresent) {
+        if (guestPresent) {
           transition(session, "PAIRED");
           this.update(session);
         }

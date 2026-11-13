@@ -1,5 +1,5 @@
-import HostPage from "./pages/computer/HostPage.tsx";
-import JoinPage from "./pages/phone/JoinPage.tsx";
+import HostPage from "./pages/host/HostPage.tsx";
+import JoinPage from "./pages/guest/JoinPage.tsx";
 import { WhatsNewModal } from "./components/WhatsNewModal.tsx";
 
 export default function App() {

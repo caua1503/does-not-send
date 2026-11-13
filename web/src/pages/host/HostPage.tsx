@@ -9,7 +9,7 @@ import { SessionPage } from "../SessionPage.tsx";
 import { createSession, deleteSession, joinWithCode, JoinError } from "../../lib/api.ts";
 import type { Session } from "../../lib/api.ts";
 import { BASE_URL } from "../../lib/base.ts";
-import { JoinSessionForm } from "../phone/JoinSessionForm.tsx";
+import { JoinSessionForm } from "../guest/JoinSessionForm.tsx";
 import { APP_VERSION } from "../../lib/whatsNew.ts";
 
 const PUBLIC_BASE_URL = BASE_URL || window.location.origin;
@@ -81,7 +81,7 @@ export default function HostPage() {
   }, [sessions]);
 
   // Manual login from the home screen: same credential the QR pairs give, then
-  // hand off to the phone page with the canonical id.
+  // hand off to the guest page with the canonical id.
   const handleJoinWithCode = async (sessionId: string, code: string) => {
     try {
       const data = await joinWithCode(sessionId, code);

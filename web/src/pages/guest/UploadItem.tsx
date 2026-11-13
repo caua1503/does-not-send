@@ -3,7 +3,7 @@ import { formatBytes } from "../../lib/format.ts";
 import { isEditableImage, byExtension } from "../../lib/editableImage.ts";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
 
-export interface PhoneUploadItem {
+export interface GuestUploadItem {
   id: string;
   file: File;
   progress: number; // 0 - 1
@@ -15,7 +15,7 @@ export interface PhoneUploadItem {
 }
 
 interface UploadItemProps {
-  item: PhoneUploadItem;
+  item: GuestUploadItem;
   onRetry: (id: string) => void;
   onEdit?: (id: string) => void;
 }

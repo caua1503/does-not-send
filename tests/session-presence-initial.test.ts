@@ -19,26 +19,26 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
     cleanupInitialDelayMs: 100,
   };
 
-  it("criação de sessão inicializa lastSeen.computer com clock.now() e primeiro tick mantém o computador presente", async () => {
+  it("criação de sessão inicializa lastSeen.host com clock.now() e primeiro tick mantém o host presente", async () => {
     const clock = new FakeClock(1000);
     const store = new SessionStore({ clock, tempDir: dummyConfig.tempDir });
     const service = new SessionService(store, dummyConfig, clock);
 
     const session = await service.create();
 
-    // lastSeen.computer deve ser inicializado com clock.now()
-    expect(session.lastSeen.computer).toBe(1000);
-    expect(store.isComputerPresent(session.id)).toBe(true);
+    // lastSeen.host deve ser inicializado com clock.now()
+    expect(session.lastSeen.host).toBe(1000);
+    expect(store.isHostPresent(session.id)).toBe(true);
 
     // No primeiro tick (1s depois), computador não deve ser considerado perdido
     clock.advance(1000); // t=2000
     await store.tick();
 
-    expect(store.isComputerPresent(session.id)).toBe(true);
+    expect(store.isHostPresent(session.id)).toBe(true);
     expect(store.getById(session.id)!.state).toBe("WAITING");
   });
 
-  it("pareamento inicializa lastSeen.phone com clock.now() e primeiro tick não move para DISCONNECTED", async () => {
+  it("pareamento inicializa lastSeen.guest com clock.now() e primeiro tick não move para DISCONNECTED", async () => {
     const clock = new FakeClock(1000);
     const store = new SessionStore({ clock, tempDir: dummyConfig.tempDir });
     const service = new SessionService(store, dummyConfig, clock);
@@ -52,9 +52,9 @@ describe("Presença inicial na criação e no pareamento (H5)", () => {
 
     const pairedSession = store.getById(session.id)!;
     expect(pairedSession.state).toBe("PAIRED");
-    // lastSeen.phone DEVE ser inicializado com o momento do pareamento
-    expect(pairedSession.lastSeen.phone).toBe(6000);
-    expect(store.isPhonePresent(session.id)).toBe(true);
+    // lastSeen.guest DEVE ser inicializado com o momento do pareamento
+    expect(pairedSession.lastSeen.guest).toBe(6000);
+    expect(store.isGuestPresent(session.id)).toBe(true);
 
     // No próximo tick (1s depois), telefone não deve ser considerado ausente
     clock.advance(1000); // t=7000

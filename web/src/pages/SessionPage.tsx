@@ -3,7 +3,7 @@ import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../components/ui/Button.tsx";
 import { Card } from "../components/ui/Card.tsx";
 import { ProgressBar } from "../components/ui/ProgressBar.tsx";
-import { UploadItem, type PhoneUploadItem } from "./phone/UploadItem.tsx";
+import { UploadItem, type GuestUploadItem } from "./guest/UploadItem.tsx";
 import { getSession, type SessionInfo } from "../lib/api.ts";
 import { useSessionEvents } from "../hooks/useSessionEvents.ts";
 import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
@@ -12,7 +12,7 @@ import { BASE_URL } from "../lib/base.ts";
 import { ImageEditor } from "../components/ImageEditor/ImageEditor.tsx";
 import { TextWidget } from "../components/TextWidget.tsx";
 import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
-import { FileList } from "./computer/FileList.tsx";
+import { FileList } from "./host/FileList.tsx";
 import { APP_VERSION } from "../lib/whatsNew.ts";
 
 export type SessionPageRole = "host" | "guest";
@@ -68,7 +68,7 @@ interface GuestSessionProps {
 }
 
 function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessionClosed }: GuestSessionProps) {
-  const [items, setItems] = useState<PhoneUploadItem[]>([]);
+  const [items, setItems] = useState<GuestUploadItem[]>([]);
   const [textError, setTextError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,7 +92,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
   const isReconnecting =
     !isSessionClosed &&
     (wsReconnecting || remoteSession?.state === "DISCONNECTED");
-  const isComputerDisconnected =
+  const isHostDisconnected =
     !isSessionClosed && !isReconnecting && remoteSession?.computerPresent === false;
 
   const onSessionClosedRef = useRef(onSessionClosed);
@@ -129,7 +129,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
     };
   }, [sessionId, credential, isSessionClosed]);
 
-  const uploadSingleFile = (item: PhoneUploadItem) => {
+  const uploadSingleFile = (item: GuestUploadItem) => {
     if (isSessionClosed) return;
 
     setItems((prev) =>
@@ -268,7 +268,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
-    const newItems: PhoneUploadItem[] = fileList.map((file) => ({
+    const newItems: GuestUploadItem[] = fileList.map((file) => ({
       id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
@@ -301,7 +301,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
       return false;
     }
     const file = buildTextFile(text, new Date(), items.map((i) => i.file.name));
-    const item: PhoneUploadItem = {
+    const item: GuestUploadItem = {
       id: `text-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
@@ -315,7 +315,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: PhoneUploadItem, file: File) => {
+  const replaceEditedImage = (item: GuestUploadItem, file: File) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("files", file, file.name);
@@ -394,7 +394,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
             </span>
             {visualId && (
               <span
-                data-testid="phone-visual-id"
+                data-testid="guest-visual-id"
                 className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-[var(--color-accent-light)] text-[var(--color-accent)] shrink-0"
               >
                 ID: {visualId}
@@ -444,9 +444,9 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
         </div>
       )}
 
-      {isComputerDisconnected && (
+      {isHostDisconnected && (
         <div
-          data-testid="status-computer-disconnected"
+          data-testid="status-host-disconnected"
           role="status"
           className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs font-medium text-[var(--color-error)] flex items-center justify-center gap-2"
         >
@@ -464,12 +464,12 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
           multiple
           disabled={isSessionClosed}
           className="hidden"
-          id="phone-file-input"
+          id="guest-file-input"
           onChange={handleFilesChosen}
         />
 
         <label
-          htmlFor={isSessionClosed ? undefined : "phone-file-input"}
+          htmlFor={isSessionClosed ? undefined : "guest-file-input"}
           className={[
             "border-2 border-dashed border-[var(--color-border)]",
             isSessionClosed

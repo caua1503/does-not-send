@@ -14,8 +14,8 @@ function makeAuthSession(overrides: Partial<AuthorizableSession> = {}): Authoriz
   return {
     id: "sess-1",
     state: "PAIRED",
-    computerTokenHash: hashToken(computerSecret),
-    phoneCredentialHash: hashToken(phoneSecret),
+    hostTokenHash: hashToken(computerSecret),
+    guestCredentialHash: hashToken(phoneSecret),
     activeUploads: 0,
     ...overrides,
   };
@@ -24,7 +24,7 @@ function makeAuthSession(overrides: Partial<AuthorizableSession> = {}): Authoriz
 describe("authorize", () => {
   it("autoriza computador com computerToken correto", () => {
     const rawComputer = generateSecret();
-    const session = makeAuthSession({ computerTokenHash: hashToken(rawComputer) });
+    const session = makeAuthSession({ hostTokenHash: hashToken(rawComputer) });
 
     const auth = authorize(session, "computer", rawComputer);
     expect(auth.ok).toBe(true);
@@ -43,7 +43,7 @@ describe("authorize", () => {
     const rawPhone = generateSecret();
     const session = makeAuthSession({
       state: "PAIRED",
-      phoneCredentialHash: hashToken(rawPhone),
+      guestCredentialHash: hashToken(rawPhone),
     });
 
     const auth = authorize(session, "phone", rawPhone);
@@ -54,7 +54,7 @@ describe("authorize", () => {
     const session1 = makeAuthSession();
     const session2 = makeAuthSession();
     const rawPhone1 = generateSecret();
-    session1.phoneCredentialHash = hashToken(rawPhone1);
+    session1.guestCredentialHash = hashToken(rawPhone1);
 
     const auth = authorize(session2, "phone", rawPhone1);
     expect(auth.ok).toBe(false);
@@ -63,10 +63,10 @@ describe("authorize", () => {
     }
   });
 
-  it("recusa telefone quando sessão ainda não foi pareada (phoneCredentialHash null)", () => {
+  it("recusa telefone quando sessão ainda não foi pareada (guestCredentialHash null)", () => {
     const session = makeAuthSession({
       state: "WAITING",
-      phoneCredentialHash: null,
+      guestCredentialHash: null,
     });
 
     const auth = authorize(session, "phone", generateSecret());
@@ -81,8 +81,8 @@ describe("authorize", () => {
     const rawPhone = generateSecret();
     const session = makeAuthSession({
       state: "CLOSED",
-      computerTokenHash: hashToken(rawComputer),
-      phoneCredentialHash: hashToken(rawPhone),
+      hostTokenHash: hashToken(rawComputer),
+      guestCredentialHash: hashToken(rawPhone),
     });
 
     const authComp = authorize(session, "computer", rawComputer);

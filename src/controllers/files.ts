@@ -46,10 +46,10 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       return reply.status(401).send({ error: "Unauthorized", statusCode: 401 });
     }
 
-    const phoneAuth = domainAuthorize(session, "phone", token);
-    const compAuth = domainAuthorize(session, "computer", token);
+    const guestAuth = domainAuthorize(session, "phone", token);
+    const hostAuth = domainAuthorize(session, "computer", token);
 
-    if (!phoneAuth.ok && !compAuth.ok) {
+    if (!guestAuth.ok && !hostAuth.ok) {
       return reply.status(401).send({ error: "Unauthorized", statusCode: 401 });
     }
 

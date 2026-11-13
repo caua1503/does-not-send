@@ -8,8 +8,8 @@ export type SessionRole = "computer" | "phone";
 export interface AuthorizableSession {
   id: string;
   state: SessionState;
-  computerTokenHash: string;
-  phoneCredentialHash: string | null;
+  hostTokenHash: string;
+  guestCredentialHash: string | null;
   activeUploads?: number;
 }
 
@@ -60,9 +60,9 @@ export function authorize(
 
   let valid = false;
   if (role === "computer") {
-    valid = verifyHash(secret, session.computerTokenHash);
+    valid = verifyHash(secret, session.hostTokenHash);
   } else if (role === "phone") {
-    valid = verifyHash(secret, session.phoneCredentialHash);
+    valid = verifyHash(secret, session.guestCredentialHash);
   }
 
   if (!valid) {

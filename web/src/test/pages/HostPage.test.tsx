@@ -1,6 +1,6 @@
 import { vi, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import HostPage from "../../pages/computer/HostPage.tsx";
+import HostPage from "../../pages/host/HostPage.tsx";
 
 vi.mock("../../lib/api.ts", () => ({
   createSession: vi.fn(),

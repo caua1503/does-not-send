@@ -36,8 +36,8 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     expect(pairBody.state).toBe("PAIRED");
 
     const store = getAppContext(ctx.app).sessionStore;
-    // Verifica que lastSeen.phone foi registrado
-    expect(store.isPhonePresent(session.id)).toBe(true);
+    // Verifica que lastSeen.guest foi registrado
+    expect(store.isGuestPresent(session.id)).toBe(true);
   });
 
   it("2. Repetir a leitura do mesmo QR emite nova credencial e substitui a anterior", async () => {
@@ -99,12 +99,12 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     // Autentica computador
     const compAuth = store.authenticateWs(session.id, "computer", session.computerToken, compSocket);
     expect(compAuth.ok).toBe(true);
-    expect(store.isComputerPresent(session.id)).toBe(true);
+    expect(store.isHostPresent(session.id)).toBe(true);
 
     // Autentica telefone
     const phoneAuth = store.authenticateWs(session.id, "phone", phoneCredential, phoneSocket);
     expect(phoneAuth.ok).toBe(true);
-    expect(store.isPhonePresent(session.id)).toBe(true);
+    expect(store.isGuestPresent(session.id)).toBe(true);
   });
 
   it("4. Desconexão temporária e reconexão com phoneCredential restaura presença e estado PAIRED", async () => {
@@ -128,7 +128,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
 
     // Avança além do timeout de presença (26s) sem heartbeat
     clock.advance(26000);
-    expect(store.isPhonePresent(session.id)).toBe(false);
+    expect(store.isGuestPresent(session.id)).toBe(false);
 
     // Tick move para DISCONNECTED
     await store.tick();
@@ -141,7 +141,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     expect(reauth.ok).toBe(true);
 
     // Presença e estado PAIRED restaurados
-    expect(store.isPhonePresent(session.id)).toBe(true);
+    expect(store.isGuestPresent(session.id)).toBe(true);
     expect(store.getById(session.id)!.state).toBe("PAIRED");
   });
 

@@ -8,11 +8,11 @@ export interface PairableSession {
   state: SessionState;
   qrTokenHash: string | null;
   pairedAt?: string | null;
-  phoneCredentialHash?: string | null;
+  guestCredentialHash?: string | null;
 }
 
 export type PairingResult =
-  | { ok: true; pairedAt: string; phoneCredential: string }
+  | { ok: true; pairedAt: string; guestCredential: string }
   | { ok: false; error: PairingError };
 
 export function hashToken(raw: string): string {
@@ -55,8 +55,8 @@ export function consumePairing(
     return { ok: false, error: new PairingError("INVALID") };
   }
 
-  const rawPhoneCredential = randomBytes(32).toString("base64url");
-  session.phoneCredentialHash = hashToken(rawPhoneCredential);
+  const rawGuestCredential = randomBytes(32).toString("base64url");
+  session.guestCredentialHash = hashToken(rawGuestCredential);
 
   const now = new Date().toISOString();
   if (session.state === "WAITING") {
@@ -64,5 +64,5 @@ export function consumePairing(
   }
   session.pairedAt = now;
 
-  return { ok: true, pairedAt: now, phoneCredential: rawPhoneCredential };
+  return { ok: true, pairedAt: now, guestCredential: rawGuestCredential };
 }

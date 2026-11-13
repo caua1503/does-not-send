@@ -44,16 +44,16 @@ export async function authorize(
 
   // Check computer / owner role
   if (allowedRoles.includes("owner") || allowedRoles.includes("computer")) {
-    const compAuth = domainAuthorize(session, "computer", token);
-    if (compAuth.ok) {
+    const hostAuth = domainAuthorize(session, "computer", token);
+    if (hostAuth.ok) {
       matchedRole = allowedRoles.includes("computer") ? "computer" : "owner";
     }
   }
 
   // Check phone role (route-level grant; not interchangeable with "upload")
   if (!matchedRole && allowedRoles.includes("phone")) {
-    const phoneAuth = domainAuthorize(session, "phone", token);
-    if (phoneAuth.ok) {
+    const guestAuth = domainAuthorize(session, "phone", token);
+    if (guestAuth.ok) {
       matchedRole = "phone";
     }
   }
@@ -95,8 +95,8 @@ export async function sessionRoutes(
 
     return reply.status(201).send({
       id: session.id,
-      computerToken: session.rawComputerToken,
-      ownerToken: session.rawComputerToken,
+      computerToken: session.rawHostToken,
+      ownerToken: session.rawHostToken,
       uploadToken: placeholderUploadToken,
       qrToken: session.rawQrToken,
       visualId: session.visualId,
@@ -194,7 +194,7 @@ export async function sessionRoutes(
 
     return reply.status(200).send({
       success: true,
-      phoneCredential: pairResult.phoneCredential,
+      phoneCredential: pairResult.guestCredential,
       visualId: session.visualId,
       shortId: session.visualId,
       state: session.state,
@@ -238,7 +238,7 @@ export async function sessionRoutes(
       return reply.status(200).send({
         success: true,
         sessionId: joined.sessionId,
-        phoneCredential: joined.phoneCredential,
+        phoneCredential: joined.guestCredential,
       });
     },
   );
@@ -266,8 +266,8 @@ export async function sessionRoutes(
     return {
       id: session.id,
       state: session.state,
-      phonePresent: ctx.sessionStore.isPhonePresent(session.id),
-      computerPresent: ctx.sessionStore.isComputerPresent(session.id),
+      phonePresent: ctx.sessionStore.isGuestPresent(session.id),
+      computerPresent: ctx.sessionStore.isHostPresent(session.id),
       activeUploads: session.activeUploads ?? 0,
       visualId: session.visualId,
       shortId: session.shortId,

@@ -1,6 +1,6 @@
 import { it, expect, describe, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { FileRow } from "../../pages/computer/FileRow.tsx";
+import { FileRow } from "../../pages/host/FileRow.tsx";
 import type { FileEntry } from "../../lib/api.ts";
 
 const { copyText } = vi.hoisted(() => ({ copyText: vi.fn() }));

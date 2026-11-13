@@ -1,6 +1,6 @@
 import { vi, it, expect, describe, beforeAll } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SessionCard } from "../../pages/computer/SessionCard.tsx";
+import { SessionCard } from "../../pages/host/SessionCard.tsx";
 
 // jsdom não implementa canvas — mock mínimo para QRCodeCanvas não quebrar
 beforeAll(() => {

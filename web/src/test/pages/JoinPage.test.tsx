@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import imageCompression from "browser-image-compression";
-import JoinPage from "../../pages/phone/JoinPage.tsx";
+import JoinPage from "../../pages/guest/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
   return {
@@ -228,7 +228,7 @@ describe("JoinPage", () => {
 
     render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const testFile = new File(["test-content"], "test-photo.jpg", {
       type: "image/jpeg",
     });
@@ -337,7 +337,7 @@ describe("JoinPage", () => {
 
     render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const bigPhoto = new File(
       [new Uint8Array(2.5 * 1024 * 1024)],
       "foto-pesada.jpg",
@@ -405,7 +405,7 @@ describe("JoinPage", () => {
 
     render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const heic = new File(["heic-content"], "IMG_0001.HEIC", { type: "image/heic" });
     const pdf = new File(["pdf-content"], "doc.pdf", { type: "application/pdf" });
 

@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import JoinPage from "../../pages/phone/JoinPage.tsx";
+import JoinPage from "../../pages/guest/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
   return {
@@ -8,7 +8,7 @@ vi.mock("browser-image-compression", () => {
   };
 });
 
-describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência", () => {
+describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistência", () => {
   const fetchMock = vi.fn();
   let mockSockets: any[] = [];
 
@@ -142,7 +142,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
 
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const testFile = new File(["test image bytes"], "foto.png", { type: "image/png" });
 
     fireEvent.change(input, { target: { files: [testFile] } });
@@ -190,7 +190,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
 
     // Sessão recuperada e pronta para envio
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
-    const visualBadge = screen.getByTestId("phone-visual-id");
+    const visualBadge = screen.getByTestId("guest-visual-id");
     expect(visualBadge).toHaveTextContent("ID: REC42");
 
     // Conexão WebSocket reconecta usando a credencial recuperada
@@ -234,7 +234,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
     render(<JoinPage />);
 
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
-    expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: SRV88");
+    expect(screen.getByTestId("guest-visual-id")).toHaveTextContent("ID: SRV88");
   });
 
   // Cenário 6: Perder conexão e reconectar
@@ -300,7 +300,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
     // Por ter encontrado em localStorage, nem tenta parear de novo
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
-    expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: PRD11");
+    expect(screen.getByTestId("guest-visual-id")).toHaveTextContent("ID: PRD11");
   });
 
   // Sair da sessão pelo celular
@@ -375,7 +375,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
     render(<JoinPage />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: NEW42");
+      expect(screen.getByTestId("guest-visual-id")).toHaveTextContent("ID: NEW42");
     });
     const stored = JSON.parse(
       localStorage.getItem("dns_phone_cred_sess-persist-123") || "{}"
@@ -419,7 +419,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       expect(screen.getAllByText(/sessão encerrada/i).length).toBeGreaterThanOrEqual(1);
     });
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     expect(input).toBeDisabled();
     expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
 
