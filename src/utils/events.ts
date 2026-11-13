@@ -15,6 +15,7 @@ export interface FileStateChangedEvent {
   finishedAt?: string;
   extension: string;
   category: string;
+  kind?: "file" | "text";
 }
 
 export interface FileProgressEvent {

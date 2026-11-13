@@ -162,6 +162,7 @@ export class SessionStore {
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.activeUploadControllers.clear();
+    this.textUploadTimes.clear();
   }
 
   // Presence queries
@@ -222,6 +223,21 @@ export class SessionStore {
       }
       this.activeUploadControllers.delete(sessionId);
     }
+  }
+
+  /** 10 text uploads per 10s per session. */
+  allowTextUpload(sessionId: string): boolean {
+    const now = this.clock.now();
+    const recent = (this.textUploadTimes.get(sessionId) ?? []).filter(
+      (at) => now - at < 10_000,
+    );
+    if (recent.length >= 10) {
+      this.textUploadTimes.set(sessionId, recent);
+      return false;
+    }
+    recent.push(now);
+    this.textUploadTimes.set(sessionId, recent);
+    return true;
   }
 
   // WebSocket management
@@ -364,6 +380,7 @@ export class SessionStore {
     // 2. Abort active uploads and forget the login code
     this.abortUploads(sessionId);
     this.loginCodes.drop(sessionId);
+    this.textUploadTimes.delete(sessionId);
 
     // 3. Notify connected WS
     this.notifyWs(sessionId, { type: "session_closed", reason });
@@ -518,6 +535,7 @@ export class SessionStore {
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.activeUploadControllers.clear();
+    this.textUploadTimes.clear();
   }
 
   stopSweeper(): void {

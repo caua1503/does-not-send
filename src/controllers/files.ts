@@ -66,6 +66,9 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     startUpload(session);
     ctx.sessionService.touchActivity(session.id);
 
+    const kind =
+      (request.query as { kind?: unknown } | undefined)?.kind === "text" ? "text" : undefined;
+
     const abortController = new AbortController();
     const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
       session.id,
@@ -74,7 +77,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
     try {
       const parts = request.parts();
-      const results: Array<{ id: string; originalName: string; size: number }> = [];
+      const results: Array<{
+        id: string;
+        originalName: string;
+        size: number;
+        kind?: "file" | "text";
+      }> = [];
 
       for await (const part of parts) {
         if (part.type !== "file") continue;
@@ -87,15 +95,23 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             part.file,
             undefined,
             abortController.signal,
+            kind,
           );
 
           results.push({
             id: result.file.id,
             originalName: result.file.originalName,
             size: result.file.size,
+            kind: result.file.kind,
           });
         } catch (err) {
           const error = err as Error & { statusCode?: number };
+          if (error.statusCode === 400 || error.statusCode === 429) {
+            return reply.status(error.statusCode).send({
+              error: error.message,
+              statusCode: error.statusCode,
+            });
+          }
           if (error.statusCode === 413) {
             return reply.status(413).send({
               error: error.message,
@@ -218,6 +234,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
         state: f.state,
         version: f.version,
         createdAt: f.createdAt,
+        kind: f.kind,
       })),
     };
   });

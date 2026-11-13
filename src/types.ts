@@ -20,6 +20,7 @@ export interface SessionFile {
   version: number; // 1 no primeiro upload, +1 a cada substituição
   extension: string; // Calculado de originalName
   category: string; // Calculado de extension+mimeType
+  kind?: "file" | "text"; // "text": enviado pelo widget de texto
 }
 
 export interface Session {

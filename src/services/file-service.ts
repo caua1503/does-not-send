@@ -2,6 +2,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
+import { Readable as ReadableStream } from "node:stream";
 import type { Config } from "../utils/config.js";
 import type { SessionStore } from "../session/store.js";
 import type { SessionFile } from "../types.js";
@@ -35,6 +36,42 @@ const MIME_EXTENSIONS: Record<string, string> = {
   "text/csv": "csv",
 };
 
+const TEXT_MAX_LENGTH = 10_000;
+// UTF-8 uses at most 4 bytes per code unit, so this bound can never hide text
+// that would be within the character limit.
+const TEXT_MAX_BYTES = TEXT_MAX_LENGTH * 4 + 1;
+const TEXT_MIME = "text/plain; charset=utf-8";
+
+function uniqueTextName(files: SessionFile[], name: string): string {
+  const used = new Set(
+    files.filter((f) => f.kind === "text").map((f) => f.originalName),
+  );
+  if (!used.has(name)) return name;
+  const ext = name.toLowerCase().endsWith(".txt") ? ".txt" : "";
+  const base = ext ? name.slice(0, -ext.length) : name;
+  let counter = 2;
+  while (used.has(`${base} (${counter})${ext}`)) counter++;
+  return `${base} (${counter})${ext}`;
+}
+
+function readStream(stream: Readable, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    stream.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        stream.destroy();
+        reject(Object.assign(new Error("Texto excede o limite de 10000 caracteres"), { statusCode: 400 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
+  });
+}
+
 export interface UploadResult {
   file: SessionFile;
 }
@@ -63,6 +100,7 @@ export class FileService {
     stream: Readable,
     declaredSize?: number,
     signal?: AbortSignal,
+    kind?: "text",
   ): Promise<UploadResult> {
     if (signal?.aborted) {
       throw Object.assign(new Error("Upload aborted"), { statusCode: 499 });
@@ -73,6 +111,31 @@ export class FileService {
       throw Object.assign(new Error("Session not available"), { statusCode: 410 });
     }
 
+    let uploadStream = stream;
+    let uploadSize = declaredSize;
+    if (kind === "text") {
+      const raw = await readStream(stream, TEXT_MAX_BYTES);
+      const text = raw.toString("utf8").trim();
+      if (text.length === 0) {
+        throw Object.assign(new Error("Texto não pode ser vazio"), { statusCode: 400 });
+      }
+      if (text.length > TEXT_MAX_LENGTH) {
+        throw Object.assign(
+          new Error("Texto excede o limite de 10000 caracteres"),
+          { statusCode: 400 },
+        );
+      }
+      if (!this.repository.allowTextUpload(sessionId)) {
+        throw Object.assign(
+          new Error("Muitos textos enviados. Aguarde alguns segundos."),
+          { statusCode: 429 },
+        );
+      }
+      const content = Buffer.from(text, "utf8");
+      uploadStream = ReadableStream.from(content);
+      uploadSize = content.length;
+    }
+
     // Check file count limit
     const activeFiles = session.files.filter((f) => f.state !== "failed");
     if (activeFiles.length >= this.config.maxFilesPerSession) {
@@ -80,7 +143,13 @@ export class FileService {
     }
 
     // Sanitize filename
-    const safeName = sanitizeFilename(originalName);
+    let safeName = sanitizeFilename(originalName);
+    let effectiveMime = mimeType || "application/octet-stream";
+    if (kind === "text") {
+      if (!safeName.toLowerCase().endsWith(".txt")) safeName = `${safeName}.txt`;
+      safeName = uniqueTextName(session.files, safeName);
+      effectiveMime = TEXT_MIME;
+    }
     const storageName = generateStorageName();
     const filePath = join(this.config.tempDir, sessionId, storageName);
 
@@ -89,8 +158,8 @@ export class FileService {
       id: storageName,
       originalName: safeName,
       storageName,
-      mimeType: mimeType || "application/octet-stream",
-      size: declaredSize ?? 0,
+      mimeType: effectiveMime,
+      size: uploadSize ?? 0,
       bytesReceived: 0,
       state: "receiving",
       createdAt: now,
@@ -98,6 +167,7 @@ export class FileService {
       version: 1,
       extension: extractExtension(safeName),
       category: "", // Will be calculated after extension is set
+      ...(kind === "text" ? { kind } : {}),
     };
     // Calculate category from extension and mime
     fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
@@ -117,6 +187,7 @@ export class FileService {
       mimeType: fileRecord.mimeType,
       extension: fileRecord.extension,
       category: fileRecord.category,
+      kind: fileRecord.kind,
     });
 
     // Emit transfer_started event
@@ -139,14 +210,16 @@ export class FileService {
     }
 
     try {
-      await this.pipeToFile(stream, createWriteStream(filePath), sessionId, fileRecord, signal);
+      await this.pipeToFile(uploadStream, createWriteStream(filePath), sessionId, fileRecord, signal);
 
       // Reverificar se sessão não foi fechada no meio
       const currentSession = this.repository.getById(sessionId);
       if (!currentSession || currentSession.state === "CLOSED") {
         try {
           await rm(filePath, { force: true });
-        } catch {}
+        } catch {
+          // best effort: temp file may already be gone
+        }
         throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
       }
 
@@ -171,6 +244,7 @@ export class FileService {
         finishedAt: fileRecord.finishedAt,
         extension: fileRecord.extension,
         category: fileRecord.category,
+        kind: fileRecord.kind,
       });
 
       // Emit transfer_finished event
@@ -207,6 +281,7 @@ export class FileService {
         finishedAt: fileRecord.finishedAt,
         extension: fileRecord.extension,
         category: fileRecord.category,
+        kind: fileRecord.kind,
       });
 
       // Emit transfer_finished event with failure
