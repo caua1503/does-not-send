@@ -51,6 +51,7 @@ export interface FileEntry {
   state: "receiving" | "completed" | "failed";
   version: number;
   createdAt: string;
+  kind?: "file" | "text";
 }
 
 interface FileListResponse {

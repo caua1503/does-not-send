@@ -16,7 +16,10 @@ import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
 import { BASE_URL } from "../../lib/base.ts";
 import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
+import { TextWidget } from "../../components/TextWidget.tsx";
+import { buildTextFile, TEXT_MAX_LENGTH } from "../../lib/textFile.ts";
 import { JoinSessionForm } from "./JoinSessionForm.tsx";
+import { APP_VERSION } from "../../lib/whatsNew.ts";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
@@ -116,6 +119,7 @@ export default function PhonePage({
   });
 
   const [items, setItems] = useState<PhoneUploadItem[]>([]);
+  const [textError, setTextError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Session entered by id + code instead of the QR; wins over the URL lookup
   const [joinedSessionId, setJoinedSessionId] = useState<string | null>(restoredJoinedId);
@@ -284,6 +288,7 @@ export default function PhonePage({
             i.id === item.id ? { ...i, state: "completed", progress: 1, remoteId } : i
           )
         );
+        if (item.kind === "text") setTextError(null);
       } else if (xhr.status === 401) {
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Falha de autorização no envio" } : i))
@@ -300,6 +305,19 @@ export default function PhonePage({
       } else if (xhr.status === 409) {
         setItems((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
+        );
+      } else if (xhr.status === 400 || xhr.status === 429) {
+        let message =
+          xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
+        try {
+          const body = JSON.parse(xhr.responseText) as { error?: unknown };
+          if (typeof body.error === "string") message = body.error;
+        } catch {
+          // resposta sem corpo válido: mantém a mensagem padrão
+        }
+        if (item.kind === "text") setTextError(message);
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: message } : i))
         );
       } else if (xhr.status === 413) {
         setItems((prev) =>
@@ -322,7 +340,10 @@ export default function PhonePage({
       );
     };
 
-    xhr.open("POST", `${BASE_URL}/api/sessions/${sessionId}/files`);
+    xhr.open(
+      "POST",
+      `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
+    );
     if (credential) {
       xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     }
@@ -392,6 +413,31 @@ export default function PhonePage({
         uploadSingleFile(item);
       }
     });
+  };
+
+  const sendText = (raw: string): boolean => {
+    if (isSessionClosedRef.current) return false;
+    const text = raw.trim();
+    if (!text) {
+      setTextError("Texto não pode ser vazio");
+      return false;
+    }
+    if (text.length > TEXT_MAX_LENGTH) {
+      setTextError(`Texto excede o limite de ${TEXT_MAX_LENGTH} caracteres`);
+      return false;
+    }
+    const file = buildTextFile(text, new Date(), items.map((i) => i.file.name));
+    const item: PhoneUploadItem = {
+      id: `text-${Date.now()}-${Math.random()}`,
+      file,
+      progress: 0,
+      state: "pending",
+      kind: "text",
+    };
+    setTextError(null);
+    setItems((prev) => [...prev, item]);
+    uploadSingleFile(item);
+    return true;
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
@@ -550,13 +596,16 @@ export default function PhonePage({
   }
 
   return (
-    <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto">
+    <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto md:max-w-2xl md:h-dvh md:overflow-hidden md:border-x md:border-[var(--color-border)]">
       {/* Header */}
-      <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10">
+      <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10 md:static md:px-6 md:py-3">
         <div className="flex items-center gap-2 min-w-0">
           <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-semibold text-sm tracking-tight truncate">Enviar para Computador</span>
+            <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
+              v{APP_VERSION}
+            </span>
             {visualId && (
               <span
                 data-testid="phone-visual-id"
@@ -621,7 +670,7 @@ export default function PhonePage({
       )}
 
       {/* Main Container */}
-      <main className="flex-1 p-4 flex flex-col gap-4">
+      <main className="flex-1 p-4 flex flex-col gap-4 md:p-6 md:overflow-y-auto md:min-h-0">
         {/* Big Tap Area */}
         <input
           ref={fileInputRef}
@@ -640,7 +689,7 @@ export default function PhonePage({
             isSessionClosed
               ? "opacity-50 cursor-not-allowed bg-[var(--color-surface)]"
               : "hover:border-[var(--color-accent)] cursor-pointer bg-[var(--color-surface)] active:scale-[0.99]",
-            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 transition-all min-h-[160px]",
+            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 transition-all min-h-[160px] md:min-h-[120px] md:p-6",
           ].join(" ")}
           onClick={(e) => {
             if (isSessionClosed) {
@@ -661,6 +710,8 @@ export default function PhonePage({
           </div>
         </label>
 
+        <TextWidget onSend={sendText} disabled={isSessionClosed} error={textError} />
+
         {/* Global Progress */}
         {totalFiles > 0 && (
           <div className="bg-[var(--color-surface)] p-3 rounded-xl border border-[var(--color-border)] space-y-1.5">
@@ -673,7 +724,7 @@ export default function PhonePage({
         )}
 
         {/* Upload List */}
-        <div className="flex-1 space-y-2 overflow-y-auto">
+        <div className="flex-1 space-y-2">
           {items.map((item) => (
             <UploadItem
               key={item.id}
@@ -684,26 +735,27 @@ export default function PhonePage({
           ))}
         </div>
 
-        {/* Bottom Actions */}
-        {totalFiles > 0 && !isUploading && (
-          <div className="pt-2 sticky bottom-4">
-            <Button
-              variant="primary"
-              size="lg"
-              className="w-full shadow-lg"
-              disabled={isSessionClosed}
-              onClick={() => {
-                if (!isSessionClosed) {
-                  fileInputRef.current?.click();
-                }
-              }}
-            >
-              <Plus size={18} strokeWidth={2} />
-              {isSessionClosed ? "Sessão encerrada" : "Enviar mais arquivos"}
-            </Button>
-          </div>
-        )}
       </main>
+
+      {/* Bottom Actions */}
+      {totalFiles > 0 && !isUploading && (
+        <div className="pt-2 sticky bottom-4 px-4 pb-4 md:static md:px-6">
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full shadow-lg"
+            disabled={isSessionClosed}
+            onClick={() => {
+              if (!isSessionClosed) {
+                fileInputRef.current?.click();
+              }
+            }}
+          >
+            <Plus size={18} strokeWidth={2} />
+            {isSessionClosed ? "Sessão encerrada" : "Enviar mais arquivos"}
+          </Button>
+        </div>
+      )}
 
       {editingItem && (
         <ImageEditor

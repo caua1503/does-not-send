@@ -1,4 +1,4 @@
-import { CheckCircle2, RefreshCw, Loader2, File, Pencil } from "lucide-react";
+import { CheckCircle2, RefreshCw, Loader2, File, FileText, Pencil } from "lucide-react";
 import { formatBytes } from "../../lib/format.ts";
 import { isEditableImage, byExtension } from "../../lib/editableImage.ts";
 import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
@@ -11,6 +11,7 @@ export interface PhoneUploadItem {
   error?: string;
   remoteId?: string;
   edited?: boolean;
+  kind?: "text";
 }
 
 interface UploadItemProps {
@@ -25,7 +26,11 @@ export function UploadItem({ item, onRetry, onEdit }: UploadItemProps) {
   const canEdit = item.state === "completed" && Boolean(item.remoteId) && editable;  return (
     <div className="flex items-center gap-3 p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl animate-slide-in">
       <div className="w-10 h-10 rounded-lg bg-[var(--color-border)]/50 flex items-center justify-center flex-shrink-0">
-        <File size={18} strokeWidth={1.5} className="text-[var(--color-text-muted)]" />
+        {item.kind === "text" ? (
+          <FileText size={18} strokeWidth={1.5} className="text-[var(--color-text-muted)]" />
+        ) : (
+          <File size={18} strokeWidth={1.5} className="text-[var(--color-text-muted)]" />
+        )}
       </div>
 
       <div className="flex-1 min-w-0">

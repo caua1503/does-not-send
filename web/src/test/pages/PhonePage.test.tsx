@@ -249,6 +249,52 @@ describe("PhonePage", () => {
     vi.unstubAllGlobals();
   });
 
+  it("envia texto como arquivo na mesma lista (?kind=text)", () => {
+    localStorage.setItem(
+      "dns_phone_cred_session-test-id",
+      JSON.stringify({
+        phoneCredential: "secret-phone-credential-xyz",
+        visualId: "B2N88K",
+      })
+    );
+
+    const xhrInstances: any[] = [];
+    class MockXHR {
+      open = vi.fn();
+      setRequestHeader = vi.fn();
+      send = vi.fn();
+      upload = { onprogress: null };
+      status = 201;
+      onload: any = null;
+      onerror: any = null;
+
+      constructor() {
+        xhrInstances.push(this);
+      }
+    }
+
+    vi.stubGlobal("XMLHttpRequest", MockXHR);
+
+    render(<PhonePage />);
+
+    fireEvent.change(screen.getByPlaceholderText("Digite ou cole um texto..."), {
+      target: { value: "  meu texto  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /enviar/i }));
+
+    expect(xhrInstances.length).toBe(1);
+    expect(xhrInstances[0].open).toHaveBeenCalledWith(
+      "POST",
+      "/api/sessions/session-test-id/files?kind=text"
+    );
+    expect(xhrInstances[0].send).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Texto \d\d-\d\d-\d\d\.txt/)).toBeInTheDocument();
+    expect(screen.getByText("0/1 enviados")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Digite ou cole um texto...")).toHaveValue("");
+
+    vi.unstubAllGlobals();
+  });
+
   it("exibe 'Otimizando...' para foto > 1.2 MB sem bloquear a tela e depois envia comprimida", async () => {
     localStorage.setItem(
       "dns_phone_cred_session-test-id",
