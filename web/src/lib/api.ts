@@ -117,6 +117,15 @@ export async function joinWithCode(sessionId: string, code: string): Promise<Joi
   return res.json() as Promise<JoinResponse>;
 }
 
+/** POST /api/sessions/:id/login-code — issue a fresh manual login code on demand. */
+export async function requestLoginCode(id: string, token: string): Promise<void> {
+  const res = await apiFetch(`/api/sessions/${id}/login-code`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Failed to request login code: ${res.status}`);
+}
+
 export interface SessionInfo {
   id: string;
   visualId?: string;

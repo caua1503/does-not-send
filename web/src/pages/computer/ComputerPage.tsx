@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Monitor } from "lucide-react";
+import { Plus, Monitor, KeyRound } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
 import { EmptyState } from "../../components/ui/EmptyState.tsx";
 import { Toast } from "../../components/ui/Toast.tsx";
 import { SessionCard } from "./SessionCard.tsx";
 import { FileList } from "./FileList.tsx";
-import { createSession, deleteSession } from "../../lib/api.ts";
+import { createSession, deleteSession, joinWithCode, JoinError } from "../../lib/api.ts";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import type { Session } from "../../lib/api.ts";
 import { BASE_URL } from "../../lib/base.ts";
+import { JoinSessionForm } from "../phone/JoinSessionForm.tsx";
+import { APP_VERSION } from "../../lib/whatsNew.ts";
 
 const PUBLIC_BASE_URL = BASE_URL || window.location.origin;
 
@@ -21,6 +23,7 @@ export default function ComputerPage() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "error" | "info" } | null>(null);
 
   const selectedSession = sessions.find((s) => s.id === selectedId);
@@ -58,11 +61,18 @@ export default function ComputerPage() {
     }
   }, [selectedId]);
 
+  // Session no longer exists server-side (restart/expiry): drop it, tell the user
+  const handleSessionExpired = useCallback((sessionId: string) => {
+    setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    setSelectedId((prev) => (prev === sessionId ? null : prev));
+    setToast({ message: "Sessão encerrada", type: "info" });
+  }, []);
+
   // pagehide: best-effort cleanup via sendBeacon (no custom headers)
   useEffect(() => {
     const handlePageHide = () => {
       for (const session of sessions) {
-        const url = `${PUBLIC_BASE_URL}/api/sessions/${session.id}?token=${encodeURIComponent(session.ownerToken)}`;
+        const url = `${PUBLIC_BASE_URL}/api/sessions/${encodeURIComponent(session.id)}?token=${encodeURIComponent(session.ownerToken)}`;
         // sendBeacon with DELETE not directly supported — use fetch with keepalive
         navigator.sendBeacon(url);
       }
@@ -70,6 +80,31 @@ export default function ComputerPage() {
     window.addEventListener("pagehide", handlePageHide);
     return () => window.removeEventListener("pagehide", handlePageHide);
   }, [sessions]);
+
+  // Manual login from the home screen: same credential the QR pairs give, then
+  // hand off to the phone page with the canonical id.
+  const handleJoinWithCode = async (sessionId: string, code: string) => {
+    try {
+      const data = await joinWithCode(sessionId, code);
+      try {
+        localStorage.setItem(
+          `dns_phone_cred_${data.sessionId}`,
+          JSON.stringify({ phoneCredential: data.phoneCredential }),
+        );
+      } catch {}
+      window.location.assign(`/enviar/${data.sessionId}`);
+      return null;
+    } catch (err) {
+      if (err instanceof JoinError && err.status === 429) {
+        return "Muitas tentativas, aguarde um pouco";
+      }
+      return "ID ou código inválido ou expirado";
+    }
+  };
+
+  if (joining) {
+    return <JoinSessionForm onSubmit={handleJoinWithCode} onCancel={() => setJoining(false)} />;
+  }
 
   return (
     <div className="min-h-dvh bg-[var(--color-bg)]">
@@ -79,6 +114,9 @@ export default function ComputerPage() {
           <div className="flex items-center gap-2">
             <Monitor size={20} strokeWidth={1.5} className="text-[var(--color-accent)]" />
             <span className="text-base font-semibold tracking-tight">does not send</span>
+            <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
+              v{APP_VERSION}
+            </span>
           </div>
           <Button
             variant="primary"
@@ -102,14 +140,20 @@ export default function ComputerPage() {
               title="Nenhuma sessão ativa"
               description="Crie uma sessão e escaneie o QR Code com o seu telefone para enviar arquivos."
               action={
-                <Button
-                  variant="primary"
-                  onClick={handleNewSession}
-                  disabled={creating}
-                >
-                  <Plus size={16} strokeWidth={1.75} />
-                  Nova sessão
-                </Button>
+                <div className="flex flex-col gap-2 w-48">
+                  <Button
+                    variant="primary"
+                    onClick={handleNewSession}
+                    disabled={creating}
+                  >
+                    <Plus size={16} strokeWidth={1.75} />
+                    Nova sessão
+                  </Button>
+                  <Button variant="ghost" onClick={() => setJoining(true)}>
+                    <KeyRound size={16} strokeWidth={1.75} />
+                    Entrar com código
+                  </Button>
+                </div>
               }
             />
           </div>
@@ -125,6 +169,7 @@ export default function ComputerPage() {
                   selected={session.id === selectedId}
                   onSelect={() => setSelectedId(session.id)}
                   onClose={() => handleCloseSession(session)}
+                  onExpired={() => handleSessionExpired(session.id)}
                 />
               ))}
             </aside>
