@@ -100,9 +100,10 @@ export class SessionService {
       !this.store.loginCodes.consume(session.id, code)
     ) {
       if (session && session.state !== "CLOSED") {
-        this.store.loginGuard.recordSessionFailure(session.id, (id) =>
-          this.store.loginCodes.issue(id),
-        );
+        this.store.loginGuard.recordSessionFailure(session.id, (id) => {
+          // Rotate only a code that exists; codes are never issued unasked
+          if (this.store.loginCodes.current(id)) this.store.loginCodes.issue(id);
+        });
       }
       return null;
     }
@@ -122,8 +123,6 @@ export class SessionService {
     this.store.update(session);
     this.touchActivity(session.id);
 
-    // Discard the used code and hand the computer the next one right away
-    this.store.loginCodes.issue(session.id);
     return { sessionId: session.id, phoneCredential };
   }
 

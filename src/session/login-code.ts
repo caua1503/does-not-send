@@ -10,6 +10,14 @@ export interface LoginCodeMessage {
   expiresInMs: number;
 }
 
+/** Tells the computer the code it is showing is gone (used or dropped). */
+export interface LoginCodeCleared {
+  type: "login_code_cleared";
+  sessionId: string;
+}
+
+export type LoginCodeEvent = LoginCodeMessage | LoginCodeCleared;
+
 /** Uppercase, no spaces and no hyphens — applied to both sides of the lookup. */
 export function normalizeSessionId(id: string): string {
   return id.replace(/[\s-]/g, "").toUpperCase();
@@ -31,9 +39,9 @@ interface StoredLoginCode {
 }
 
 /**
- * Numeric login codes for devices that cannot read the QR Code. The code
- * reaches the session computer over its WebSocket on every issue/rotation and
- * dies once used or expired. Plaintext is held only until then, so a computer
+ * Numeric login codes for devices that cannot read the QR Code. Codes are
+ * issued on demand, reach the session computer over its WebSocket and die
+ * once used or expired. Plaintext is held only until then, so a computer
  * that reconnects can receive the code it missed.
  */
 export class LoginCodeManager {
@@ -44,7 +52,7 @@ export class LoginCodeManager {
   constructor(
     private readonly deps: {
       clock: Clock;
-      notify: (message: LoginCodeMessage) => void;
+      notify: (message: LoginCodeEvent) => void;
     },
   ) {}
 
@@ -87,6 +95,7 @@ export class LoginCodeManager {
     }
 
     this.codes.delete(sessionId);
+    this.deps.notify({ type: "login_code_cleared", sessionId });
     return true;
   }
 
@@ -94,14 +103,11 @@ export class LoginCodeManager {
     this.codes.delete(sessionId);
   }
 
-  /** Drops expired codes and issues one for every listed session that lacks one. */
-  tick(sessions: Iterable<{ id: string }>): void {
+  /** Drops expired codes. New codes are only issued on demand. */
+  tick(): void {
     const now = this.deps.clock.now();
     for (const [sessionId, stored] of this.codes) {
       if (now >= stored.expiresAt) this.codes.delete(sessionId);
-    }
-    for (const session of sessions) {
-      if (!this.codes.has(session.id)) this.issue(session.id);
     }
   }
 }

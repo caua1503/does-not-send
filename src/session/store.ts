@@ -7,7 +7,7 @@ import { SystemClock } from "./clock.js";
 import { DEFAULT_TIMING_CONFIG, type SessionTimingConfig } from "./timing.js";
 import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
-import { LoginCodeManager, normalizeSessionId, type LoginCodeMessage } from "./login-code.js";
+import { LoginCodeManager, normalizeSessionId, type LoginCodeEvent } from "./login-code.js";
 import { LoginGuard } from "./login-guard.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
@@ -63,8 +63,12 @@ export class SessionStore {
   private sessions = new Map<string, Session>();
   private pendingCleanups = new Map<string, PendingCleanup>();
   private pendingSockets = new Set<PendingWs>();
-  private activeSockets = new Map<string, { computer?: WebSocketLike; phone?: WebSocketLike }>();
+  private activeSockets = new Map<
+    string,
+    { computer: Set<WebSocketLike>; phone: Set<WebSocketLike> }
+  >();
   private activeUploadControllers = new Map<string, Set<AbortController>>();
+  private textUploadTimes = new Map<string, number[]>();
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
   readonly loginCodes: LoginCodeManager;
   readonly loginGuard: LoginGuard;
@@ -249,30 +253,28 @@ export class SessionStore {
       }
     }
 
-    const conn: { computer?: WebSocketLike; phone?: WebSocketLike } =
-      this.activeSockets.get(sessionId) ?? {};
-    const existing = conn[role];
-    if (existing && existing !== socket) {
-      try {
-        existing.close(4000, "Replaced by new connection");
-      } catch {}
-    }
-
-    conn[role] = socket;
+    // Multiple sockets per role are expected: the computer tab keeps one for
+    // file events and another for the login code, and both must stay open.
+    const conn = this.activeSockets.get(sessionId) ?? {
+      computer: new Set<WebSocketLike>(),
+      phone: new Set<WebSocketLike>(),
+    };
+    conn[role].add(socket);
     this.activeSockets.set(sessionId, conn);
 
     // Registra presença imediata na autenticação WebSocket
     this.recordHeartbeat(sessionId, role);
 
     // A reconnect missed every rotation: send the current login code straight
-    // to the new socket, before any stale one can be closed and unregistered
+    // to the socket that just authenticated
     if (role === "computer") {
-      const connection = this.activeSockets.get(sessionId);
       const current = this.loginCodes.current(sessionId);
       if (current) {
         try {
-          connection?.computer?.send(JSON.stringify(current));
-        } catch {}
+          socket.send(JSON.stringify(current));
+        } catch {
+          // best effort: socket may have dropped
+        }
       }
     }
 
@@ -289,18 +291,15 @@ export class SessionStore {
     }
 
     // Remove from active
-    const conn: { computer?: WebSocketLike; phone?: WebSocketLike } | undefined =
-      this.activeSockets.get(sessionId);
+    const conn = this.activeSockets.get(sessionId);
     if (conn) {
       if (role) {
-        if (conn[role] === socket) {
-          delete conn[role];
-        }
+        conn[role].delete(socket);
       } else {
-        if (conn.computer === socket) delete conn.computer;
-        if (conn.phone === socket) delete conn.phone;
+        conn.computer.delete(socket);
+        conn.phone.delete(socket);
       }
-      if (!conn.computer && !conn.phone) {
+      if (conn.computer.size === 0 && conn.phone.size === 0) {
         this.activeSockets.delete(sessionId);
       }
     }
@@ -311,39 +310,40 @@ export class SessionStore {
     if (!conn) return;
 
     const payload = JSON.stringify(message);
-    if (conn.phone && conn.phone.readyState === 1) {
+    for (const socket of [...conn.phone, ...conn.computer]) {
+      if (socket.readyState !== 1) continue;
       try {
-        conn.phone.send(payload);
-      } catch {}
-    }
-    if (conn.computer && conn.computer.readyState === 1) {
-      try {
-        conn.computer.send(payload);
-      } catch {}
+        socket.send(payload);
+      } catch {
+        // best effort: skip sockets that already dropped
+      }
     }
   }
 
-  private sendToComputer(message: LoginCodeMessage): void {
+  private sendToComputer(message: LoginCodeEvent): void {
     const conn = this.activeSockets.get(message.sessionId);
-    if (!conn?.computer || conn.computer.readyState !== 1) return;
-    try {
-      conn.computer.send(JSON.stringify(message));
-    } catch {}
+    if (!conn) return;
+    const payload = JSON.stringify(message);
+    for (const socket of conn.computer) {
+      if (socket.readyState !== 1) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // best effort: skip sockets that already dropped
+      }
+    }
   }
 
   closeWs(sessionId: string): void {
     const conn = this.activeSockets.get(sessionId);
     if (!conn) return;
 
-    if (conn.phone) {
+    for (const socket of [...conn.phone, ...conn.computer]) {
       try {
-        conn.phone.close(4000, "Session closed");
-      } catch {}
-    }
-    if (conn.computer) {
-      try {
-        conn.computer.close(4000, "Session closed");
-      } catch {}
+        socket.close(4000, "Session closed");
+      } catch {
+        // best effort: socket may already be closed
+      }
     }
     this.activeSockets.delete(sessionId);
   }
@@ -462,7 +462,9 @@ export class SessionStore {
       if (now - pending.connectedAt >= this.timingConfig.wsAuthTimeoutMs) {
         try {
           pending.socket.close(4001, "Auth timeout");
-        } catch {}
+        } catch {
+          // best effort: pending socket may already be closed
+        }
         this.pendingSockets.delete(pending);
       }
     }
@@ -488,9 +490,9 @@ export class SessionStore {
       }
     }
 
-    // 3. Keep exactly one fresh login code per live session
+    // 3. Drop expired login codes; new ones are issued on demand
     const active = this.getAllActive();
-    this.loginCodes.tick(active);
+    this.loginCodes.tick();
     this.loginGuard.sweep(new Set(active.map((session) => session.id)));
   }
 
