@@ -67,7 +67,7 @@ describe("useSessionEvents", () => {
 
     it("envia auth primeiro ao conectar com role e secret", () => {
       const { result } = renderHook(() =>
-        useSessionEvents("session-1", "phone-cred", { role: "phone" })
+        useSessionEvents("session-1", "guest-cred", { role: "guest" })
       );
 
       // Avança timer do constructor
@@ -80,12 +80,12 @@ describe("useSessionEvents", () => {
       expect(ws.sentMessages.length).toBe(1);
       expect(JSON.parse(ws.sentMessages[0]!)).toEqual({
         type: "auth",
-        role: "phone",
-        secret: "phone-cred",
+        role: "guest",
+        secret: "guest-cred",
       });
       expect(result.current.connected).toBe(false);
 
-      // Backend responde auth_ok
+      // Backend responde auth_ok (canônico) — cliente não depende do valor
       act(() => {
         ws.receiveMessage({ type: "auth_ok", role: "phone" });
       });
@@ -95,7 +95,7 @@ describe("useSessionEvents", () => {
 
     it("envia heartbeat a cada 10s após autenticação", () => {
       renderHook(() =>
-        useSessionEvents("session-1", "comp-token", { role: "computer" })
+        useSessionEvents("session-1", "comp-token", { role: "host" })
       );
 
       act(() => {
@@ -127,9 +127,9 @@ describe("useSessionEvents", () => {
       expect(ws.sentMessages.filter((m) => JSON.parse(m).type === "heartbeat").length).toBe(2);
     });
 
-    it("reconecta automaticamente a cada 2s para o telefone", () => {
+    it("reconecta automaticamente a cada 2s para o visitante", () => {
       const { result } = renderHook(() =>
-        useSessionEvents("session-1", "phone-cred", { role: "phone", reconnectInterval: 2000 })
+        useSessionEvents("session-1", "guest-cred", { role: "guest", reconnectInterval: 2000 })
       );
 
       act(() => {
@@ -174,16 +174,16 @@ describe("useSessionEvents", () => {
       expect(ws2.sentMessages.length).toBe(1);
       expect(JSON.parse(ws2.sentMessages[0]!)).toEqual({
         type: "auth",
-        role: "phone",
-        secret: "phone-cred",
+        role: "guest",
+        secret: "guest-cred",
       });
     });
 
     it("ao receber session_closed encerra e bloqueia reconexão", () => {
       const onClosed = vi.fn();
       const { result } = renderHook(() =>
-        useSessionEvents("session-1", "phone-cred", {
-          role: "phone",
+        useSessionEvents("session-1", "guest-cred", {
+          role: "guest",
           onSessionClosed: onClosed,
         })
       );
@@ -217,7 +217,7 @@ describe("useSessionEvents", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const { result } = renderHook(() =>
-        useSessionEvents("session-1", "phone-cred", { role: "phone", reconnectInterval: 2000 })
+        useSessionEvents("session-1", "guest-cred", { role: "guest", reconnectInterval: 2000 })
       );
 
       act(() => {
@@ -259,7 +259,7 @@ describe("useSessionEvents", () => {
 
       const { result } = renderHook(() =>
         useSessionEvents("session-gone", "stale-token", {
-          role: "computer",
+          role: "host",
           reconnectInterval: 2000,
           onSessionClosed: onClosed,
         })
@@ -287,9 +287,9 @@ describe("useSessionEvents", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("computador pode enviar mensagem close via sendClose", () => {
+    it("host pode enviar mensagem close via sendClose", () => {
       const { result } = renderHook(() =>
-        useSessionEvents("session-1", "comp-token", { role: "computer" })
+        useSessionEvents("session-1", "comp-token", { role: "host" })
       );
 
       act(() => {

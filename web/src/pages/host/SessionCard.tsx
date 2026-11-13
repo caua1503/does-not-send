@@ -48,7 +48,7 @@ export function SessionCard({
   const { files, connected } = useSessionEvents(
     session.id,
     session.ownerToken,
-    { role: "computer", onSessionClosed: (reason) => {
+    { role: "host", onSessionClosed: (reason) => {
       if (reason === "session_expired") onExpired?.();
     } },
   );

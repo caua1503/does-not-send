@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../app.js";
-import type { SessionRole } from "../session/auth.js";
+import { normalizeSessionRole, type SessionRole } from "../session/auth.js";
 import { fileEvents, type FileEvent, type FileEventType } from "../utils/events.js";
 
 const WS_CLOSE_SESSION_CLOSED = 4000;
@@ -51,18 +51,16 @@ export async function websocketRoutes(
 
           // 1. Unauthenticated state: first message MUST be auth
           if (!authenticatedRole) {
-            if (
-              msg.type !== "auth" ||
-              (msg.role !== "phone" && msg.role !== "computer") ||
-              typeof msg.secret !== "string"
-            ) {
+            const role =
+              typeof msg.role === "string" ? normalizeSessionRole(msg.role) : null;
+            if (msg.type !== "auth" || !role || typeof msg.secret !== "string") {
               socket.close(WS_CLOSE_UNAUTHORIZED, "Invalid auth message");
               return;
             }
 
             const result = ctx.sessionStore.authenticateWs(
               sessionId,
-              msg.role,
+              role,
               msg.secret,
               socket,
             );
@@ -72,7 +70,7 @@ export async function websocketRoutes(
               return;
             }
 
-            authenticatedRole = msg.role;
+            authenticatedRole = role;
 
             // Register file event forwarding for computer role
             if (authenticatedRole === "computer") {

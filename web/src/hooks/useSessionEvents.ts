@@ -3,7 +3,7 @@ import { sessionReducer, initialState } from "../lib/sessionReducer.ts";
 import { wsUrl, getSession, ApiError } from "../lib/api.ts";
 import type { FileEntry } from "../lib/api.ts";
 
-export type SessionRole = "phone" | "computer";
+export type SessionRole = "host" | "guest";
 
 export interface UseSessionEventsOptions {
   role?: SessionRole;
@@ -25,7 +25,7 @@ export interface UseSessionEventsResult {
  * - Authenticates first: sends {"type":"auth","role": role, "secret": secret}
  * - Sends heartbeat every 10s (10000ms) after authenticated
  * - Applies WS file events via sessionReducer
- * - Reconnects automatically (every 2s for phone or configured interval)
+ * - Reconnects automatically (every 2s for guest or configured interval)
  * - Handles "session_closed" event and code 4000
  * - On 4001, probes GET /api/sessions/:id: 401/404 ends (session_expired), else retries
  * - Cleans up on unmount or sessionId change
@@ -35,7 +35,7 @@ export function useSessionEvents(
   token: string | null,
   options?: UseSessionEventsOptions,
 ): UseSessionEventsResult {
-  const role = options?.role ?? "computer";
+  const role = options?.role ?? "host";
   const reconnectDelay = options?.reconnectInterval ?? 2000;
 
   const [state, dispatch] = useReducer(sessionReducer, initialState);

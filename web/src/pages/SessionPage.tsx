@@ -73,13 +73,13 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
   const [editingId, setEditingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // (a) Cliente WS para o telefone: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
+  // (a) Cliente WS do visitante: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
   const {
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
   } = useSessionEvents(sessionId, credential, {
-    role: "phone",
+    role: "guest",
     reconnectInterval: 2000,
   });
 
