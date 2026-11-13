@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestApp, cleanupTestApp, type TestContext } from "./helpers.js";
+import { createTestApp, cleanupTestApp, getAppContext, type TestContext } from "./helpers.js";
 import { VISUAL_ID_CHARSET } from "../src/session/visual-id.js";
 
 function createMultipartPayload(
@@ -53,7 +53,7 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     }
 
     // Segredos não ficam puros no objeto da sessão
-    const appCtx = (ctx.app as any).ctx;
+    const appCtx = getAppContext(ctx.app);
     const session = appCtx.sessionStore.getById(body.id);
     const serialized = JSON.stringify(session);
     expect(serialized).not.toContain(body.computerToken);
@@ -83,7 +83,7 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     expect(pairBody.state).toBe("PAIRED");
 
     // Verifica que phoneCredential não está salva pura no banco/mapa
-    const appCtx = (ctx.app as any).ctx;
+    const appCtx = getAppContext(ctx.app);
     const session = appCtx.sessionStore.getById(id);
     const serialized = JSON.stringify(session);
     expect(serialized).not.toContain(pairBody.phoneCredential);
@@ -135,7 +135,9 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     const getRes = await ctx.app.inject({
       method: "GET",
       url: `/api/sessions/${computerBody.id}`,
-      headers: { authorization: `Bearer ${(createRes.json() as any).computerToken}` },
+      headers: {
+        authorization: `Bearer ${createRes.json<{ computerToken: string }>().computerToken}`,
+      },
     });
     expect(getRes.json().visualId).toBe(computerBody.visualId);
   });
@@ -240,8 +242,8 @@ describe("PAREAMENTO EXCLUSIVO - PARTE 2", () => {
     }
 
     // Confere que a sessão tem 3 arquivos
-    const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionStore.getById(id);
+    const appCtx = getAppContext(ctx.app);
+    const session = appCtx.sessionStore.getById(id)!;
     expect(session.files).toHaveLength(3);
     // Estado final após todos os uploads deve ser PAIRED
     expect(session.state).toBe("PAIRED");

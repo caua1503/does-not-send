@@ -1,6 +1,6 @@
 import { useReducer, useEffect, useRef, useState, useCallback } from "react";
 import { sessionReducer, initialState } from "../lib/sessionReducer.ts";
-import { wsUrl } from "../lib/api.ts";
+import { wsUrl, getSession, ApiError } from "../lib/api.ts";
 import type { FileEntry } from "../lib/api.ts";
 
 export type SessionRole = "phone" | "computer";
@@ -27,6 +27,7 @@ export interface UseSessionEventsResult {
  * - Applies WS file events via sessionReducer
  * - Reconnects automatically (every 2s for phone or configured interval)
  * - Handles "session_closed" event and code 4000
+ * - On 4001, probes GET /api/sessions/:id: 401/404 ends (session_expired), else retries
  * - Cleans up on unmount or sessionId change
  */
 export function useSessionEvents(
@@ -166,13 +167,32 @@ export function useSessionEvents(
           }
 
           if (event.code === 4001) {
-            // Unauthorized / Auth timeout — reconecta com credencial existente
-            // (4001 pode ser auth timeout do servidor, não necessariamente token inválido)
+            // 4001 = auth timeout OR session gone server-side. GET decides: a
+            // missing/invalid session must stop the retry loop, not hammer it.
             setConnected(false);
             setReconnecting(true);
-            retryRef.current = setTimeout(() => {
-              if (!stopped && mountedRef.current) connect();
-            }, reconnectDelay);
+            const scheduleRetry = () => {
+              if (stopped || !mountedRef.current) return;
+              retryRef.current = setTimeout(() => {
+                if (!stopped && mountedRef.current) connect();
+              }, reconnectDelay);
+            };
+            getSession(sessionId!, token!).then(
+              () => scheduleRetry(),
+              (err: unknown) => {
+                if (stopped || !mountedRef.current) return;
+                if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+                  setSessionClosed(true);
+                  setClosedReason("session_expired");
+                  setReconnecting(false);
+                  stopped = true;
+                  clearTimers();
+                  options?.onSessionClosed?.("session_expired");
+                  return;
+                }
+                scheduleRetry();
+              },
+            );
             return;
           }
 

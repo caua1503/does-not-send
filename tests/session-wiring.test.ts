@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestApp, cleanupTestApp, type TestContext } from "./helpers.js";
+import { createTestApp, cleanupTestApp, getAppContext, type TestContext } from "./helpers.js";
 
 describe("session wiring (integration)", () => {
   let ctx: TestContext;
@@ -26,8 +26,8 @@ describe("session wiring (integration)", () => {
       qrToken: string;
     }>();
 
-    const appCtx = (ctx.app as any).ctx;
-    const session = appCtx.sessionStore.getById(id);
+    const appCtx = getAppContext(ctx.app);
+    const session = appCtx.sessionStore.getById(id)!;
 
     expect(session.state).toBe("WAITING");
     expect(session.qrTokenHash).toBeDefined();
@@ -47,7 +47,7 @@ describe("session wiring (integration)", () => {
     });
     expect(del.statusCode).toBe(204);
 
-    const appCtx = (ctx.app as any).ctx;
+    const appCtx = getAppContext(ctx.app);
     const session = appCtx.sessionStore.getById(id);
     expect(session?.state).toBe("CLOSED");
   });

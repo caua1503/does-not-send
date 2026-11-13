@@ -42,7 +42,7 @@ describe("consumePairing", () => {
       expect(typeof result.phoneCredential).toBe("string");
       expect(result.phoneCredential.length).toBeGreaterThanOrEqual(40);
       expect(JSON.stringify(session)).not.toContain(result.phoneCredential);
-      expect((session as any).phoneCredentialHash).toBe(hashToken(result.phoneCredential));
+      expect(session.phoneCredentialHash).toBe(hashToken(result.phoneCredential));
     }
   });
 

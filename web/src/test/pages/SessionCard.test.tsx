@@ -1,5 +1,5 @@
 import { vi, it, expect, describe, beforeAll } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SessionCard } from "../../pages/computer/SessionCard.tsx";
 
 // jsdom não implementa canvas — mock mínimo para QRCodeCanvas não quebrar
@@ -116,5 +116,36 @@ describe("SessionCard QR Code zoom", () => {
     const modalId = screen.getByTestId("session-modal-visual-id");
     expect(modalId).toBeInTheDocument();
     expect(modalId).toHaveTextContent("ID: A7K92F");
+  });
+
+  it("gera o código numérico sob demanda", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SessionCard
+        session={session}
+        publicBaseUrl="http://192.168.1.100:3000"
+        onClose={vi.fn()}
+        selected={false}
+        onSelect={vi.fn()}
+      />
+    );
+
+    // Sem código até o usuário pedir
+    expect(screen.queryByTestId("manual-login-code-value")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /gerar código/i }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/sessions/test-session-id/login-code"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    vi.unstubAllGlobals();
   });
 });

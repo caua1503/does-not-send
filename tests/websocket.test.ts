@@ -155,6 +155,32 @@ describe("websocket", () => {
     await waitForClose(ws);
   });
 
+  it("keeps two computer sockets open and delivers the login code to both", async () => {
+    const session = await createSession(ctx.app);
+    const ws1 = await wsConnectAndAuth(baseUrl, session.id, "computer", session.ownerToken);
+    const ws2 = await wsConnectAndAuth(baseUrl, session.id, "computer", session.ownerToken);
+
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/login-code`,
+      headers: { authorization: `Bearer ${session.ownerToken}` },
+    });
+    expect(res.statusCode).toBe(202);
+
+    const hasCode = (msg: Record<string, unknown>): boolean => msg.type === "login_code";
+    const [first, second] = (await Promise.all([
+      waitForEvent(ws1, hasCode),
+      waitForEvent(ws2, hasCode),
+    ])) as Array<{ code: string }>;
+    expect(first!.code).toMatch(/^\d{6}$/);
+    expect(second!.code).toBe(first!.code);
+    expect(ws1.readyState).toBe(WebSocket.OPEN);
+    expect(ws2.readyState).toBe(WebSocket.OPEN);
+
+    ws1.close();
+    ws2.close();
+  });
+
   it("receives file events in order: receiving → progress → completed", async () => {
     const session = await createSession(ctx.app);
     const ws = await wsConnectAndAuth(baseUrl, session.id, "computer", session.ownerToken);

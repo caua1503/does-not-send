@@ -243,6 +243,20 @@ export async function sessionRoutes(
     },
   );
 
+  // Issue a manual login code on demand (owner/computer only).
+  app.post<{ Params: { id: string } }>("/sessions/:id/login-code", async (request, reply) => {
+    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+    if (!auth) return;
+
+    const session = ctx.sessionStore.getById(auth.sessionId);
+    if (!session || session.state === "CLOSED") {
+      return reply.status(410).send({ error: "Session is closed", statusCode: 410 });
+    }
+
+    ctx.sessionStore.loginCodes.issue(auth.sessionId);
+    return reply.status(202).send({ ok: true });
+  });
+
   // Get session info (owner/computer/phone)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);

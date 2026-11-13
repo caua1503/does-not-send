@@ -211,8 +211,11 @@ describe("useSessionEvents", () => {
       expect(mockSockets.length).toBe(1);
     });
 
-    it("reconecta após fechamento 4001 (auth timeout do servidor)", () => {
+    it("reconecta após fechamento 4001 quando a sessão ainda existe no servidor", async () => {
       // Bug: fechar com 4001 bloqueava reconexão mesmo com token válido
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "session-1", state: "WAITING" }) });
+      vi.stubGlobal("fetch", fetchMock);
+
       const { result } = renderHook(() =>
         useSessionEvents("session-1", "phone-cred", { role: "phone", reconnectInterval: 2000 })
       );
@@ -230,22 +233,58 @@ describe("useSessionEvents", () => {
       });
 
       expect(result.current.connected).toBe(false);
-      // Deve agendar reconexão, não bloquear
       expect(result.current.reconnecting).toBe(true);
 
-      // Após 2s, tenta nova conexão
-      act(() => {
-        vi.advanceTimersByTime(2000);
+      // Confirma via GET que a sessão existe, depois reconecta após 2s
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
       });
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/sessions/session-1"),
+        expect.anything(),
+      );
       expect(mockSockets.length).toBe(2);
-
-      // Nova conexão envia auth
       const ws2 = mockSockets[1]!;
       act(() => {
         vi.advanceTimersByTime(1);
       });
-      expect(ws2.sentMessages.length).toBe(1);
       expect(JSON.parse(ws2.sentMessages[0]!).type).toBe("auth");
+    });
+
+    it("para de reconectar em 4001 quando GET /api/sessions retorna 401", async () => {
+      // Sessão sumiu do backend (restart): retry infinito martelava o proxy
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: "Unauthorized" }) });
+      vi.stubGlobal("fetch", fetchMock);
+      const onClosed = vi.fn();
+
+      const { result } = renderHook(() =>
+        useSessionEvents("session-gone", "stale-token", {
+          role: "computer",
+          reconnectInterval: 2000,
+          onSessionClosed: onClosed,
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+
+      const ws1 = mockSockets[0]!;
+      await act(async () => {
+        ws1.close(4001, "Session not found");
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(result.current.reconnecting).toBe(false);
+      expect(result.current.sessionClosed).toBe(true);
+      expect(onClosed).toHaveBeenCalledWith("session_expired");
+
+      // Nenhuma reconexão depois de vários ciclos
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+      expect(mockSockets.length).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it("computador pode enviar mensagem close via sendClose", () => {

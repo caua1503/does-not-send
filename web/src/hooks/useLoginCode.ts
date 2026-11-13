@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { wsUrl } from "../lib/api.ts";
+import { wsUrl, getSession, ApiError } from "../lib/api.ts";
 import { remainingSeconds } from "../lib/loginCode.ts";
 
 export interface LoginCodeState {
@@ -18,7 +18,7 @@ interface LoginCodeMessage {
 /**
  * Keeps the computer's current manual login code, delivered over the same
  * session WebSocket the file events use. Authenticates, then waits for
- * `login_code` pushes (one every rotation); reconnects on its own.
+ * `login_code` pushes and `login_code_cleared` notices; reconnects on its own.
  */
 export function useLoginCode(
   sessionId: string | null,
@@ -57,6 +57,10 @@ export function useLoginCode(
         if (stopped) return;
         try {
           const data = JSON.parse(event.data as string) as { type?: string };
+          if (data.type === "login_code_cleared") {
+            setState({ code: null, deadline: null });
+            return;
+          }
           if (data.type !== "login_code") return;
           const message = data as LoginCodeMessage;
           // The same code may arrive twice (issue + reconnect resend)
@@ -68,6 +72,22 @@ export function useLoginCode(
 
       ws.onclose = (event) => {
         if (stopped || event.code === 4000) return;
+        // 4001 with a gone session must not retry forever (GET decides)
+        if (event.code === 4001) {
+          getSession(sessionId!, token!).then(
+            () => { retry = setTimeout(connect, 2000); },
+            (err: unknown) => {
+              if (stopped) return;
+              // 401/404 = session gone: stop retrying; other errors retry
+              if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+                stopped = true;
+                return;
+              }
+              retry = setTimeout(connect, 2000);
+            },
+          );
+          return;
+        }
         retry = setTimeout(connect, 2000);
       };
     }

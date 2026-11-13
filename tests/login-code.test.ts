@@ -30,14 +30,19 @@ describe("normalizeSessionId", () => {
 describe("LoginCodeManager", () => {
   let clock: FakeClock;
   let sent: LoginCodeMessage[];
+  let cleared: string[];
   let manager: LoginCodeManager;
 
   beforeEach(() => {
     clock = new FakeClock(1_000_000);
     sent = [];
+    cleared = [];
     manager = new LoginCodeManager({
       clock,
-      notify: (message) => sent.push(message),
+      notify: (message) => {
+        if (message.type === "login_code") sent.push(message);
+        else cleared.push(message.sessionId);
+      },
     });
   });
 
@@ -74,30 +79,26 @@ describe("LoginCodeManager", () => {
     expect(manager.consume("MISSING", code)).toBe(false);
   });
 
-  it("rotação invalida o código antigo e envia o novo ao computador", () => {
-    manager.issue("EXISTS");
-    const oldCode = sent[0]!.code;
-
-    clock.advance(LOGIN_CODE_TTL_MS);
-    manager.tick([{ id: "EXISTS" }]);
-
-    expect(sent).toHaveLength(2);
-    const newCode = sent[1]!.code;
-    expect(newCode).not.toBe(oldCode);
-    expect(manager.consume("EXISTS", oldCode)).toBe(false);
-    expect(manager.consume("EXISTS", newCode)).toBe(true);
-  });
-
-  it("rotação após uso bem-sucedido gera novo código", () => {
+  it("tick apenas descarta o código expirado", () => {
     manager.issue("EXISTS");
     const code = sent[0]!.code;
-    expect(manager.consume("EXISTS", code)).toBe(true);
 
     clock.advance(LOGIN_CODE_TTL_MS);
-    manager.tick([{ id: "EXISTS" }]);
+    manager.tick();
 
-    expect(sent).toHaveLength(2);
-    expect(manager.consume("EXISTS", sent[1]!.code)).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(manager.current("EXISTS")).toBeNull();
+    expect(manager.consume("EXISTS", code)).toBe(false);
+  });
+
+  it("uso bem-sucedido descarta o código sem gerar outro", () => {
+    manager.issue("EXISTS");
+    const code = sent[0]!.code;
+
+    expect(manager.consume("EXISTS", code)).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(cleared).toEqual(["EXISTS"]);
+    expect(manager.current("EXISTS")).toBeNull();
   });
 
   it("current devolve o código vigente e ignora expirado ou inexistente", () => {
@@ -193,9 +194,18 @@ describe("POST /api/sessions/join", () => {
     return { statusCode: res.statusCode, body: res.body };
   }
 
+  async function requestCode(sessionId: string, computerToken: string) {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${sessionId}/login-code`,
+      headers: { authorization: `Bearer ${computerToken}` },
+    });
+    expect(res.statusCode).toBe(202);
+  }
+
   beforeEach(async () => {
     clock = new FakeClock(Date.now());
-    // Real sweeper so codes issued in tick() actually reach the computer
+    // Real sweeper so expired codes are dropped while the computer is connected
     ctx = await createTestApp(undefined, { clock, startSweeper: true });
     await ctx.app.listen({ port: 0, host: "127.0.0.1" });
     const address = ctx.app.server.address() as { port: number };
@@ -209,7 +219,9 @@ describe("POST /api/sessions/join", () => {
 
   it("código válido devolve token de celular utilizável", async () => {
     const session = await createSession(ctx.app, false);
-    const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
+    const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
 
     const res = await join(session.visualId!, code);
     expect(res.statusCode).toBe(200);
@@ -227,7 +239,9 @@ describe("POST /api/sessions/join", () => {
 
   it("normaliza o sessionId (maiúsculas, espaços e hífens)", async () => {
     const session = await createSession(ctx.app, false);
-    const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
+    const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
 
     const res = await join(` ${session.visualId!.toLowerCase()} `, code);
     expect(res.statusCode).toBe(200);
@@ -238,6 +252,7 @@ describe("POST /api/sessions/join", () => {
   it("computador que reconecta recebe o código vigente na hora", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     const code = await nextLoginCode(ws);
     const oldSocket = ws;
     ws.close();
@@ -275,7 +290,9 @@ describe("POST /api/sessions/join", () => {
 
   it("falhas retornam a mesma resposta genérica", async () => {
     const session = await createSession(ctx.app, false);
-    const code = await nextLoginCode(await openComputer(session.id, session.computerToken!));
+    const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
+    const code = await nextLoginCode(ws);
 
     const wrong = await join(session.visualId!, code === "000000" ? "111111" : "000000");
     const missing = await join("ZZZZZZ", code);
@@ -285,7 +302,9 @@ describe("POST /api/sessions/join", () => {
     const expired = await join(session.visualId!, code);
 
     const other = await createSession(ctx.app, false);
-    const otherCode = await nextLoginCode(await openComputer(other.id, other.computerToken!));
+    const otherWs = await openComputer(other.id, other.computerToken!);
+    await requestCode(other.id, other.computerToken!);
+    const otherCode = await nextLoginCode(otherWs);
     expect((await join(other.visualId!, otherCode)).statusCode).toBe(200);
     const reused = await join(other.visualId!, otherCode);
 
@@ -296,33 +315,49 @@ describe("POST /api/sessions/join", () => {
     }
   });
 
-  it("rotação: novo código chega ao computador e o antigo deixa de valer", async () => {
+  it("código expirado deixa de valer; outro só sob demanda", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     const oldCode = await nextLoginCode(ws);
 
     clock.advance(LOGIN_CODE_TTL_MS + 1);
     await store().tick();
 
+    expect((await join(session.visualId!, oldCode)).statusCode).toBe(401);
+    expect(store().loginCodes.current(session.id)).toBeNull();
+
+    await requestCode(session.id, session.computerToken!);
     const newCode = await nextLoginCode(ws);
     expect(newCode).not.toBe(oldCode);
-
-    expect((await join(session.visualId!, oldCode)).statusCode).toBe(401);
     expect((await join(session.visualId!, newCode)).statusCode).toBe(200);
   });
 
-  it("após entrada bem-sucedida há um novo código e o antigo não vale", async () => {
+  it("entrada bem-sucedida descarta o código e não gera outro", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     const code = await nextLoginCode(ws);
 
     expect((await join(session.visualId!, code)).statusCode).toBe(200);
 
-    const nextCode = await nextLoginCode(ws);
-    expect(nextCode).not.toBe(code);
-
+    const cleared = await nextMessage(ws, "login_code_cleared");
+    expect(cleared.type).toBe("login_code_cleared");
+    expect(store().loginCodes.current(session.id)).toBeNull();
     expect((await join(session.visualId!, code)).statusCode).toBe(401);
+
+    await requestCode(session.id, session.computerToken!);
+    const nextCode = await nextLoginCode(ws);
     expect((await join(session.visualId!, nextCode)).statusCode).toBe(200);
+  });
+
+  it("gerar código exige credencial do computador", async () => {
+    const session = await createSession(ctx.app, false);
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/login-code`,
+    });
+    expect(res.statusCode).toBe(401);
   });
 });
 
@@ -379,6 +414,15 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
     return { statusCode: res.statusCode, body: res.body, headers: res.headers };
   }
 
+  async function requestCode(sessionId: string, computerToken: string) {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${sessionId}/login-code`,
+      headers: { authorization: `Bearer ${computerToken}` },
+    });
+    expect(res.statusCode).toBe(202);
+  }
+
   beforeEach(async () => {
     clock = new FakeClock(Date.now());
     ctx = await createTestApp(undefined, { clock, startSweeper: true });
@@ -395,6 +439,7 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
   it("5 códigos errados invalidam o código atual e enviam outro ao computador", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     const code = await nextLoginCode(ws);
     const wrong = code === "000000" ? "111111" : "000000";
 
@@ -414,6 +459,7 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
   it("acerto zera o contador de falhas da sessão", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     const code = await nextLoginCode(ws);
     const wrong = code === "000000" ? "111111" : "000000";
 
@@ -430,6 +476,7 @@ describe("POST /api/sessions/join — proteção contra adivinhação", () => {
   it("10 falhas por IP retornam 429, com corpo que não revela o ID", async () => {
     const session = await createSession(ctx.app, false);
     const ws = await openComputer(session.id, session.computerToken!);
+    await requestCode(session.id, session.computerToken!);
     await nextLoginCode(ws);
     const wrong = "000000";
 

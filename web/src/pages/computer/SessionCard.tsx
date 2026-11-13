@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import { QRCodeSVG, QRCodeCanvas } from "qrcode.react";
-import { X, Files, Maximize2 } from "lucide-react";
+import { X, Files, Maximize2, Check } from "lucide-react";
 import { Card } from "../../components/ui/Card.tsx";
 import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
@@ -8,7 +8,8 @@ import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
 import { formatCodeGroups } from "../../lib/loginCode.ts";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
-import { getSession, type SessionInfo } from "../../lib/api.ts";
+import { getSession, requestLoginCode, type SessionInfo } from "../../lib/api.ts";
+import { copyText } from "../../lib/clipboard.ts";
 import { FileList } from "./FileList.tsx";
 import { createPortal } from "react-dom";
 
@@ -28,6 +29,8 @@ interface SessionCardProps {
   onClose: () => void;
   selected: boolean;
   onSelect: () => void;
+  /** Session vanished server-side (restart/expiry) — parent must drop it. */
+  onExpired?: () => void;
 }
 
 export function SessionCard({
@@ -36,6 +39,7 @@ export function SessionCard({
   onClose,
   selected,
   onSelect,
+  onExpired,
 }: SessionCardProps) {
   const [qrOpen, setQrOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -44,13 +48,39 @@ export function SessionCard({
   const { files, connected } = useSessionEvents(
     session.id,
     session.ownerToken,
-    { role: "computer" },
+    { role: "computer", onSessionClosed: (reason) => {
+      if (reason === "session_expired") onExpired?.();
+    } },
   );
   useHeartbeat(session.id, session.ownerToken);
 
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const { code: loginCode, deadline } = useLoginCode(session.id, session.ownerToken);
   const countdown = useCountdownSeconds(deadline);
+  const [requestingCode, setRequestingCode] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<"id" | "code" | null>(null);
+  const activeCode = loginCode && countdown > 0 ? loginCode : null;
+
+  function copyValue(kind: "id" | "code", value: string) {
+    void copyText(value).then((ok) => {
+      if (!ok) return;
+      setCopied(kind);
+      window.setTimeout(() => setCopied((current) => (current === kind ? null : current)), 1500);
+    });
+  }
+
+  async function generateCode() {
+    setRequestingCode(true);
+    setCodeError(null);
+    try {
+      await requestLoginCode(session.id, session.ownerToken);
+    } catch {
+      setCodeError("Falha ao gerar código");
+    } finally {
+      setRequestingCode(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -147,14 +177,31 @@ export function SessionCard({
               </div>
             </button>
             {visualId && (
-              <span
+              <button
+                type="button"
                 data-testid="session-visual-id"
-                className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-[var(--color-accent-light)] text-[var(--color-accent)] tracking-wider"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyValue("id", visualId);
+                }}
+                title="Clique para copiar o ID"
+                className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-[var(--color-accent-light)] text-[var(--color-accent)] tracking-wider cursor-pointer hover:ring-2 hover:ring-[var(--color-accent)] transition-all"
               >
                 ID: {visualId}
-              </span>
+                {copied === "id" && (
+                  <Check size={12} strokeWidth={2.5} className="ml-1 inline align-[-2px]" />
+                )}
+              </button>
             )}
-            <ManualLoginCode code={loginCode} seconds={countdown} />
+            <ManualLoginCode
+              code={activeCode}
+              seconds={countdown}
+              generating={requestingCode}
+              error={codeError}
+              onGenerate={generateCode}
+              copied={copied === "code"}
+              onCopy={() => copyValue("code", activeCode!)}
+            />
           </div>
 
           {/* Session info */}
@@ -230,12 +277,21 @@ export function SessionCard({
             </h2>
 
             {visualId && (
-              <div
+              <button
+                type="button"
                 data-testid="session-modal-visual-id"
-                className="font-mono font-bold text-base px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 tracking-widest border border-indigo-100"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyValue("id", visualId);
+                }}
+                title="Clique para copiar o ID"
+                className="font-mono font-bold text-base px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 tracking-widest border border-indigo-100 cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all"
               >
                 ID: {visualId}
-              </div>
+                {copied === "id" && (
+                  <Check size={13} strokeWidth={2.5} className="ml-1 inline align-[-2px]" />
+                )}
+              </button>
             )}
 
             {qrDataUrl ? (
@@ -260,29 +316,64 @@ export function SessionCard({
   );
 }
 
-/** Rotating numeric code, for devices that cannot read the QR. */
+/** On-demand numeric code, for devices that cannot read the QR. */
 function ManualLoginCode({
   code,
   seconds,
+  generating,
+  error,
+  onGenerate,
+  copied,
+  onCopy,
 }: {
   code: string | null;
   seconds: number;
+  generating: boolean;
+  error: string | null;
+  onGenerate: () => void;
+  copied: boolean;
+  onCopy: () => void;
 }) {
   return (
     <div
       data-testid="manual-login-code"
       className="mt-1 w-full flex flex-col items-center gap-0.5 text-center"
     >
-      <span className="text-[10px] text-[var(--color-text-muted)]">Código</span>
-      <span
-        data-testid="manual-login-code-value"
-        className="font-mono font-bold text-sm tracking-widest tabular text-[var(--color-accent)]"
-      >
-        {code ? formatCodeGroups(code) : "··· ···"}
-      </span>
-      <span className="text-[10px] tabular text-[var(--color-text-muted)]">
-        {code ? `troca em ${seconds}s` : "aguardando…"}
-      </span>
+      {code ? (
+        <>
+          <span className="text-[10px] text-[var(--color-text-muted)]">Código</span>
+          <button
+            type="button"
+            data-testid="manual-login-code-value"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy();
+            }}
+            title="Clique para copiar o código"
+            className="font-mono font-bold text-sm tracking-widest tabular text-[var(--color-accent)] cursor-pointer hover:underline"
+          >
+            {formatCodeGroups(code)}
+            {copied && (
+              <Check size={12} strokeWidth={2.5} className="ml-1 inline align-[-2px]" />
+            )}
+          </button>
+          <span className="text-[10px] tabular text-[var(--color-text-muted)]">
+            troca em {seconds}s
+          </span>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={generating}
+          className="text-[11px] font-semibold px-2 py-1 rounded bg-[var(--color-accent-light)] text-[var(--color-accent)] hover:ring-2 hover:ring-[var(--color-accent)] transition-all disabled:opacity-50"
+        >
+          {generating ? "Gerando…" : "Gerar código"}
+        </button>
+      )}
+      {error && (
+        <span className="text-[10px] text-[var(--color-error)]">{error}</span>
+      )}
     </div>
   );
 }
