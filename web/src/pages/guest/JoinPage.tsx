@@ -119,7 +119,7 @@ export default function JoinPage({
         const code = err?.code;
 
         if (status === 410 || code === "CLOSED") {
-          setSessionError("Sessão encerrada pelo computador.");
+          setSessionError("Sessão encerrada pelo host.");
         } else if (status === 401 || status === 404 || code === "INVALID" || code === "NOT_FOUND") {
           setSessionError(SCAN_AGAIN_MESSAGE);
         } else if (status >= 500 && status < 600) {
@@ -223,7 +223,7 @@ export default function JoinPage({
         <Card className="max-w-md w-full p-8 text-center space-y-4">
           <div className="animate-spin w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full mx-auto" />
           <p className="text-sm font-medium text-[var(--color-text-muted)]">
-            Conectando ao computador...
+            Conectando ao host...
           </p>
         </Card>
       </div>

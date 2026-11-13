@@ -18,7 +18,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     },
   });
 
-  // Upload files (phone credential)
+  // Upload files (guest credential)
   app.post<{ Params: { id: string } }>("/sessions/:id/files", async (request, reply) => {
     const { id } = request.params;
     const session = ctx.sessionStore.getById(id);
@@ -136,7 +136,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     }
   });
 
-  // Replace file content, keeping the same fileId (phone only)
+  // Replace file content, keeping the same fileId (guest only)
   app.put<{ Params: { id: string; fileId: string } }>(
     "/sessions/:id/files/:fileId",
     async (request, reply) => {

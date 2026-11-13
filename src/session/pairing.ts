@@ -24,9 +24,9 @@ export function generateQrToken(): string {
 }
 
 /**
- * Validates the session's QR token and issues a fresh phone credential.
+ * Validates the session's QR token and issues a fresh guest credential.
  * The QR token is stable for the session's whole life: reading it again
- * replaces the previous phone credential.
+ * replaces the previous guest credential.
  */
 export function consumePairing(
   session: PairableSession | undefined | null,

@@ -72,7 +72,7 @@ export async function websocketRoutes(
 
             authenticatedRole = role;
 
-            // Register file event forwarding for computer role
+            // Register file event forwarding for host role
             if (authenticatedRole === "computer") {
               eventHandlers = EVENT_TYPES.map((type) => {
                 const handler = (event: FileEvent): void => {

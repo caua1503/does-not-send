@@ -52,7 +52,7 @@ export function JoinSessionForm({ onSubmit, onCancel }: JoinSessionFormProps) {
 
         <div className="flex items-start gap-2 text-sm text-[var(--color-text-muted)]">
           <KeyRound size={16} strokeWidth={1.5} className="mt-0.5 shrink-0 text-[var(--color-accent)]" />
-          <p>Use o ID da sessão e o código de 6 dígitos mostrados no computador.</p>
+          <p>Use o ID da sessão e o código de 6 dígitos mostrados no host.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>

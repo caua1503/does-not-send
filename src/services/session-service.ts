@@ -89,7 +89,7 @@ export class SessionService {
   /**
    * Manual login: session id + numeric code in place of reading the QR Code.
    * Any failure is reported as one opaque false, never why. Wrong codes feed
-   * the per-session counter; hitting it rotates the code for the computer.
+   * the per-session counter; hitting it rotates the code for the host.
    */
   joinByCode(rawSessionId: string, code: string): { sessionId: string; guestCredential: string } | null {
     const session = this.store.getByNormalizedVisualId(rawSessionId);

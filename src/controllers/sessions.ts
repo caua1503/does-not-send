@@ -42,7 +42,7 @@ export async function authorize(
 
   let matchedRole: TokenRole | null = null;
 
-  // Check computer / owner role
+  // Check host / owner role
   if (allowedRoles.includes("owner") || allowedRoles.includes("computer")) {
     const hostAuth = domainAuthorize(session, "computer", token);
     if (hostAuth.ok) {
@@ -50,7 +50,7 @@ export async function authorize(
     }
   }
 
-  // Check phone role (route-level grant; not interchangeable with "upload")
+  // Check guest role (route-level grant; not interchangeable with "upload")
   if (!matchedRole && allowedRoles.includes("phone")) {
     const guestAuth = domainAuthorize(session, "phone", token);
     if (guestAuth.ok) {
@@ -105,7 +105,7 @@ export async function sessionRoutes(
     });
   });
 
-  // Pair phone to session using the session's reusable QR token
+  // Pair guest to session using the session's reusable QR token
   app.post<{
     Params: { id: string };
     Body: { qrToken?: string };
@@ -243,7 +243,7 @@ export async function sessionRoutes(
     },
   );
 
-  // Issue a manual login code on demand (owner/computer only).
+  // Issue a manual login code on demand (owner/host only).
   app.post<{ Params: { id: string } }>("/sessions/:id/login-code", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
@@ -257,7 +257,7 @@ export async function sessionRoutes(
     return reply.status(202).send({ ok: true });
   });
 
-  // Get session info (owner/computer/phone)
+  // Get session info (owner/host/guest)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);
     if (!auth) return;
@@ -277,7 +277,7 @@ export async function sessionRoutes(
     };
   });
 
-  // Close session (owner/computer only)
+  // Close session (owner/host only)
   app.delete<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
@@ -286,7 +286,7 @@ export async function sessionRoutes(
     return reply.status(204).send();
   });
 
-  // Heartbeat (HTTP backup for computer/phone)
+  // Heartbeat (HTTP backup for host/guest)
   app.post<{ Params: { id: string } }>("/sessions/:id/heartbeat", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, [
       "owner",

@@ -203,7 +203,7 @@ function describe(item: SessionTimelineItem): string {
     case "created":
       return "Sessão criada";
     case "paired":
-      return "Celular pareado";
+      return "Visitante pareado";
     case "transfer_started":
       return "Transferência iniciada";
     case "transfer_finished":

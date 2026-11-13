@@ -273,7 +273,7 @@ export class SessionStore {
       }
     }
 
-    // Multiple sockets per role are expected: the computer tab keeps one for
+    // Multiple sockets per role are expected: the host tab keeps one for
     // file events and another for the login code, and both must stay open.
     const conn = this.activeSockets.get(sessionId) ?? {
       host: new Set<WebSocketLike>(),

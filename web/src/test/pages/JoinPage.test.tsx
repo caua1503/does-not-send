@@ -144,7 +144,7 @@ describe("JoinPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
       expect(
-        screen.getByText(/sessão encerrada pelo computador/i)
+        screen.getByText(/sessão encerrada pelo host/i)
       ).toBeInTheDocument();
     });
   });

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Smartphone, AlertCircle, Plus } from "lucide-react";
+import { Upload, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../components/ui/Button.tsx";
 import { Card } from "../components/ui/Card.tsx";
 import { ProgressBar } from "../components/ui/ProgressBar.tsx";
@@ -386,9 +386,9 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
       {/* Header */}
       <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10 md:static md:px-6 md:py-3">
         <div className="flex items-center gap-2 min-w-0">
-          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
+          <Upload size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-semibold text-sm tracking-tight truncate">Enviar para Computador</span>
+            <span className="font-semibold text-sm tracking-tight truncate">Transferir arquivos</span>
             <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
               v{APP_VERSION}
             </span>
@@ -427,7 +427,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
             {wsClosedReason === "user_closed"
-              ? "Sessão encerrada pelo computador."
+              ? "Sessão encerrada pelo host."
               : "Sessão encerrada."}
           </p>
         </div>
@@ -451,7 +451,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
           className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs font-medium text-[var(--color-error)] flex items-center justify-center gap-2"
         >
           <AlertCircle size={14} />
-          <span>Computador desconectado</span>
+          <span>Host desconectado</span>
         </div>
       )}
 

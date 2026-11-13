@@ -10,7 +10,7 @@ export interface LoginCodeMessage {
   expiresInMs: number;
 }
 
-/** Tells the computer the code it is showing is gone (used or dropped). */
+/** Tells the host the code it is showing is gone (used or dropped). */
 export interface LoginCodeCleared {
   type: "login_code_cleared";
   sessionId: string;
@@ -33,15 +33,15 @@ function hashCode(code: string): Buffer {
 
 interface StoredLoginCode {
   hash: Buffer;
-  /** Kept only to hand the same code to a computer that reconnects. */
+  /** Kept only to hand the same code to a host that reconnects. */
   code: string;
   expiresAt: number;
 }
 
 /**
  * Numeric login codes for devices that cannot read the QR Code. Codes are
- * issued on demand, reach the session computer over its WebSocket and die
- * once used or expired. Plaintext is held only until then, so a computer
+ * issued on demand, reach the session host over its WebSocket and die
+ * once used or expired. Plaintext is held only until then, so a host
  * that reconnects can receive the code it missed.
  */
 export class LoginCodeManager {
@@ -69,7 +69,7 @@ export class LoginCodeManager {
     });
   }
 
-  /** The code still in force for a computer that just connected, if any. */
+  /** The code still in force for a host that just connected, if any. */
   current(sessionId: string): LoginCodeMessage | null {
     const stored = this.codes.get(sessionId);
     if (!stored) return null;

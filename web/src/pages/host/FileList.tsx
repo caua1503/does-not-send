@@ -19,7 +19,7 @@ export function FileList({ files, sessionId, ownerToken }: FileListProps) {
       <EmptyState
         icon={Files}
         title="Nenhum arquivo recebido"
-        description="Os arquivos enviados pelo telefone aparecerão aqui em tempo real."
+        description="Os arquivos recebidos aparecerão aqui em tempo real."
       />
     );
   }

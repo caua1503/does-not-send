@@ -119,7 +119,7 @@ export function FiltersBar(props: FiltersBarProps) {
             className={inputClass}
           />
         </Field>
-        <Field label="IP (computador ou celular)" htmlFor="admin-ip">
+        <Field label="IP (host ou visitante)" htmlFor="admin-ip">
           <DebouncedTextInput
             id="admin-ip"
             value={filters.ip ?? ""}

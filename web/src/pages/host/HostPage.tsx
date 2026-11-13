@@ -133,7 +133,7 @@ export default function HostPage() {
             <EmptyState
               icon={Monitor}
               title="Nenhuma sessão ativa"
-              description="Crie uma sessão e escaneie o QR Code com o seu telefone para enviar arquivos."
+              description="Crie uma sessão e escaneie o QR Code no outro dispositivo para transferir arquivos."
               action={
                 <div className="flex flex-col gap-2 w-48">
                   <Button
