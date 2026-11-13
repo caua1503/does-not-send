@@ -174,20 +174,6 @@ export async function uploadFile(
   return json.files[0]!;
 }
 
-export async function listFiles(
-  sessionId: string,
-  token: string,
-): Promise<Array<UploadedFile & { version: number }>> {
-  const res = await fetch(`${BASE_URL}/api/sessions/${sessionId}/files`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  const json = await expectJson<{ files: Array<UploadedFile & { version: number }> }>(
-    res,
-    "list files",
-  );
-  return json.files;
-}
-
 export async function downloadFile(
   sessionId: string,
   fileId: string,
@@ -217,7 +203,10 @@ export function sha256(data: Buffer | Uint8Array): string {
 export function openWs(sessionId: string, timeout = 5000): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`${WS_BASE_URL}/api/sessions/${sessionId}/ws`);
-    const t = setTimeout(() => reject(new Error("WS open timeout")), timeout);
+    const t = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("WS open timeout"));
+    }, timeout);
     ws.once("open", () => {
       clearTimeout(t);
       resolve(ws);
