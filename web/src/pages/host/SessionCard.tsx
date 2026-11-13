@@ -103,8 +103,8 @@ export function SessionCard({
   const visualId = session.visualId || session.shortId;
   const qrToken = session.qrToken || session.uploadToken || "";
   const uploadUrl = qrToken
-    ? `${publicBaseUrl}/enviar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
-    : `${publicBaseUrl}/enviar/${session.id}`;
+    ? `${publicBaseUrl}/entrar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
+    : `${publicBaseUrl}/entrar/${session.id}`;
 
   // Fecha com Esc
   useEffect(() => {

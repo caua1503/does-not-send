@@ -91,7 +91,7 @@ export default function HostPage() {
           JSON.stringify({ phoneCredential: data.phoneCredential }),
         );
       } catch {}
-      window.location.assign(`/enviar/${data.sessionId}`);
+      window.location.assign(`/entrar/${data.sessionId}`);
       return null;
     } catch (err) {
       if (err instanceof JoinError && err.status === 429) {
