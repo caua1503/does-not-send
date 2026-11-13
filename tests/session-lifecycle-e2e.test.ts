@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestApp, cleanupTestApp, type TestContext } from "./helpers.js";
+import { createTestApp, cleanupTestApp, getAppContext, type TestContext } from "./helpers.js";
 import { FakeClock } from "../src/session/clock.js";
 
 describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
@@ -35,7 +35,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
     expect(pairBody.phoneCredential).toBeDefined();
     expect(pairBody.state).toBe("PAIRED");
 
-    const store = (ctx.app as any).ctx.sessionStore;
+    const store = getAppContext(ctx.app).sessionStore;
     // Verifica que lastSeen.phone foi registrado
     expect(store.isPhonePresent(session.id)).toBe(true);
   });
@@ -90,7 +90,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
       payload: { qrToken: session.qrToken },
     });
     const { phoneCredential } = pairRes.json();
-    const store = (ctx.app as any).ctx.sessionStore;
+    const store = getAppContext(ctx.app).sessionStore;
 
     // Simula sockets para computador e telefone
     const compSocket = { readyState: 1, send: () => {}, close: () => {} };
@@ -120,7 +120,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
       payload: { qrToken: session.qrToken },
     });
     const { phoneCredential } = pairRes.json();
-    const store = (ctx.app as any).ctx.sessionStore;
+    const store = getAppContext(ctx.app).sessionStore;
 
     // Telefone conecta
     const phoneSocket1 = { readyState: 1, send: () => {}, close: () => {} };
@@ -151,7 +151,7 @@ describe("Ciclo de vida completo da sessão e reconexão (E2E)", () => {
 
     const createRes = await ctx.app.inject({ method: "POST", url: "/api/sessions" });
     const session = createRes.json();
-    const store = (ctx.app as any).ctx.sessionStore;
+    const store = getAppContext(ctx.app).sessionStore;
 
     // Computador encerra a sessão
     await store.closeSession(session.id, "user_closed");

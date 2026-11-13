@@ -65,16 +65,16 @@ describe("transition()", () => {
 
   it("WAITING → TRANSFERRING throws InvalidTransitionError", () => {
     const s = { state: "WAITING" as const };
-    expect(() => transition(s as any, "TRANSFERRING")).toThrow(InvalidTransitionError);
+    expect(() => transition(s, "TRANSFERRING")).toThrow(InvalidTransitionError);
   });
 
   it("CLOSED → PAIRED throws InvalidTransitionError", () => {
     const s = { state: "CLOSED" as const };
-    expect(() => transition(s as any, "PAIRED")).toThrow(InvalidTransitionError);
+    expect(() => transition(s, "PAIRED")).toThrow(InvalidTransitionError);
   });
 
   it("CLOSED → WAITING throws InvalidTransitionError", () => {
     const s = { state: "CLOSED" as const };
-    expect(() => transition(s as any, "WAITING")).toThrow(InvalidTransitionError);
+    expect(() => transition(s, "WAITING")).toThrow(InvalidTransitionError);
   });
 });

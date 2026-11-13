@@ -1,4 +1,4 @@
-import { buildApp } from "../src/app.js";
+import { buildApp, type AppContext } from "../src/app.js";
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../src/utils/config.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -65,6 +65,10 @@ export async function createTestApp(
   });
 
   return { app, config, tempDir };
+}
+
+export function getAppContext(app: FastifyInstance): AppContext {
+  return (app as unknown as { ctx: AppContext }).ctx;
 }
 
 export async function cleanupTestApp(ctx: TestContext): Promise<void> {
