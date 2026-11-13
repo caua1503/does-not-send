@@ -39,6 +39,28 @@ describe("guestSessionStorage", () => {
     expect(localStorage.getItem("dns_phone_cred_s3")).toBeNull();
   });
 
+  it("não descarta credencial antiga válida quando a chave nova está vazia", () => {
+    localStorage.setItem("dns_guest_cred_s5", "{}");
+    localStorage.setItem(
+      "dns_phone_cred_s5",
+      JSON.stringify({ phoneCredential: "legacy-cred" }),
+    );
+
+    expect(readGuestSession("s5").credential).toBe("legacy-cred");
+    expect(JSON.parse(localStorage.getItem("dns_guest_cred_s5")!)).toMatchObject({
+      guestCredential: "legacy-cred",
+    });
+    expect(localStorage.getItem("dns_phone_cred_s5")).toBeNull();
+  });
+
+  it("não grava credencial nula quando não há nada para migrar", () => {
+    localStorage.setItem("dns_phone_cred_s6", "{}");
+
+    expect(readGuestSession("s6")).toEqual({ credential: null, visualId: null });
+    expect(localStorage.getItem("dns_guest_cred_s6")).toBeNull();
+    expect(localStorage.getItem("dns_phone_cred_s6")).toBeNull();
+  });
+
   it("grava no shape novo e limpa as duas chaves", () => {
     localStorage.setItem("dns_phone_cred_s4", JSON.stringify({ phoneCredential: "old-cred" }));
     writeGuestSession("s4", "new-cred", "CD34");

@@ -31,18 +31,33 @@ export function readGuestSession(id: string): StoredGuestSession {
   try {
     const key = `${KEY_PREFIX}${id}`;
     const legacyKey = `${LEGACY_KEY_PREFIX}${id}`;
-    const raw = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
-    if (!raw) return { credential: null, visualId: null };
+    const newRaw = localStorage.getItem(key);
+    const legacyRaw = localStorage.getItem(legacyKey);
+    const fromNew = newRaw ? parseStored(newRaw) : null;
 
-    const stored = parseStored(raw);
-    try {
-      localStorage.setItem(
-        key,
-        JSON.stringify({ guestCredential: stored.credential, visualId: stored.visualId }),
-      );
-      localStorage.removeItem(legacyKey);
-    } catch {}
-    return stored;
+    if (fromNew?.credential) {
+      if (legacyRaw !== null) localStorage.removeItem(legacyKey);
+      return fromNew;
+    }
+
+    // A broken/empty new key must not discard a still-valid legacy credential.
+    const fromLegacy = legacyRaw ? parseStored(legacyRaw) : null;
+    if (fromLegacy?.credential) {
+      try {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            guestCredential: fromLegacy.credential,
+            visualId: fromLegacy.visualId,
+          }),
+        );
+        localStorage.removeItem(legacyKey);
+      } catch {}
+      return fromLegacy;
+    }
+
+    if (legacyRaw !== null) localStorage.removeItem(legacyKey);
+    return fromNew ?? fromLegacy ?? { credential: null, visualId: null };
   } catch {
     return { credential: null, visualId: null };
   }
