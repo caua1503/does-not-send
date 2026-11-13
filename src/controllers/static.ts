@@ -17,15 +17,22 @@ export async function staticRoutes(app: FastifyInstance): Promise<void> {
   await app.register(fastifyStatic, {
     root: distPath,
     prefix: "/",
+    // index.html must always be revalidated: it points at hashed bundles, and a
+    // cached shell keeps serving an old build after a rebuild.
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
+    },
   });
 
   // Vite emits relative "./assets/" URLs (needed by the admin shell). Served
   // from a nested route like /enviar/<id> they would resolve to
   // /enviar/assets/... and hit the SPA fallback as HTML, leaving a blank page.
-  const spaIndex = readFileSync(resolve(distPath, "index.html"), "utf8").replace(
-    /((?:src|href)=")\.\/assets\//g,
-    "$1/assets/",
-  );
+  // Read per request so a rebuild propagates without restarting the server.
+  const readSpaIndex = () =>
+    readFileSync(resolve(distPath, "index.html"), "utf8").replace(
+      /((?:src|href)=")\.\/assets\//g,
+      "$1/assets/",
+    );
 
   // SPA fallback for frontend paths
   app.setNotFoundHandler(async (request, reply) => {
@@ -40,6 +47,9 @@ export async function staticRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Direct browser navigation (HTML) receives index.html
-    return reply.type("text/html").send(spaIndex);
+    return reply
+      .header("Cache-Control", "no-cache")
+      .type("text/html")
+      .send(readSpaIndex());
   });
 }
