@@ -5,9 +5,8 @@ import { Card } from "../../components/ui/Card.tsx";
 import { EmptyState } from "../../components/ui/EmptyState.tsx";
 import { Toast } from "../../components/ui/Toast.tsx";
 import { SessionCard } from "./SessionCard.tsx";
-import { FileList } from "./FileList.tsx";
+import { SessionPage } from "../SessionPage.tsx";
 import { createSession, deleteSession, joinWithCode, JoinError } from "../../lib/api.ts";
-import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import type { Session } from "../../lib/api.ts";
 import { BASE_URL } from "../../lib/base.ts";
 import { JoinSessionForm } from "../phone/JoinSessionForm.tsx";
@@ -177,9 +176,11 @@ export default function HostPage() {
             {/* Files panel */}
             <section className="flex-1 hidden lg:flex flex-col">
               {selectedSession ? (
-                <Card className="flex-1 overflow-hidden flex flex-col">
-                  <SelectedSessionFiles session={selectedSession} />
-                </Card>
+                <SessionPage
+                  role="host"
+                  sessionId={selectedSession.id}
+                  token={selectedSession.ownerToken}
+                />
               ) : (
                 <Card className="flex-1">
                   <EmptyState
@@ -203,9 +204,4 @@ export default function HostPage() {
       )}
     </div>
   );
-}
-
-function SelectedSessionFiles({ session }: { session: ActiveSession }) {
-  const { files } = useSessionEvents(session.id, session.ownerToken);
-  return <FileList files={files} sessionId={session.id} ownerToken={session.ownerToken} />;
 }
