@@ -78,7 +78,7 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
       status: 200,
       json: async () => ({
         success: true,
-        phoneCredential: "phone-secret-persisted",
+        phoneCredential: "guest-secret-persisted",
         visualId: "V1D99",
         shortId: "V1D99",
         state: "PAIRED",
@@ -94,18 +94,42 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
 
     // Validar que foi persistido em localStorage (sobrevive a tab kills e recarregamento)
     const stored = JSON.parse(
-      localStorage.getItem("dns_phone_cred_sess-persist-123") || "{}"
+      localStorage.getItem("dns_guest_cred_sess-persist-123") || "{}"
     );
-    expect(stored.phoneCredential).toBe("phone-secret-persisted");
+    expect(stored.guestCredential).toBe("guest-secret-persisted");
     expect(stored.visualId).toBe("V1D99");
+  });
+
+  it("migra a credencial salva na chave antiga ao abrir a rota nova", () => {
+    localStorage.setItem(
+      "dns_phone_cred_sess-persist-123",
+      JSON.stringify({ phoneCredential: "legacy-secret", visualId: "LEG01" }),
+    );
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/entrar/sess-persist-123",
+        search: "",
+      },
+      writable: true,
+    });
+
+    render(<JoinPage />);
+
+    expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
+    expect(screen.getByTestId("guest-visual-id")).toHaveTextContent("ID: LEG01");
+    expect(localStorage.getItem("dns_phone_cred_sess-persist-123")).toBeNull();
+    expect(
+      JSON.parse(localStorage.getItem("dns_guest_cred_sess-persist-123") || "{}"),
+    ).toMatchObject({ guestCredential: "legacy-secret", visualId: "LEG01" });
   });
 
   // Cenário 2: Autenticar e enviar imagem (erro no upload NÃO deve invalidar sessão)
   it("Cenário 2: Erro 401 ou 404 no envio de arquivo isola erro no item e NÃO invalida a sessão", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-persisted",
+        guestCredential: "guest-secret-persisted",
         visualId: "V1D99",
       })
     );
@@ -166,9 +190,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
   it("Cenários 3 e 4: Após reload ou retorno ao navegador, recupera sessão de localStorage sem re-parear", async () => {
     // Simula sessão gravada em localStorage antes do reload
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-recovered",
+        guestCredential: "guest-secret-recovered",
         visualId: "REC42",
       })
     );
@@ -205,8 +229,8 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
     expect(ws.sentMessages).toContain(
       JSON.stringify({
         type: "auth",
-        role: "phone",
-        secret: "phone-secret-recovered",
+        role: "guest",
+        secret: "guest-secret-recovered",
       })
     );
   });
@@ -215,9 +239,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
   it("Cenário 5: Fechar e reabrir navegador preserva credencial mesmo com sessionStorage vazio", () => {
     sessionStorage.clear(); // sessionStorage foi perdido
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-persisted-survives",
+        guestCredential: "guest-secret-persisted-survives",
         visualId: "SRV88",
       })
     );
@@ -240,9 +264,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
   // Cenário 6: Perder conexão e reconectar
   it("Cenário 6: Desconexão temporária de WebSocket exibe estado reconectando e retoma quando conexão volta", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-persisted",
+        guestCredential: "guest-secret-persisted",
         visualId: "V1D99",
       })
     );
@@ -279,9 +303,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
   // Cenário 7: Recarregar com qrToken na URL já pareado reaproveita a credencial salva
   it("Cenário 7: Se a página recarregar com qrToken na URL já pareado, recupera credencial do localStorage", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-already-paired",
+        guestCredential: "guest-secret-already-paired",
         visualId: "PRD11",
       })
     );
@@ -306,9 +330,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
   // Sair da sessão pelo celular
   it("Sair da sessão apaga a credencial, fecha o WebSocket e volta ao estado inicial", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-leave",
+        guestCredential: "guest-secret-leave",
         visualId: "SAI00",
       })
     );
@@ -335,7 +359,7 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
     const leaveButton = await screen.findByRole("button", { name: /sair da sessão/i });
     fireEvent.click(leaveButton);
 
-    expect(localStorage.getItem("dns_phone_cred_sess-persist-123")).toBeNull();
+    expect(localStorage.getItem("dns_guest_cred_sess-persist-123")).toBeNull();
     expect(ws.readyState).toBe(MockWebSocket.CLOSED);
     expect(screen.queryByText(/escolher arquivos/i)).not.toBeInTheDocument();
     expect(screen.getByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
@@ -343,9 +367,9 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
 
   it("Ler o QR Code de outro computador substitui a credencial salva", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-other-456",
+      "dns_guest_cred_sess-other-456",
       JSON.stringify({
-        phoneCredential: "phone-secret-other-machine",
+        guestCredential: "guest-secret-other-machine",
         visualId: "OUT31",
       })
     );
@@ -364,7 +388,7 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
       status: 200,
       json: async () => ({
         success: true,
-        phoneCredential: "phone-secret-new-machine",
+        phoneCredential: "guest-secret-new-machine",
         visualId: "NEW42",
         shortId: "NEW42",
         state: "PAIRED",
@@ -378,17 +402,17 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
       expect(screen.getByTestId("guest-visual-id")).toHaveTextContent("ID: NEW42");
     });
     const stored = JSON.parse(
-      localStorage.getItem("dns_phone_cred_sess-persist-123") || "{}"
+      localStorage.getItem("dns_guest_cred_sess-persist-123") || "{}"
     );
-    expect(stored.phoneCredential).toBe("phone-secret-new-machine");
+    expect(stored.guestCredential).toBe("guest-secret-new-machine");
   });
 
   // Cenário 8: Sessão encerrada no servidor limpa localStorage
   it("Cenário 8: Sessão fechada no servidor (session_closed) remove credencial do localStorage", async () => {
     localStorage.setItem(
-      "dns_phone_cred_sess-persist-123",
+      "dns_guest_cred_sess-persist-123",
       JSON.stringify({
-        phoneCredential: "phone-secret-to-close",
+        guestCredential: "guest-secret-to-close",
         visualId: "CLS00",
       })
     );
@@ -424,6 +448,6 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
     expect(screen.getByText(/envio bloqueado/i)).toBeInTheDocument();
 
     // Credencial deve ser removida do localStorage para não manter sessão órfã
-    expect(localStorage.getItem("dns_phone_cred_sess-persist-123")).toBeNull();
+    expect(localStorage.getItem("dns_guest_cred_sess-persist-123")).toBeNull();
   });
 });

@@ -67,8 +67,8 @@ describe("JoinPage lápis de edição", () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
-      JSON.stringify({ phoneCredential: "cred-phone", visualId: "AB12" })
+      "dns_guest_cred_session-test-id",
+      JSON.stringify({ guestCredential: "cred-guest", visualId: "AB12" })
     );
     Object.defineProperty(window, "location", {
       value: { origin: "http://localhost:3000", pathname: "/enviar/session-test-id", search: "" },

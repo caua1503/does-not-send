@@ -200,11 +200,11 @@ describe("JoinPage", () => {
     });
   });
 
-  it("envia header Authorization com Bearer phoneCredential no upload via XHR", async () => {
+  it("envia header Authorization com Bearer guestCredential no upload via XHR", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2N88K",
       })
     );
@@ -243,7 +243,7 @@ describe("JoinPage", () => {
     );
     expect(xhr.setRequestHeader).toHaveBeenCalledWith(
       "Authorization",
-      "Bearer secret-phone-credential-xyz"
+      "Bearer secret-guest-credential-xyz"
     );
 
     vi.unstubAllGlobals();
@@ -251,9 +251,9 @@ describe("JoinPage", () => {
 
   it("envia texto como arquivo na mesma lista (?kind=text)", () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2N88K",
       })
     );
@@ -297,9 +297,9 @@ describe("JoinPage", () => {
 
   it("exibe 'Otimizando...' para foto > 1.2 MB sem bloquear a tela e depois envia comprimida", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2K9",
       })
     );
@@ -377,9 +377,9 @@ describe("JoinPage", () => {
 
   it("falha só no item HEIC quando a conversão falha, sem travar os demais", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2K9",
       })
     );
@@ -464,9 +464,9 @@ describe("JoinPage", () => {
       mockSockets = [];
       vi.stubGlobal("WebSocket", MockWebSocket);
       localStorage.setItem(
-        "dns_phone_cred_session-test-id",
+        "dns_guest_cred_session-test-id",
         JSON.stringify({
-          phoneCredential: "phone-secret-cred-123",
+          guestCredential: "guest-secret-cred-123",
           visualId: "X9K22",
         })
       );

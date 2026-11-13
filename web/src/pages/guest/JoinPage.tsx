@@ -2,7 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { AlertCircle, KeyRound } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
-import { pairSession, joinWithCode, JoinError } from "../../lib/api.ts";
+import { joinWithCode, pairSession, JoinError } from "../../lib/api.ts";
+import {
+  clearGuestSession,
+  readGuestSession,
+  writeGuestSession,
+} from "../../lib/guestSessionStorage.ts";
 import { JoinSessionForm } from "./JoinSessionForm.tsx";
 import { SessionPage } from "../SessionPage.tsx";
 
@@ -13,33 +18,6 @@ interface JoinPageProps {
   sessionId?: string;
   token?: string;
   qrToken?: string;
-}
-
-interface StoredSession {
-  phoneCredential?: string;
-  visualId?: string;
-}
-
-function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
-  if (!id) return { phoneCredential: null, visualId: null };
-  try {
-    const raw = localStorage.getItem(`dns_phone_cred_${id}`);
-    if (!raw) return { phoneCredential: null, visualId: null };
-    try {
-      const parsed = JSON.parse(raw) as StoredSession;
-      if (parsed && typeof parsed === "object") {
-        return {
-          phoneCredential: parsed.phoneCredential || null,
-          visualId: parsed.visualId || null,
-        };
-      }
-      return { phoneCredential: raw, visualId: null };
-    } catch {
-      return { phoneCredential: raw, visualId: null };
-    }
-  } catch {
-    return { phoneCredential: null, visualId: null };
-  }
 }
 
 /** Session ids whose credential was entered by code, restored on open. */
@@ -54,17 +32,10 @@ function rememberJoinedSession(id: string): void {
 function readJoinedSession(): string | null {
   try {
     const id = localStorage.getItem(JOINED_KEY);
-    return id && readStoredSession(id).phoneCredential ? id : null;
+    return id && readGuestSession(id).credential ? id : null;
   } catch {
     return null;
   }
-}
-
-function clearStoredSession(id: string): void {
-  if (!id) return;
-  try {
-    localStorage.removeItem(`dns_phone_cred_${id}`);
-  } catch {}
 }
 
 export default function JoinPage({
@@ -83,21 +54,20 @@ export default function JoinPage({
   const restoredJoinedId = !urlSessionId ? readJoinedSession() : null;
   const storedSessionId = urlSessionId || restoredJoinedId || "";
 
-  const storageKey = storedSessionId ? `dns_phone_cred_${storedSessionId}` : "";
-  const initialStored = readStoredSession(storedSessionId);
+  const initialStored = readGuestSession(storedSessionId);
 
   const [credential, setCredential] = useState<string | null>(
-    initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
+    initialStored.credential || (!qrToken && legacyToken ? legacyToken : null)
   );
   const [visualId, setVisualId] = useState<string | null>(initialStored.visualId);
   const [isPairing, setIsPairing] = useState<boolean>(() => {
-    return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
+    return Boolean(urlSessionId && !initialStored.credential && qrToken);
   });
   const [sessionError, setSessionError] = useState<string | null>(() => {
     if (!urlSessionId) {
-      return initialStored.phoneCredential ? null : SCAN_AGAIN_MESSAGE;
+      return initialStored.credential ? null : SCAN_AGAIN_MESSAGE;
     }
-    if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
+    if (!initialStored.credential && !qrToken && !legacyToken) {
       return SCAN_AGAIN_MESSAGE;
     }
     return null;
@@ -127,15 +97,8 @@ export default function JoinPage({
         const cred = data.phoneCredential;
         const vId = data.visualId || data.shortId || null;
 
-        if (storageKey) {
-          try {
-            localStorage.setItem(
-              storageKey,
-              JSON.stringify({ phoneCredential: cred, visualId: vId })
-            );
-          } catch {
-            // Ignore localStorage quota error
-          }
+        if (urlSessionId) {
+          writeGuestSession(urlSessionId, cred, vId);
         }
 
         if (isCancelled) return;
@@ -175,10 +138,10 @@ export default function JoinPage({
       isCancelled = true;
       pairingInProgressRef.current = false;
     };
-  }, [urlSessionId, qrToken, credential, sessionError, storageKey, joinedSessionId]);
+  }, [urlSessionId, qrToken, credential, sessionError, joinedSessionId]);
 
   const leaveSession = () => {
-    if (sessionId) clearStoredSession(sessionId);
+    if (sessionId) clearGuestSession(sessionId);
     if (joinedSessionId) {
       try {
         localStorage.removeItem(JOINED_KEY);
@@ -199,7 +162,7 @@ export default function JoinPage({
   // The session became closed while connected: drop its stored credential.
   const handleSessionClosed = () => {
     if (!sessionId) return;
-    clearStoredSession(sessionId);
+    clearGuestSession(sessionId);
     try {
       if (localStorage.getItem(JOINED_KEY) === sessionId) localStorage.removeItem(JOINED_KEY);
     } catch {}
@@ -212,10 +175,7 @@ export default function JoinPage({
       // The canonical id: routes and WS never normalize, only the join lookup does
       const id = data.sessionId;
       try {
-        localStorage.setItem(
-          `dns_phone_cred_${id}`,
-          JSON.stringify({ phoneCredential: data.phoneCredential }),
-        );
+        writeGuestSession(id, data.phoneCredential);
         rememberJoinedSession(id);
       } catch {}
       setCredential(data.phoneCredential);

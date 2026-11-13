@@ -10,6 +10,7 @@ import { createSession, deleteSession, joinWithCode, JoinError } from "../../lib
 import type { Session } from "../../lib/api.ts";
 import { BASE_URL } from "../../lib/base.ts";
 import { JoinSessionForm } from "../guest/JoinSessionForm.tsx";
+import { writeGuestSession } from "../../lib/guestSessionStorage.ts";
 import { APP_VERSION } from "../../lib/whatsNew.ts";
 
 const PUBLIC_BASE_URL = BASE_URL || window.location.origin;
@@ -85,12 +86,7 @@ export default function HostPage() {
   const handleJoinWithCode = async (sessionId: string, code: string) => {
     try {
       const data = await joinWithCode(sessionId, code);
-      try {
-        localStorage.setItem(
-          `dns_phone_cred_${data.sessionId}`,
-          JSON.stringify({ phoneCredential: data.phoneCredential }),
-        );
-      } catch {}
+      writeGuestSession(data.sessionId, data.phoneCredential);
       window.location.assign(`/entrar/${data.sessionId}`);
       return null;
     } catch (err) {
