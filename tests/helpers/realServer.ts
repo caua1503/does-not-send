@@ -7,6 +7,8 @@ import { createHash } from "node:crypto";
 import { WebSocket } from "ws";
 
 export const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+// The real default. A dev server already on 3000 makes startRealServer fail fast
+// instead of silently testing a foreign process.
 export const PORT = 3000;
 export const BASE_URL = `http://127.0.0.1:${PORT}`;
 export const WS_BASE_URL = `ws://127.0.0.1:${PORT}`;
@@ -37,6 +39,7 @@ export async function startRealServer(): Promise<RealServerHandle> {
 
   const tempDir = await mkdtemp(join(tmpdir(), "dns-e2e-"));
   let output = "";
+  // Requires `bun` on PATH, like the package scripts.
   const child = spawn("bun", ["run", "src/server.ts"], {
     cwd: ROOT,
     env: {
