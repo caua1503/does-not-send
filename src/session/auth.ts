@@ -5,11 +5,27 @@ import { hashToken } from "./pairing.js";
 
 export type SessionRole = "computer" | "phone";
 
+/** Wire values: host/guest are aliases kept while old clients remain open. */
+export type WireSessionRole = SessionRole | "host" | "guest";
+
+export function normalizeSessionRole(role: string): SessionRole | null {
+  switch (role) {
+    case "host":
+    case "computer":
+      return "computer";
+    case "guest":
+    case "phone":
+      return "phone";
+    default:
+      return null;
+  }
+}
+
 export interface AuthorizableSession {
   id: string;
   state: SessionState;
-  computerTokenHash: string;
-  phoneCredentialHash: string | null;
+  hostTokenHash: string;
+  guestCredentialHash: string | null;
   activeUploads?: number;
 }
 
@@ -39,7 +55,7 @@ function verifyHash(candidateSecret: string, storedHash: string | null): boolean
 }
 
 /**
- * Pure domain authorization function for computer and phone roles.
+ * Pure domain authorization function for host and guest roles.
  * All route handlers and WebSocket entry points must call this.
  */
 export function authorize(
@@ -60,9 +76,9 @@ export function authorize(
 
   let valid = false;
   if (role === "computer") {
-    valid = verifyHash(secret, session.computerTokenHash);
+    valid = verifyHash(secret, session.hostTokenHash);
   } else if (role === "phone") {
-    valid = verifyHash(secret, session.phoneCredentialHash);
+    valid = verifyHash(secret, session.guestCredentialHash);
   }
 
   if (!valid) {

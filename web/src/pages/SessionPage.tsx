@@ -1,140 +1,85 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Smartphone, AlertCircle, Plus, KeyRound } from "lucide-react";
-import { Button } from "../../components/ui/Button.tsx";
-import { Card } from "../../components/ui/Card.tsx";
-import { ProgressBar } from "../../components/ui/ProgressBar.tsx";
-import { UploadItem, type PhoneUploadItem } from "./UploadItem.tsx";
-import {
-  pairSession,
-  getSession,
-  joinWithCode,
-  JoinError,
-  type SessionInfo,
-} from "../../lib/api.ts";
-import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
-import { compressPhoto, isCompressiblePhoto } from "../../lib/compressPhoto.ts";
-import { convertHeicToJpeg, isHeic } from "../../lib/convertHeic.ts";
-import { BASE_URL } from "../../lib/base.ts";
-import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
-import { TextWidget } from "../../components/TextWidget.tsx";
-import { buildTextFile, TEXT_MAX_LENGTH } from "../../lib/textFile.ts";
-import { JoinSessionForm } from "./JoinSessionForm.tsx";
-import { APP_VERSION } from "../../lib/whatsNew.ts";
+import { Upload, AlertCircle, Plus } from "lucide-react";
+import { Button } from "../components/ui/Button.tsx";
+import { Card } from "../components/ui/Card.tsx";
+import { ProgressBar } from "../components/ui/ProgressBar.tsx";
+import { UploadItem, type GuestUploadItem } from "./guest/UploadItem.tsx";
+import { getSession, type SessionInfo } from "../lib/api.ts";
+import { useSessionEvents } from "../hooks/useSessionEvents.ts";
+import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
+import { convertHeicToJpeg, isHeic } from "../lib/convertHeic.ts";
+import { BASE_URL } from "../lib/base.ts";
+import { ImageEditor } from "../components/ImageEditor/ImageEditor.tsx";
+import { TextWidget } from "../components/TextWidget.tsx";
+import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
+import { FileList } from "./host/FileList.tsx";
+import { APP_VERSION } from "../lib/whatsNew.ts";
 
-const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
-const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
+export type SessionPageRole = "host" | "guest";
 
-interface PhonePageProps {
-  sessionId?: string;
-  token?: string;
-  qrToken?: string;
+export interface SessionPageProps {
+  role: SessionPageRole;
+  sessionId: string;
+  token: string;
+  visualId?: string | null;
+  /** Guest only. */
+  onLeave?: () => void;
+  /** Guest only. Called once when the session becomes closed. */
+  onSessionClosed?: () => void;
 }
 
-interface StoredSession {
-  phoneCredential?: string;
-  visualId?: string;
-}
-
-function readStoredSession(id: string): { phoneCredential: string | null; visualId: string | null } {
-  if (!id) return { phoneCredential: null, visualId: null };
-  try {
-    const raw = localStorage.getItem(`dns_phone_cred_${id}`);
-    if (!raw) return { phoneCredential: null, visualId: null };
-    try {
-      const parsed = JSON.parse(raw) as StoredSession;
-      if (parsed && typeof parsed === "object") {
-        return {
-          phoneCredential: parsed.phoneCredential || null,
-          visualId: parsed.visualId || null,
-        };
-      }
-      return { phoneCredential: raw, visualId: null };
-    } catch {
-      return { phoneCredential: raw, visualId: null };
-    }
-  } catch {
-    return { phoneCredential: null, visualId: null };
+export function SessionPage({
+  role,
+  sessionId,
+  token,
+  visualId,
+  onLeave,
+  onSessionClosed,
+}: SessionPageProps) {
+  if (role === "host") {
+    return <HostSession sessionId={sessionId} token={token} />;
   }
-}
-
-/** Session ids whose credential was entered by code, restored on open. */
-const JOINED_KEY = "dns_joined_session";
-
-function rememberJoinedSession(id: string): void {
-  try {
-    localStorage.setItem(JOINED_KEY, id);
-  } catch {}
-}
-
-function readJoinedSession(): string | null {
-  try {
-    const id = localStorage.getItem(JOINED_KEY);
-    return id && readStoredSession(id).phoneCredential ? id : null;
-  } catch {
-    return null;
-  }
-}
-
-function clearStoredSession(id: string): void {
-  if (!id) return;
-  try {
-    localStorage.removeItem(`dns_phone_cred_${id}`);
-  } catch {}
-}
-
-export default function PhonePage({
-  sessionId: propSessionId,
-  token: propToken,
-  qrToken: propQrToken,
-}: PhonePageProps) {
-  // Extract from props or URL
-  const pathParts = window.location.pathname.split("/");
-  const urlSessionId = propSessionId || pathParts[2] || "";
-  const searchParams = new URLSearchParams(window.location.search);
-  const qrToken = propQrToken || searchParams.get("qrToken") || "";
-  const legacyToken = propToken || searchParams.get("token") || "";
-
-  // A session entered by code (no URL) resumes from the same stored credential
-  const restoredJoinedId = !urlSessionId ? readJoinedSession() : null;
-  const storedSessionId = urlSessionId || restoredJoinedId || "";
-
-  const storageKey = storedSessionId ? `dns_phone_cred_${storedSessionId}` : "";
-  const initialStored = readStoredSession(storedSessionId);
-
-  const [credential, setCredential] = useState<string | null>(
-    initialStored.phoneCredential || (!qrToken && legacyToken ? legacyToken : null)
+  return (
+    <GuestSession
+      sessionId={sessionId}
+      token={token}
+      visualId={visualId}
+      onLeave={onLeave}
+      onSessionClosed={onSessionClosed}
+    />
   );
-  const [visualId, setVisualId] = useState<string | null>(initialStored.visualId);
-  const [isPairing, setIsPairing] = useState<boolean>(() => {
-    return Boolean(urlSessionId && !initialStored.phoneCredential && qrToken);
-  });
-  const [sessionError, setSessionError] = useState<string | null>(() => {
-    if (!urlSessionId) {
-      return initialStored.phoneCredential ? null : SCAN_AGAIN_MESSAGE;
-    }
-    if (!initialStored.phoneCredential && !qrToken && !legacyToken) {
-      return SCAN_AGAIN_MESSAGE;
-    }
-    return null;
-  });
+}
 
-  const [items, setItems] = useState<PhoneUploadItem[]>([]);
+function HostSession({ sessionId, token }: { sessionId: string; token: string }) {
+  const { files } = useSessionEvents(sessionId, token);
+  return (
+    <Card className="flex-1 overflow-hidden flex flex-col">
+      <FileList files={files} sessionId={sessionId} ownerToken={token} />
+    </Card>
+  );
+}
+
+interface GuestSessionProps {
+  sessionId: string;
+  token: string;
+  visualId?: string | null;
+  onLeave?: () => void;
+  onSessionClosed?: () => void;
+}
+
+function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessionClosed }: GuestSessionProps) {
+  const [items, setItems] = useState<GuestUploadItem[]>([]);
   const [textError, setTextError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  // Session entered by id + code instead of the QR; wins over the URL lookup
-  const [joinedSessionId, setJoinedSessionId] = useState<string | null>(restoredJoinedId);
-  const [joining, setJoining] = useState(false);
-  const sessionId = joinedSessionId ?? urlSessionId;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pairingInProgressRef = useRef<boolean>(false);
 
-  // (a) Cliente WS para o telefone: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
+  // (a) Cliente WS do visitante: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
   const {
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
   } = useSessionEvents(sessionId, credential, {
-    role: "phone",
+    role: "guest",
     reconnectInterval: 2000,
   });
 
@@ -147,15 +92,15 @@ export default function PhonePage({
   const isReconnecting =
     !isSessionClosed &&
     (wsReconnecting || remoteSession?.state === "DISCONNECTED");
-  const isComputerDisconnected =
+  const isHostDisconnected =
     !isSessionClosed && !isReconnecting && remoteSession?.computerPresent === false;
+
+  const onSessionClosedRef = useRef(onSessionClosed);
+  onSessionClosedRef.current = onSessionClosed;
 
   useEffect(() => {
     if (!isSessionClosed || !sessionId) return;
-    clearStoredSession(sessionId);
-    try {
-      if (localStorage.getItem(JOINED_KEY) === sessionId) localStorage.removeItem(JOINED_KEY);
-    } catch {}
+    onSessionClosedRef.current?.();
   }, [isSessionClosed, sessionId]);
 
   // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
@@ -166,14 +111,13 @@ export default function PhonePage({
 
     async function check() {
       try {
-        const data = await getSession(sessionId, credential!);
+        const data = await getSession(sessionId, credential);
         if (!active) return;
         setRemoteSession(data);
       } catch (err: any) {
         if (!active) return;
         if (err?.status === 410) {
           setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
-          clearStoredSession(sessionId);
         }
       }
     }
@@ -185,75 +129,7 @@ export default function PhonePage({
     };
   }, [sessionId, credential, isSessionClosed]);
 
-  useEffect(() => {
-    if (credential || sessionError || !urlSessionId || !qrToken || joinedSessionId) {
-      return;
-    }
-    if (pairingInProgressRef.current) {
-      return;
-    }
-
-    pairingInProgressRef.current = true;
-    let isCancelled = false;
-
-    async function doPair() {
-      setIsPairing(true);
-      try {
-        const data = await pairSession(urlSessionId, qrToken);
-        const cred = data.phoneCredential;
-        const vId = data.visualId || data.shortId || null;
-
-        if (storageKey) {
-          try {
-            localStorage.setItem(
-              storageKey,
-              JSON.stringify({ phoneCredential: cred, visualId: vId })
-            );
-          } catch {
-            // Ignore localStorage quota error
-          }
-        }
-
-        if (isCancelled) return;
-        setCredential(cred);
-        setVisualId(vId);
-        setIsPairing(false);
-
-        if (typeof window !== "undefined" && window.history && window.history.replaceState) {
-          try {
-            window.history.replaceState({}, "", window.location.pathname);
-          } catch {}
-        }
-      } catch (err: any) {
-        pairingInProgressRef.current = false;
-        if (isCancelled) return;
-        setIsPairing(false);
-        const status = err?.status;
-        const code = err?.code;
-
-        if (status === 410 || code === "CLOSED") {
-          setSessionError("Sessão encerrada pelo computador.");
-        } else if (status === 401 || status === 404 || code === "INVALID" || code === "NOT_FOUND") {
-          setSessionError(SCAN_AGAIN_MESSAGE);
-        } else if (status >= 500 && status < 600) {
-          setSessionError("Servidor temporariamente indisponível.");
-        } else if (!status || err?.name === "TypeError" || err?.message?.includes("fetch")) {
-          setSessionError("Sem conexão com o servidor.");
-        } else {
-          setSessionError(err?.message || "Erro ao conectar à sessão.");
-        }
-      }
-    }
-
-    doPair();
-
-    return () => {
-      isCancelled = true;
-      pairingInProgressRef.current = false;
-    };
-  }, [urlSessionId, qrToken, credential, sessionError, storageKey, joinedSessionId]);
-
-  const uploadSingleFile = (item: PhoneUploadItem) => {
+  const uploadSingleFile = (item: GuestUploadItem) => {
     if (isSessionClosed) return;
 
     setItems((prev) =>
@@ -344,9 +220,7 @@ export default function PhonePage({
       "POST",
       `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
     );
-    if (credential) {
-      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    }
+    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     xhr.send(formData);
   };
 
@@ -394,7 +268,7 @@ export default function PhonePage({
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
-    const newItems: PhoneUploadItem[] = fileList.map((file) => ({
+    const newItems: GuestUploadItem[] = fileList.map((file) => ({
       id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
@@ -427,7 +301,7 @@ export default function PhonePage({
       return false;
     }
     const file = buildTextFile(text, new Date(), items.map((i) => i.file.name));
-    const item: PhoneUploadItem = {
+    const item: GuestUploadItem = {
       id: `text-${Date.now()}-${Math.random()}`,
       file,
       progress: 0,
@@ -441,7 +315,7 @@ export default function PhonePage({
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: PhoneUploadItem, file: File) => {
+  const replaceEditedImage = (item: GuestUploadItem, file: File) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("files", file, file.name);
@@ -481,56 +355,8 @@ export default function PhonePage({
     };
     xhr.onerror = () => fail("Sem conexão com o servidor");
     xhr.open("PUT", `${BASE_URL}/api/sessions/${sessionId}/files/${item.remoteId}`);
-    if (credential) {
-      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    }
+    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
     xhr.send(formData);
-  };
-
-  const leaveSession = () => {
-    if (sessionId) clearStoredSession(sessionId);
-    setItems([]);
-    setVisualId(null);
-    setRemoteSession(null);
-    setCredential(null);
-    if (joinedSessionId) {
-      try {
-        localStorage.removeItem(JOINED_KEY);
-      } catch {}
-      setJoinedSessionId(null);
-    }
-    // Always back to the entry screen, never to the dead session URL
-    if (window.location.pathname !== "/") {
-      try {
-        window.history.replaceState({}, "", "/");
-      } catch {}
-    }
-    setSessionError(SCAN_AGAIN_MESSAGE);
-  };
-
-  // Manual login: same credential the QR pairs give, so the flow below is unchanged.
-  const joinWithManualCode = async (rawId: string, rawCode: string) => {
-    try {
-      const data = await joinWithCode(rawId, rawCode);
-      // The canonical id: routes and WS never normalize, only the join lookup does
-      const id = data.sessionId;
-      try {
-        localStorage.setItem(
-          `dns_phone_cred_${id}`,
-          JSON.stringify({ phoneCredential: data.phoneCredential }),
-        );
-        rememberJoinedSession(id);
-      } catch {}
-      setCredential(data.phoneCredential);
-      setSessionError(null);
-      setJoinedSessionId(id);
-      return null;
-    } catch (err) {
-      if (err instanceof JoinError && err.status === 429) {
-        return "Muitas tentativas, aguarde um pouco";
-      }
-      return JOIN_ERROR_MESSAGE;
-    }
   };
 
   const retryUpload = (id: string) => {
@@ -555,60 +381,20 @@ export default function PhonePage({
     (i) => i.state === "uploading" || i.state === "pending" || i.state === "optimizing"
   );
 
-  if (sessionError) {
-    if (joining) {
-      return <JoinSessionForm onSubmit={joinWithManualCode} onCancel={() => setJoining(false)} />;
-    }
-    return (
-      <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
-        <Card className="max-w-md w-full p-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/40 text-[var(--color-error)] flex items-center justify-center mx-auto">
-            <AlertCircle size={24} />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
-              Sessão Indisponível
-            </h1>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              {sessionError}
-            </p>
-          </div>
-          <Button variant="ghost" size="md" onClick={() => setJoining(true)}>
-            <KeyRound size={16} strokeWidth={1.75} />
-            Entrar com código
-          </Button>
-        </Card>
-      </div>
-    );
-  }
-
-  if (isPairing) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
-        <Card className="max-w-md w-full p-8 text-center space-y-4">
-          <div className="animate-spin w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full mx-auto" />
-          <p className="text-sm font-medium text-[var(--color-text-muted)]">
-            Conectando ao computador...
-          </p>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto md:max-w-2xl md:h-dvh md:overflow-hidden md:border-x md:border-[var(--color-border)]">
       {/* Header */}
       <header className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between sticky top-0 z-10 md:static md:px-6 md:py-3">
         <div className="flex items-center gap-2 min-w-0">
-          <Smartphone size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
+          <Upload size={20} strokeWidth={1.5} className="text-[var(--color-accent)] shrink-0" />
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-semibold text-sm tracking-tight truncate">Enviar para Computador</span>
+            <span className="font-semibold text-sm tracking-tight truncate">Transferir arquivos</span>
             <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
               v{APP_VERSION}
             </span>
             {visualId && (
               <span
-                data-testid="phone-visual-id"
+                data-testid="guest-visual-id"
                 className="px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold bg-[var(--color-accent-light)] text-[var(--color-accent)] shrink-0"
               >
                 ID: {visualId}
@@ -621,7 +407,7 @@ export default function PhonePage({
             {completedFiles}/{totalFiles} enviados
           </span>
           {!isSessionClosed && (
-            <Button variant="ghost" size="sm" onClick={leaveSession}>
+            <Button variant="ghost" size="sm" onClick={onLeave}>
               Sair da sessão
             </Button>
           )}
@@ -641,7 +427,7 @@ export default function PhonePage({
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
             {wsClosedReason === "user_closed"
-              ? "Sessão encerrada pelo computador."
+              ? "Sessão encerrada pelo host."
               : "Sessão encerrada."}
           </p>
         </div>
@@ -658,14 +444,14 @@ export default function PhonePage({
         </div>
       )}
 
-      {isComputerDisconnected && (
+      {isHostDisconnected && (
         <div
-          data-testid="status-computer-disconnected"
+          data-testid="status-host-disconnected"
           role="status"
           className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 text-xs font-medium text-[var(--color-error)] flex items-center justify-center gap-2"
         >
           <AlertCircle size={14} />
-          <span>Computador desconectado</span>
+          <span>Host desconectado</span>
         </div>
       )}
 
@@ -678,12 +464,12 @@ export default function PhonePage({
           multiple
           disabled={isSessionClosed}
           className="hidden"
-          id="phone-file-input"
+          id="guest-file-input"
           onChange={handleFilesChosen}
         />
 
         <label
-          htmlFor={isSessionClosed ? undefined : "phone-file-input"}
+          htmlFor={isSessionClosed ? undefined : "guest-file-input"}
           className={[
             "border-2 border-dashed border-[var(--color-border)]",
             isSessionClosed

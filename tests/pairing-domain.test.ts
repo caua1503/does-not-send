@@ -10,8 +10,8 @@ function makeSession(id: string, shortId: string, state: Session["state"] = "WAI
   const now = new Date().toISOString();
   return {
     id,
-    computerTokenHash: "comp-hash",
-    phoneCredentialHash: null,
+    hostTokenHash: "comp-hash",
+    guestCredentialHash: null,
     visualId: shortId,
     shortId,
     qrTokenHash: "hash-1",
@@ -20,7 +20,7 @@ function makeSession(id: string, shortId: string, state: Session["state"] = "WAI
     createdAt: now,
     lastActivity: now,
     files: [],
-    lastSeen: { computer: null, phone: null },
+    lastSeen: { host: null, guest: null },
   };
 }
 

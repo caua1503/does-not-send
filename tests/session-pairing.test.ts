@@ -39,10 +39,10 @@ describe("consumePairing", () => {
     const result = consumePairing(session, raw);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(typeof result.phoneCredential).toBe("string");
-      expect(result.phoneCredential.length).toBeGreaterThanOrEqual(40);
-      expect(JSON.stringify(session)).not.toContain(result.phoneCredential);
-      expect(session.phoneCredentialHash).toBe(hashToken(result.phoneCredential));
+      expect(typeof result.guestCredential).toBe("string");
+      expect(result.guestCredential.length).toBeGreaterThanOrEqual(40);
+      expect(JSON.stringify(session)).not.toContain(result.guestCredential);
+      expect(session.guestCredentialHash).toBe(hashToken(result.guestCredential));
     }
   });
 
@@ -56,8 +56,8 @@ describe("consumePairing", () => {
     const second = consumePairing(session, raw);
     expect(second.ok).toBe(true);
     if (first.ok && second.ok) {
-      expect(second.phoneCredential).not.toBe(first.phoneCredential);
-      expect(session.phoneCredentialHash).toBe(hashToken(second.phoneCredential));
+      expect(second.guestCredential).not.toBe(first.guestCredential);
+      expect(session.guestCredentialHash).toBe(hashToken(second.guestCredential));
     }
     expect(session.state).toBe("PAIRED");
   });

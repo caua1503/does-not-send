@@ -427,7 +427,7 @@ export function createAdminQueries(db: ReaderDb) {
           .orderBy(desc(count(transfers.id)), desc(sum(transfers.size)))
           .limit(TOP_RANKING),
         // IPs are canonical session data: they only follow the period/IP/session
-        // scope (no pair = no phone), not the transfer facets.
+        // scope (no pair = no guest), not the transfer facets.
         db
           .select({ ip: sessions.phoneIp, n: count(sessions.id).as("n") })
           .from(sessions)

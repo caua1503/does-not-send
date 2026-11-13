@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import imageCompression from "browser-image-compression";
-import PhonePage from "../../pages/phone/PhonePage.tsx";
+import JoinPage from "../../pages/guest/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
   return {
@@ -16,7 +16,7 @@ vi.mock("heic2any", () => {
   return { default: heic2any };
 });
 
-describe("PhonePage", () => {
+describe("JoinPage", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe("PhonePage", () => {
   });
 
   it("renderiza área de escolher arquivos quando URL válida com token legado", () => {
-    render(<PhonePage />);
+    render(<JoinPage />);
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
   });
 
@@ -55,7 +55,7 @@ describe("PhonePage", () => {
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
     expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
   });
 
@@ -82,7 +82,7 @@ describe("PhonePage", () => {
 
     render(
       <StrictMode>
-        <PhonePage />
+        <JoinPage />
       </StrictMode>
     );
 
@@ -111,7 +111,7 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -139,12 +139,12 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
       expect(
-        screen.getByText(/sessão encerrada pelo computador/i)
+        screen.getByText(/sessão encerrada pelo host/i)
       ).toBeInTheDocument();
     });
   });
@@ -161,7 +161,7 @@ describe("PhonePage", () => {
 
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -200,11 +200,11 @@ describe("PhonePage", () => {
     });
   });
 
-  it("envia header Authorization com Bearer phoneCredential no upload via XHR", async () => {
+  it("envia header Authorization com Bearer guestCredential no upload via XHR", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2N88K",
       })
     );
@@ -226,9 +226,9 @@ describe("PhonePage", () => {
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const testFile = new File(["test-content"], "test-photo.jpg", {
       type: "image/jpeg",
     });
@@ -243,7 +243,7 @@ describe("PhonePage", () => {
     );
     expect(xhr.setRequestHeader).toHaveBeenCalledWith(
       "Authorization",
-      "Bearer secret-phone-credential-xyz"
+      "Bearer secret-guest-credential-xyz"
     );
 
     vi.unstubAllGlobals();
@@ -251,9 +251,9 @@ describe("PhonePage", () => {
 
   it("envia texto como arquivo na mesma lista (?kind=text)", () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2N88K",
       })
     );
@@ -275,7 +275,7 @@ describe("PhonePage", () => {
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     fireEvent.change(screen.getByPlaceholderText("Digite ou cole um texto..."), {
       target: { value: "  meu texto  " },
@@ -297,9 +297,9 @@ describe("PhonePage", () => {
 
   it("exibe 'Otimizando...' para foto > 1.2 MB sem bloquear a tela e depois envia comprimida", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2K9",
       })
     );
@@ -335,9 +335,9 @@ describe("PhonePage", () => {
         .then(() => compressedPhoto)
     );
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const bigPhoto = new File(
       [new Uint8Array(2.5 * 1024 * 1024)],
       "foto-pesada.jpg",
@@ -377,9 +377,9 @@ describe("PhonePage", () => {
 
   it("falha só no item HEIC quando a conversão falha, sem travar os demais", async () => {
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
+      "dns_guest_cred_session-test-id",
       JSON.stringify({
-        phoneCredential: "secret-phone-credential-xyz",
+        guestCredential: "secret-guest-credential-xyz",
         visualId: "B2K9",
       })
     );
@@ -403,9 +403,9 @@ describe("PhonePage", () => {
     heic2any.mockReset();
     heic2any.mockRejectedValue(new Error("libheif error"));
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const heic = new File(["heic-content"], "IMG_0001.HEIC", { type: "image/heic" });
     const pdf = new File(["pdf-content"], "doc.pdf", { type: "application/pdf" });
 
@@ -464,9 +464,9 @@ describe("PhonePage", () => {
       mockSockets = [];
       vi.stubGlobal("WebSocket", MockWebSocket);
       localStorage.setItem(
-        "dns_phone_cred_session-test-id",
+        "dns_guest_cred_session-test-id",
         JSON.stringify({
-          phoneCredential: "phone-secret-cred-123",
+          guestCredential: "guest-secret-cred-123",
           visualId: "X9K22",
         })
       );
@@ -477,7 +477,7 @@ describe("PhonePage", () => {
     });
 
     it("exibe aviso 'reconectando...' quando conexão WS é perdida", async () => {
-      render(<PhonePage />);
+      render(<JoinPage />);
 
       await waitFor(() => {
         expect(mockSockets.length).toBeGreaterThanOrEqual(1);

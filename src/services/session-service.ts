@@ -13,7 +13,7 @@ import type { Clock } from "../session/clock.js";
 import { SystemClock } from "../session/clock.js";
 
 export interface SessionWithSecrets extends Session {
-  rawComputerToken: string;
+  rawHostToken: string;
   rawQrToken: string;
 }
 
@@ -29,7 +29,7 @@ export class SessionService {
   }
 
   async create(): Promise<SessionWithSecrets> {
-    const rawComputerToken = generateSecret();
+    const rawHostToken = generateSecret();
     const rawQrToken = generateSecret();
     const activeVisualIds = this.store.getActiveVisualIds();
     const visualId = generateVisualId(activeVisualIds);
@@ -37,8 +37,8 @@ export class SessionService {
     const now = this.clock.now();
     const session: Session = {
       id: generateSessionId(),
-      computerTokenHash: hashToken(rawComputerToken),
-      phoneCredentialHash: null,
+      hostTokenHash: hashToken(rawHostToken),
+      guestCredentialHash: null,
       visualId,
       shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
@@ -48,8 +48,8 @@ export class SessionService {
       lastActivity: new Date(now).toISOString(),
       files: [],
       lastSeen: {
-        computer: now,
-        phone: null,
+        host: now,
+        guest: null,
       },
       closedReason: null,
     };
@@ -62,7 +62,7 @@ export class SessionService {
 
     return {
       ...session,
-      rawComputerToken,
+      rawHostToken,
       rawQrToken,
     };
   }
@@ -77,9 +77,9 @@ export class SessionService {
     if (result.ok) {
       const now = this.clock.now();
       if (!session.lastSeen) {
-        session.lastSeen = { computer: null, phone: null };
+        session.lastSeen = { host: null, guest: null };
       }
-      session.lastSeen.phone = now;
+      session.lastSeen.guest = now;
       this.store.update(session);
       this.touchActivity(id);
     }
@@ -89,9 +89,9 @@ export class SessionService {
   /**
    * Manual login: session id + numeric code in place of reading the QR Code.
    * Any failure is reported as one opaque false, never why. Wrong codes feed
-   * the per-session counter; hitting it rotates the code for the computer.
+   * the per-session counter; hitting it rotates the code for the host.
    */
-  joinByCode(rawSessionId: string, code: string): { sessionId: string; phoneCredential: string } | null {
+  joinByCode(rawSessionId: string, code: string): { sessionId: string; guestCredential: string } | null {
     const session = this.store.getByNormalizedVisualId(rawSessionId);
     if (
       !session ||
@@ -110,20 +110,20 @@ export class SessionService {
 
     this.store.loginGuard.recordSessionSuccess(session.id);
 
-    const phoneCredential = generateSecret();
-    session.phoneCredentialHash = hashToken(phoneCredential);
+    const guestCredential = generateSecret();
+    session.guestCredentialHash = hashToken(guestCredential);
     session.pairedAt = new Date(this.clock.now()).toISOString();
     if (session.state === "WAITING") {
       transition(session, "PAIRED");
     }
     if (!session.lastSeen) {
-      session.lastSeen = { computer: null, phone: null };
+      session.lastSeen = { host: null, guest: null };
     }
-    session.lastSeen.phone = this.clock.now();
+    session.lastSeen.guest = this.clock.now();
     this.store.update(session);
     this.touchActivity(session.id);
 
-    return { sessionId: session.id, phoneCredential };
+    return { sessionId: session.id, guestCredential };
   }
 
   getById(id: string): Session | undefined {

@@ -5,12 +5,12 @@ import { Card } from "../../components/ui/Card.tsx";
 import { EmptyState } from "../../components/ui/EmptyState.tsx";
 import { Toast } from "../../components/ui/Toast.tsx";
 import { SessionCard } from "./SessionCard.tsx";
-import { FileList } from "./FileList.tsx";
+import { SessionPage } from "../SessionPage.tsx";
 import { createSession, deleteSession, joinWithCode, JoinError } from "../../lib/api.ts";
-import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import type { Session } from "../../lib/api.ts";
 import { BASE_URL } from "../../lib/base.ts";
-import { JoinSessionForm } from "../phone/JoinSessionForm.tsx";
+import { JoinSessionForm } from "../guest/JoinSessionForm.tsx";
+import { writeGuestSession } from "../../lib/guestSessionStorage.ts";
 import { APP_VERSION } from "../../lib/whatsNew.ts";
 
 const PUBLIC_BASE_URL = BASE_URL || window.location.origin;
@@ -19,7 +19,7 @@ interface ActiveSession extends Session {
   closing?: boolean;
 }
 
-export default function ComputerPage() {
+export default function HostPage() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -82,17 +82,12 @@ export default function ComputerPage() {
   }, [sessions]);
 
   // Manual login from the home screen: same credential the QR pairs give, then
-  // hand off to the phone page with the canonical id.
+  // hand off to the guest page with the canonical id.
   const handleJoinWithCode = async (sessionId: string, code: string) => {
     try {
       const data = await joinWithCode(sessionId, code);
-      try {
-        localStorage.setItem(
-          `dns_phone_cred_${data.sessionId}`,
-          JSON.stringify({ phoneCredential: data.phoneCredential }),
-        );
-      } catch {}
-      window.location.assign(`/enviar/${data.sessionId}`);
+      writeGuestSession(data.sessionId, data.phoneCredential);
+      window.location.assign(`/entrar/${data.sessionId}`);
       return null;
     } catch (err) {
       if (err instanceof JoinError && err.status === 429) {
@@ -138,7 +133,7 @@ export default function ComputerPage() {
             <EmptyState
               icon={Monitor}
               title="Nenhuma sessão ativa"
-              description="Crie uma sessão e escaneie o QR Code com o seu telefone para enviar arquivos."
+              description="Crie uma sessão e escaneie o QR Code no outro dispositivo para transferir arquivos."
               action={
                 <div className="flex flex-col gap-2 w-48">
                   <Button
@@ -177,9 +172,11 @@ export default function ComputerPage() {
             {/* Files panel */}
             <section className="flex-1 hidden lg:flex flex-col">
               {selectedSession ? (
-                <Card className="flex-1 overflow-hidden flex flex-col">
-                  <SelectedSessionFiles session={selectedSession} />
-                </Card>
+                <SessionPage
+                  role="host"
+                  sessionId={selectedSession.id}
+                  token={selectedSession.ownerToken}
+                />
               ) : (
                 <Card className="flex-1">
                   <EmptyState
@@ -203,9 +200,4 @@ export default function ComputerPage() {
       )}
     </div>
   );
-}
-
-function SelectedSessionFiles({ session }: { session: ActiveSession }) {
-  const { files } = useSessionEvents(session.id, session.ownerToken);
-  return <FileList files={files} sessionId={session.id} ownerToken={session.ownerToken} />;
 }

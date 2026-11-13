@@ -71,7 +71,7 @@ function waitForEvent(
 async function wsConnectAndAuth(
   baseUrl: string,
   sessionId: string,
-  role: "computer" | "phone",
+  role: "computer" | "phone" | "host" | "guest",
   secret: string,
 ): Promise<WebSocket> {
   const ws = new WebSocket(`${baseUrl}/api/sessions/${sessionId}/ws`);
@@ -151,6 +151,38 @@ describe("websocket", () => {
   it("accepts connection with phone auth", async () => {
     const session = await createSession(ctx.app);
     const ws = await wsConnectAndAuth(baseUrl, session.id, "phone", session.uploadToken);
+    ws.close();
+    await waitForClose(ws);
+  });
+
+  it("accepts connection with host auth alias in the host slot", async () => {
+    const session = await createSession(ctx.app);
+    const ws = await wsConnectAndAuth(baseUrl, session.id, "host", session.ownerToken);
+
+    const res = await ctx.app.inject({
+      method: "GET",
+      url: `/api/sessions/${session.id}`,
+      headers: { authorization: `Bearer ${session.ownerToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().computerPresent).toBe(true);
+
+    ws.close();
+    await waitForClose(ws);
+  });
+
+  it("accepts connection with guest auth alias in the guest slot", async () => {
+    const session = await createSession(ctx.app);
+    const ws = await wsConnectAndAuth(baseUrl, session.id, "guest", session.uploadToken);
+
+    const res = await ctx.app.inject({
+      method: "GET",
+      url: `/api/sessions/${session.id}`,
+      headers: { authorization: `Bearer ${session.ownerToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().phonePresent).toBe(true);
+
     ws.close();
     await waitForClose(ws);
   });

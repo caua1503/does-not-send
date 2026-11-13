@@ -59,8 +59,8 @@ function makeSession(store: SessionStore, id: string) {
   const now = store.clock.now();
   return {
     id,
-    computerTokenHash: "hash",
-    phoneCredentialHash: null,
+    hostTokenHash: "hash",
+    guestCredentialHash: null,
     visualId: "AA-BB",
     shortId: "AA-BB",
     qrTokenHash: null,
@@ -69,7 +69,7 @@ function makeSession(store: SessionStore, id: string) {
     createdAt: new Date(now).toISOString(),
     lastActivity: new Date(now).toISOString(),
     files: [],
-    lastSeen: { computer: now, phone: null },
+    lastSeen: { host: now, guest: null },
     closedReason: null,
   };
 }

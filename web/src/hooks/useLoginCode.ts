@@ -16,7 +16,7 @@ interface LoginCodeMessage {
 }
 
 /**
- * Keeps the computer's current manual login code, delivered over the same
+ * Keeps the host's current manual login code, delivered over the same
  * session WebSocket the file events use. Authenticates, then waits for
  * `login_code` pushes and `login_code_cleared` notices; reconnects on its own.
  */
@@ -50,7 +50,7 @@ export function useLoginCode(
 
       ws.onopen = () => {
         if (stopped) return;
-        ws!.send(JSON.stringify({ type: "auth", role: "computer", secret: token }));
+        ws!.send(JSON.stringify({ type: "auth", role: "host", secret: token }));
       };
 
       ws.onmessage = (event) => {

@@ -54,7 +54,7 @@ export class LoginGuard {
 
   /**
    * Counts a wrong code for the session and says whether the limit was hit.
-   * At the limit the current code is rotated (new one goes to the computer)
+   * At the limit the current code is rotated (new one goes to the host)
    * and the counter starts over for the fresh code. An id that does not exist
    * has nothing to rotate: `rotate` is only called for real sessions.
    */

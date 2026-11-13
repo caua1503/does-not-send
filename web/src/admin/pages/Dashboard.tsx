@@ -179,7 +179,7 @@ export function Dashboard(props: DashboardProps) {
               formatKey={(k) => `.${k}`}
             />
             <RankCard
-              title="IPs de celular mais frequentes"
+              title="IPs de visitantes mais frequentes"
               rows={data.topPhoneIps.map((ip) => ({ key: ip.ip, label: ip.ip, count: ip.count }))}
             />
           </div>

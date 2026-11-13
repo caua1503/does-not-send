@@ -42,18 +42,18 @@ export async function authorize(
 
   let matchedRole: TokenRole | null = null;
 
-  // Check computer / owner role
+  // Check host / owner role
   if (allowedRoles.includes("owner") || allowedRoles.includes("computer")) {
-    const compAuth = domainAuthorize(session, "computer", token);
-    if (compAuth.ok) {
+    const hostAuth = domainAuthorize(session, "computer", token);
+    if (hostAuth.ok) {
       matchedRole = allowedRoles.includes("computer") ? "computer" : "owner";
     }
   }
 
-  // Check phone role (route-level grant; not interchangeable with "upload")
+  // Check guest role (route-level grant; not interchangeable with "upload")
   if (!matchedRole && allowedRoles.includes("phone")) {
-    const phoneAuth = domainAuthorize(session, "phone", token);
-    if (phoneAuth.ok) {
+    const guestAuth = domainAuthorize(session, "phone", token);
+    if (guestAuth.ok) {
       matchedRole = "phone";
     }
   }
@@ -95,8 +95,8 @@ export async function sessionRoutes(
 
     return reply.status(201).send({
       id: session.id,
-      computerToken: session.rawComputerToken,
-      ownerToken: session.rawComputerToken,
+      computerToken: session.rawHostToken,
+      ownerToken: session.rawHostToken,
       uploadToken: placeholderUploadToken,
       qrToken: session.rawQrToken,
       visualId: session.visualId,
@@ -105,7 +105,7 @@ export async function sessionRoutes(
     });
   });
 
-  // Pair phone to session using the session's reusable QR token
+  // Pair guest to session using the session's reusable QR token
   app.post<{
     Params: { id: string };
     Body: { qrToken?: string };
@@ -194,7 +194,7 @@ export async function sessionRoutes(
 
     return reply.status(200).send({
       success: true,
-      phoneCredential: pairResult.phoneCredential,
+      phoneCredential: pairResult.guestCredential,
       visualId: session.visualId,
       shortId: session.visualId,
       state: session.state,
@@ -238,12 +238,12 @@ export async function sessionRoutes(
       return reply.status(200).send({
         success: true,
         sessionId: joined.sessionId,
-        phoneCredential: joined.phoneCredential,
+        phoneCredential: joined.guestCredential,
       });
     },
   );
 
-  // Issue a manual login code on demand (owner/computer only).
+  // Issue a manual login code on demand (owner/host only).
   app.post<{ Params: { id: string } }>("/sessions/:id/login-code", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
@@ -257,7 +257,7 @@ export async function sessionRoutes(
     return reply.status(202).send({ ok: true });
   });
 
-  // Get session info (owner/computer/phone)
+  // Get session info (owner/host/guest)
   app.get<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);
     if (!auth) return;
@@ -266,8 +266,8 @@ export async function sessionRoutes(
     return {
       id: session.id,
       state: session.state,
-      phonePresent: ctx.sessionStore.isPhonePresent(session.id),
-      computerPresent: ctx.sessionStore.isComputerPresent(session.id),
+      phonePresent: ctx.sessionStore.isGuestPresent(session.id),
+      computerPresent: ctx.sessionStore.isHostPresent(session.id),
       activeUploads: session.activeUploads ?? 0,
       visualId: session.visualId,
       shortId: session.shortId,
@@ -277,7 +277,7 @@ export async function sessionRoutes(
     };
   });
 
-  // Close session (owner/computer only)
+  // Close session (owner/host only)
   app.delete<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
     if (!auth) return;
@@ -286,7 +286,7 @@ export async function sessionRoutes(
     return reply.status(204).send();
   });
 
-  // Heartbeat (HTTP backup for computer/phone)
+  // Heartbeat (HTTP backup for host/guest)
   app.post<{ Params: { id: string } }>("/sessions/:id/heartbeat", async (request, reply) => {
     const auth = await authorize(request, reply, ctx, request.params.id, [
       "owner",

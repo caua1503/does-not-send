@@ -1,6 +1,6 @@
 import { vi, it, expect, describe, beforeAll } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SessionCard } from "../../pages/computer/SessionCard.tsx";
+import { SessionCard } from "../../pages/host/SessionCard.tsx";
 
 // jsdom não implementa canvas — mock mínimo para QRCodeCanvas não quebrar
 beforeAll(() => {
@@ -25,6 +25,16 @@ vi.mock("../../hooks/useSessionEvents.ts", () => ({
 vi.mock("../../hooks/useHeartbeat.ts", () => ({
   useHeartbeat: vi.fn(),
 }));
+
+vi.mock("qrcode.react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("qrcode.react")>();
+  return {
+    ...actual,
+    QRCodeSVG: ({ value }: { value: string }) => (
+      <svg data-testid="qr-svg" data-value={value} />
+    ),
+  };
+});
 
 describe("SessionCard QR Code zoom", () => {
   const session = {
@@ -116,6 +126,23 @@ describe("SessionCard QR Code zoom", () => {
     const modalId = screen.getByTestId("session-modal-visual-id");
     expect(modalId).toBeInTheDocument();
     expect(modalId).toHaveTextContent("ID: A7K92F");
+  });
+
+  it("gera QR na rota nova /entrar/", () => {
+    render(
+      <SessionCard
+        session={{ ...session, qrToken: "qr-token" }}
+        publicBaseUrl="http://192.168.1.100:3000"
+        onClose={vi.fn()}
+        selected={false}
+        onSelect={vi.fn()}
+      />
+    );
+
+    expect(screen.getByTestId("qr-svg")).toHaveAttribute(
+      "data-value",
+      "http://192.168.1.100:3000/entrar/test-session-id?qrToken=qr-token"
+    );
   });
 
   it("gera o código numérico sob demanda", async () => {

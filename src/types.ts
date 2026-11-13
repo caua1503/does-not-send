@@ -25,8 +25,8 @@ export interface SessionFile {
 
 export interface Session {
   id: string;
-  computerTokenHash: string;
-  phoneCredentialHash: string | null;
+  hostTokenHash: string;
+  guestCredentialHash: string | null;
   ownerToken?: string;
   uploadToken?: string;
   visualId: string;
@@ -39,8 +39,8 @@ export interface Session {
   lastActivity: string;
   files: SessionFile[];
   lastSeen: {
-    computer: number | null;
-    phone: number | null;
+    host: number | null;
+    guest: number | null;
   };
   closedReason?: string | null;
   computerIp?: string | null; // IP normalizado do computador

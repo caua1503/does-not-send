@@ -38,7 +38,7 @@ describe("Sessão sem encerramento automático", () => {
     const stored = store.getById(session.id)!;
     expect(stored.state).toBe("DISCONNECTED");
     expect(stored.closedReason).toBeNull();
-    expect(stored.computerTokenHash).not.toBe("");
+    expect(stored.hostTokenHash).not.toBe("");
   });
 
   it("celular que volta depois de horas continua aceitando upload", async () => {

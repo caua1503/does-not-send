@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { FileRow } from "../../pages/computer/FileRow.tsx";
-import PhonePage from "../../pages/phone/PhonePage.tsx";
+import { FileRow } from "../../pages/host/FileRow.tsx";
+import JoinPage from "../../pages/guest/JoinPage.tsx";
 import type { FileEntry } from "../../lib/api.ts";
 
 vi.mock("browser-image-compression", () => ({ default: vi.fn() }));
@@ -63,12 +63,12 @@ describe("FileRow lápis de edição", () => {
   });
 });
 
-describe("PhonePage lápis de edição", () => {
+describe("JoinPage lápis de edição", () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem(
-      "dns_phone_cred_session-test-id",
-      JSON.stringify({ phoneCredential: "cred-phone", visualId: "AB12" })
+      "dns_guest_cred_session-test-id",
+      JSON.stringify({ guestCredential: "cred-guest", visualId: "AB12" })
     );
     Object.defineProperty(window, "location", {
       value: { origin: "http://localhost:3000", pathname: "/enviar/session-test-id", search: "" },
@@ -99,8 +99,8 @@ describe("PhonePage lápis de edição", () => {
     }
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    render(<JoinPage />);
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const file = new File(["x"], "foto.jpg", { type: "image/jpeg" });
     fireEvent.change(input, { target: { files: [file] } });
     expect(xhrInstances).toHaveLength(1);
@@ -128,8 +128,8 @@ describe("PhonePage lápis de edição", () => {
     } as unknown as typeof XMLHttpRequest;
     vi.stubGlobal("XMLHttpRequest", Ctor);
 
-    render(<PhonePage />);
-    const input = document.getElementById("phone-file-input") as HTMLInputElement;
+    render(<JoinPage />);
+    const input = document.getElementById("guest-file-input") as HTMLInputElement;
     const file = new File(["x"], "foto.heic", { type: "image/heic" });
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText(/Não foi possível converter a imagem HEIC/)).toBeInTheDocument();

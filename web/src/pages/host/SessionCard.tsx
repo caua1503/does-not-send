@@ -48,7 +48,7 @@ export function SessionCard({
   const { files, connected } = useSessionEvents(
     session.id,
     session.ownerToken,
-    { role: "computer", onSessionClosed: (reason) => {
+    { role: "host", onSessionClosed: (reason) => {
       if (reason === "session_expired") onExpired?.();
     } },
   );
@@ -103,8 +103,8 @@ export function SessionCard({
   const visualId = session.visualId || session.shortId;
   const qrToken = session.qrToken || session.uploadToken || "";
   const uploadUrl = qrToken
-    ? `${publicBaseUrl}/enviar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
-    : `${publicBaseUrl}/enviar/${session.id}`;
+    ? `${publicBaseUrl}/entrar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
+    : `${publicBaseUrl}/entrar/${session.id}`;
 
   // Fecha com Esc
   useEffect(() => {
@@ -212,7 +212,7 @@ export function SessionCard({
                 {sessionInfo?.state === "DISCONNECTED" ? (
                   <Badge label="Reconectando..." variant="warn" />
                 ) : sessionInfo?.phonePresent ? (
-                  <Badge label="Telefone conectado" variant="success" />
+                  <Badge label="Visitante conectado" variant="success" />
                 ) : null}
               </div>
               <button
@@ -235,7 +235,7 @@ export function SessionCard({
             </div>
 
             <p className="mt-2 text-xs text-[var(--color-text-muted)] break-all leading-relaxed">
-              Escaneie o QR Code com o telefone
+              Escaneie o QR Code no outro dispositivo
             </p>
           </div>
         </div>
@@ -306,7 +306,7 @@ export function SessionCard({
             )}
 
             <p className="text-xs text-gray-500 text-center">
-              Aponte a câmera do telefone para o QR Code
+              Aponte a câmera do outro dispositivo para o QR Code
             </p>
           </div>
         </div>,

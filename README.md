@@ -1,6 +1,6 @@
 # does not send
 
-Aplicação web para transferir arquivos entre telefone e computador na rede local (LAN).
+Aplicação web para transferir arquivos entre dispositivos na rede local (LAN).
 
 - **Zero Dependência Externa:** Funciona 100% offline em rede local fechada, sem internet, sem nuvem e sem CDN.
 - **Efêmero por Design:** Sem banco de dados, sem histórico persistente. Os arquivos ficam em armazenamento temporário (ou `tmpfs` em RAM) e são apagados imediatamente ao término da sessão.
@@ -15,9 +15,9 @@ Aplicação web para transferir arquivos entre telefone e computador na rede loc
   ┌─────────────────────────────────────────────────────────────┐
   │                        REDE LOCAL                           │
   │                                                             │
-  │  [Telefone / Navegador]               [Computador / Host]   │
+  │  [Visitante / Guest]                    [Host]              │
   │          │                                     │            │
-  │          │ 1. Escaneia QR                      │            │
+  │          │ 1. Escaneia QR ou digita código     │            │
   │          │ 2. POST /api/sessions/:id/files     │            │
   │          ├─────────────────────────► [Fastify Server (Bun)] │
   │          │ (Upload multipart com progresso)    │            │
@@ -30,11 +30,11 @@ Aplicação web para transferir arquivos entre telefone e computador na rede loc
   └──────────┴─────────────────────────────────────┴────────────┘
 ```
 
-1. **Computador**: Acessa `/`, clica em **Nova Sessão** e visualiza o QR Code com a URL do uploadToken.
-2. **Telefone**: Escaneia o QR Code, abrindo `/enviar/:id?token=...`. Seleciona fotos/vídeos/documentos com progresso real via `XMLHttpRequest`. O QR Code continua válido durante toda a sessão: escaneá-lo de novo troca o celular conectado.
-3. **Tempo Real**: Eventos de envio e conclusão são transmitidos em tempo real para o computador via WebSocket (`/api/sessions/:id/ws`).
+1. **Host**: Acessa `/`, clica em **Nova Sessão** e visualiza o QR Code com a URL do uploadToken.
+2. **Visitante (guest)**: Escaneia o QR Code ou entra com ID e código, abrindo `/entrar/:id`. QR Codes antigos com `/enviar/:id` continuam funcionando. Seleciona fotos/vídeos/documentos/textos com progresso real via `XMLHttpRequest`. O QR Code continua válido durante toda a sessão: escaneá-lo de novo troca o visitante conectado.
+3. **Tempo Real**: Eventos de envio e conclusão são transmitidos em tempo real para o host via WebSocket (`/api/sessions/:id/ws`).
 4. **Download & Preview**: Pré-visualização inline protegida para imagens, áudio, vídeo e PDFs. Downloads individuais e ZIP sob demanda sem carregar na RAM.
-5. **Encerramento**: A sessão termina apenas quando o computador clica em "Encerrar" (nada de timeout automático); o backend remove a sessão e limpa os arquivos temporários do disco. No telefone, "Sair da sessão" só desconecta aquele celular.
+5. **Encerramento**: A sessão termina apenas quando o host clica em "Encerrar" (nada de timeout automático); o backend remove a sessão e limpa os arquivos temporários do disco. No visitante, "Sair da sessão" só desconecta aquele dispositivo.
 
 ---
 
@@ -59,7 +59,7 @@ cd web && bun install && cd ..
 
 ### 2. Descobrir o IP da Máquina na Rede Local
 
-Para permitir que o telefone acesse o servidor, você precisa do IP local:
+Para permitir que outros dispositivos acessem o servidor, você precisa do IP local:
 
 - **Linux**: `ip route get 1 | awk '{print $7}'` ou `hostname -I | awk '{print $1}'`
 - **macOS**: `ipconfig getifaddr en0` (ou `en1` no Wi-Fi)
@@ -77,7 +77,7 @@ bun run build:web
 PUBLIC_BASE_URL=http://192.168.1.50:3000 PORT=3000 bun run start
 ```
 
-Acesse `http://localhost:3000` (ou `http://192.168.1.50:3000`) no navegador do computador.
+Acesse `http://localhost:3000` (ou `http://192.168.1.50:3000`) no navegador do host.
 
 ---
 
@@ -246,15 +246,15 @@ bun run smoke
 
 ## Solução de Problemas & Firewall
 
-- **O telefone não abre a página do QR Code:**
-  - Certifique-se de que o computador e o telefone estão conectados na **mesma rede Wi-Fi**.
+- **O QR Code não abre em outro dispositivo:**
+  - Certifique-se de que o host e o visitante estão conectados na **mesma rede Wi-Fi**.
   - Verifique o firewall do sistema operacional e libere o tráfego de entrada na porta TCP selecionada (ex: 3000):
     - *Linux (UFW):* `sudo ufw allow 3000/tcp`
     - *macOS:* Preferências do Sistema > Rede > Firewall (permitir conexões recebidas)
     - *Windows:* Painel de Controle > Firewall do Windows Defender > Permitir aplicativo
   - Confira se a variável `PUBLIC_BASE_URL` foi preenchida com o IP correto da LAN e não `localhost` ou `127.0.0.1`.
 
-- **Falha no upload de arquivos grandes no telefone:**
+- **Falha no upload de arquivos grandes em dispositivos móveis:**
   - Dispositivos móveis podem suspender o navegador em segundo plano. Mantenha a aba aberta durante a transferência.
 
 - **Janela "Salvar como" não aparece ao baixar arquivos:**
@@ -265,5 +265,5 @@ bun run smoke
 
 ## Limitações Conhecidas
 
-- **Rede Local Única:** Não há roteamento NAT transversal ou servidores TURN/STUN externos. O computador e o telefone precisam se enxergar na sub-rede IP da LAN.
+- **Rede Local Única:** Não há roteamento NAT transversal ou servidores TURN/STUN externos. O host e o visitante precisam se enxergar na sub-rede IP da LAN.
 - **Ausência de Persistência:** Não existe histórico ou recuperação de arquivos pós-reinicialização ou após o encerramento da sessão.
