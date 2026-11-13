@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import PhonePage from "../../pages/phone/PhonePage.tsx";
+import JoinPage from "../../pages/phone/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
   return {
@@ -86,7 +86,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
     }
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
 
@@ -183,7 +183,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     // NÃO deve chamar pair
     expect(fetchMock).not.toHaveBeenCalled();
@@ -231,7 +231,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
     expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: SRV88");
@@ -256,7 +256,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(mockSockets.length).toBeGreaterThanOrEqual(1);
@@ -295,7 +295,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     // Por ter encontrado em localStorage, nem tenta parear de novo
     expect(fetchMock).not.toHaveBeenCalled();
@@ -322,7 +322,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(mockSockets.length).toBeGreaterThanOrEqual(1);
@@ -372,7 +372,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByTestId("phone-visual-id")).toHaveTextContent("ID: NEW42");
@@ -402,7 +402,7 @@ describe("PhoneReconnectionPersistence - Cenários de Reconexão e Persistência
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(mockSockets.length).toBeGreaterThanOrEqual(1);

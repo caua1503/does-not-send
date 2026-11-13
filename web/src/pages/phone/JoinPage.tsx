@@ -24,7 +24,7 @@ import { APP_VERSION } from "../../lib/whatsNew.ts";
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
 
-interface PhonePageProps {
+interface JoinPageProps {
   sessionId?: string;
   token?: string;
   qrToken?: string;
@@ -82,11 +82,11 @@ function clearStoredSession(id: string): void {
   } catch {}
 }
 
-export default function PhonePage({
+export default function JoinPage({
   sessionId: propSessionId,
   token: propToken,
   qrToken: propQrToken,
-}: PhonePageProps) {
+}: JoinPageProps) {
   // Extract from props or URL
   const pathParts = window.location.pathname.split("/");
   const urlSessionId = propSessionId || pathParts[2] || "";

@@ -19,7 +19,7 @@ interface ActiveSession extends Session {
   closing?: boolean;
 }
 
-export default function ComputerPage() {
+export default function HostPage() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);

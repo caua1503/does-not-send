@@ -1,6 +1,6 @@
 import { vi, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import ComputerPage from "../../pages/computer/ComputerPage.tsx";
+import HostPage from "../../pages/computer/HostPage.tsx";
 
 vi.mock("../../lib/api.ts", () => ({
   createSession: vi.fn(),
@@ -10,7 +10,7 @@ vi.mock("../../lib/api.ts", () => ({
 }));
 
 it("oferece entrar com código abaixo de nova sessão", () => {
-  render(<ComputerPage />);
+  render(<HostPage />);
 
   expect(screen.getAllByRole("button", { name: /nova sessão/i }).length).toBeGreaterThan(0);
 

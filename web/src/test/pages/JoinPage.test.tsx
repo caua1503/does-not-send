@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import imageCompression from "browser-image-compression";
-import PhonePage from "../../pages/phone/PhonePage.tsx";
+import JoinPage from "../../pages/phone/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
   return {
@@ -16,7 +16,7 @@ vi.mock("heic2any", () => {
   return { default: heic2any };
 });
 
-describe("PhonePage", () => {
+describe("JoinPage", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe("PhonePage", () => {
   });
 
   it("renderiza área de escolher arquivos quando URL válida com token legado", () => {
-    render(<PhonePage />);
+    render(<JoinPage />);
     expect(screen.getByText(/escolher arquivos/i)).toBeInTheDocument();
   });
 
@@ -55,7 +55,7 @@ describe("PhonePage", () => {
       writable: true,
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
     expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
   });
 
@@ -82,7 +82,7 @@ describe("PhonePage", () => {
 
     render(
       <StrictMode>
-        <PhonePage />
+        <JoinPage />
       </StrictMode>
     );
 
@@ -111,7 +111,7 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("PhonePage", () => {
 
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("PhonePage", () => {
       }),
     });
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
@@ -226,7 +226,7 @@ describe("PhonePage", () => {
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     const input = document.getElementById("phone-file-input") as HTMLInputElement;
     const testFile = new File(["test-content"], "test-photo.jpg", {
@@ -275,7 +275,7 @@ describe("PhonePage", () => {
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     fireEvent.change(screen.getByPlaceholderText("Digite ou cole um texto..."), {
       target: { value: "  meu texto  " },
@@ -335,7 +335,7 @@ describe("PhonePage", () => {
         .then(() => compressedPhoto)
     );
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     const input = document.getElementById("phone-file-input") as HTMLInputElement;
     const bigPhoto = new File(
@@ -403,7 +403,7 @@ describe("PhonePage", () => {
     heic2any.mockReset();
     heic2any.mockRejectedValue(new Error("libheif error"));
 
-    render(<PhonePage />);
+    render(<JoinPage />);
 
     const input = document.getElementById("phone-file-input") as HTMLInputElement;
     const heic = new File(["heic-content"], "IMG_0001.HEIC", { type: "image/heic" });
@@ -477,7 +477,7 @@ describe("PhonePage", () => {
     });
 
     it("exibe aviso 'reconectando...' quando conexão WS é perdida", async () => {
-      render(<PhonePage />);
+      render(<JoinPage />);
 
       await waitFor(() => {
         expect(mockSockets.length).toBeGreaterThanOrEqual(1);

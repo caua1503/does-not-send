@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { FileRow } from "../../pages/computer/FileRow.tsx";
-import PhonePage from "../../pages/phone/PhonePage.tsx";
+import JoinPage from "../../pages/phone/JoinPage.tsx";
 import type { FileEntry } from "../../lib/api.ts";
 
 vi.mock("browser-image-compression", () => ({ default: vi.fn() }));
@@ -63,7 +63,7 @@ describe("FileRow lápis de edição", () => {
   });
 });
 
-describe("PhonePage lápis de edição", () => {
+describe("JoinPage lápis de edição", () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem(
@@ -99,7 +99,7 @@ describe("PhonePage lápis de edição", () => {
     }
     vi.stubGlobal("XMLHttpRequest", MockXHR);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
     const input = document.getElementById("phone-file-input") as HTMLInputElement;
     const file = new File(["x"], "foto.jpg", { type: "image/jpeg" });
     fireEvent.change(input, { target: { files: [file] } });
@@ -128,7 +128,7 @@ describe("PhonePage lápis de edição", () => {
     } as unknown as typeof XMLHttpRequest;
     vi.stubGlobal("XMLHttpRequest", Ctor);
 
-    render(<PhonePage />);
+    render(<JoinPage />);
     const input = document.getElementById("phone-file-input") as HTMLInputElement;
     const file = new File(["x"], "foto.heic", { type: "image/heic" });
     fireEvent.change(input, { target: { files: [file] } });
