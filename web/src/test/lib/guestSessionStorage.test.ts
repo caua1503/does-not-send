@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearGuestSession,
   readGuestSession,
@@ -8,6 +8,10 @@ import {
 describe("guestSessionStorage", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("migra a chave antiga e o shape phoneCredential na primeira leitura", () => {
@@ -74,5 +78,26 @@ describe("guestSessionStorage", () => {
     clearGuestSession("s4");
     expect(localStorage.getItem("dns_guest_cred_s4")).toBeNull();
     expect(localStorage.getItem("dns_phone_cred_s4")).toBeNull();
+  });
+
+  it("não descarta credencial antiga válida quando a chave nova tem JSON corrompido", () => {
+    localStorage.setItem("dns_guest_cred_s7", "{corrupted");
+    localStorage.setItem("dns_phone_cred_s7", JSON.stringify({ phoneCredential: "legacy-cred" }));
+
+    expect(readGuestSession("s7").credential).toBe("legacy-cred");
+    expect(JSON.parse(localStorage.getItem("dns_guest_cred_s7")!)).toMatchObject({
+      guestCredential: "legacy-cred",
+    });
+    expect(localStorage.getItem("dns_phone_cred_s7")).toBeNull();
+  });
+
+  it("mantém a chave antiga quando a gravação da nova falha", () => {
+    localStorage.setItem("dns_phone_cred_s8", JSON.stringify({ phoneCredential: "legacy-cred" }));
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
+      throw new Error("quota");
+    });
+
+    expect(readGuestSession("s8").credential).toBe("legacy-cred");
+    expect(localStorage.getItem("dns_phone_cred_s8")).not.toBeNull();
   });
 });
