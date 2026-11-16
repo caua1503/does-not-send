@@ -93,7 +93,10 @@ export async function inviteRoutes(
     if (!invite) {
       return reply.status(404).send({ error: "Invite not found", statusCode: 404 });
     }
-    return reply.status(200).send({ state: ctx.sessionStore.invites.state(invite) });
+    return reply.status(200).send({
+      state: ctx.sessionStore.invites.state(invite),
+      sessionId: invite.sessionId,
+    });
   });
 
   // Redeem an invite and hand out the session guest credential.

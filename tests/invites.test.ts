@@ -76,14 +76,14 @@ describe("convites por URL", () => {
     for (let i = 0; i < 3; i++) {
       const res = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ state: "valid" });
+      expect(res.json()).toEqual({ state: "valid", sessionId: session.id });
     }
 
     const used = await redeem(code, "device-a");
     expect(used.statusCode).toBe(200);
 
     const after = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(after.json()).toEqual({ state: "used" });
+    expect(after.json()).toEqual({ state: "used", sessionId: session.id });
   });
 
   it("single: mesmo dispositivo reusa, outro dispositivo encontra usado", async () => {
@@ -124,7 +124,7 @@ describe("convites por URL", () => {
       expect((res.json() as Redeemed).phoneCredential).toBeTruthy();
 
       const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-      expect(state.json()).toEqual({ state: "valid" });
+      expect(state.json()).toEqual({ state: "valid", sessionId: session.id });
     }
   });
 
@@ -157,7 +157,7 @@ describe("convites por URL", () => {
     clock.advance(INVITE_TTL_MS);
 
     const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(state.json()).toEqual({ state: "expired" });
+    expect(state.json()).toEqual({ state: "expired", sessionId: session.id });
 
     const res = await redeem(code, "device-a");
     expect(res.statusCode).toBe(410);
@@ -176,7 +176,7 @@ describe("convites por URL", () => {
     expect(revoked.statusCode).toBe(204);
 
     const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(state.json()).toEqual({ state: "revoked" });
+    expect(state.json()).toEqual({ state: "revoked", sessionId: session.id });
 
     const res = await redeem(code, "device-a");
     expect(res.statusCode).toBe(410);

@@ -36,7 +36,9 @@ export default function HostPage() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [joining, setJoining] = useState(false);
+  const [joining, setJoining] = useState(
+    () => new URLSearchParams(window.location.search).has("entrar"),
+  );
   const [pendingTwowayJoin, setPendingTwowayJoin] = useState<{
     id: string;
     code: string;
@@ -49,6 +51,13 @@ export default function HostPage() {
 
   const selectedSession = sessions.find((s) => s.id === selectedId);
   const hasActiveSession = sessions.length > 0;
+
+  useEffect(() => {
+    if (!joining || !window.location.search) return;
+    try {
+      window.history.replaceState({}, "", window.location.pathname);
+    } catch {}
+  }, [joining]);
 
   // Auto-select first session
   useEffect(() => {

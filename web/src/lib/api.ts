@@ -42,6 +42,13 @@ export interface PairErrorBody {
   statusCode?: number;
 }
 
+export type InviteState = "valid" | "expired" | "used" | "revoked";
+
+export interface InvitePreview {
+  state: InviteState;
+  sessionId: string;
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -110,6 +117,30 @@ export async function pairSession(id: string, qrToken: string): Promise<PairResp
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as PairErrorBody;
     throw new ApiError(data.error || `Failed to pair: ${res.status}`, res.status, data.code);
+  }
+  return res.json() as Promise<PairResponse>;
+}
+
+/** GET /api/invites/:code — validates without consuming. */
+export async function getInvite(code: string): Promise<InvitePreview> {
+  const res = await apiFetch(`/api/invites/${encodeURIComponent(code)}`);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to get invite: ${res.status}`, res.status, data.code);
+  }
+  return res.json() as Promise<InvitePreview>;
+}
+
+/** POST /api/invites/:code/redeem — consumes single invites per device. */
+export async function redeemInvite(code: string, deviceId: string): Promise<PairResponse> {
+  const res = await apiFetch(`/api/invites/${encodeURIComponent(code)}/redeem`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceId }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to redeem invite: ${res.status}`, res.status, data.code);
   }
   return res.json() as Promise<PairResponse>;
 }
