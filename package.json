@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun --bun run src/server.ts",
     "dev:web": "cd web && bun run dev",
+    "dev:all": "sh -c 'bun run dev & bun run dev:web & wait'",
     "start": "bun --bun run src/server.ts",
     "build:web": "cd web && bun run build",
     "test": "bun --bun vitest run",
