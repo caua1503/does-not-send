@@ -21,6 +21,7 @@ import {
   readTwowaySession,
   writeTwowaySession,
 } from "../../lib/twowaySessionStorage.ts";
+import { useClosedCountdown } from "../../hooks/useClosedCountdown.ts";
 import { JoinSessionForm } from "./JoinSessionForm.tsx";
 import { SessionPage } from "../SessionPage.tsx";
 import { TwowayNamePage } from "../twoway/TwowayNamePage.tsx";
@@ -337,27 +338,7 @@ export default function JoinPage({
     if (joining) {
       return <JoinSessionForm onSubmit={joinWithManualCode} onCancel={() => setJoining(false)} />;
     }
-    return (
-      <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
-        <Card className="max-w-md w-full p-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/40 text-[var(--color-error)] flex items-center justify-center mx-auto">
-            <AlertCircle size={24} />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
-              Sessão Indisponível
-            </h1>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              {sessionError}
-            </p>
-          </div>
-          <Button variant="ghost" size="md" onClick={() => setJoining(true)}>
-            <KeyRound size={16} strokeWidth={1.75} />
-            Entrar com código
-          </Button>
-        </Card>
-      </div>
-    );
+    return <UnavailableSession message={sessionError} onManual={() => setJoining(true)} />;
   }
 
   if (isTwoway) {
@@ -411,5 +392,42 @@ export default function JoinPage({
       onLeave={leaveSession}
       onSessionClosed={handleSessionClosed}
     />
+  );
+}
+
+function UnavailableSession({ message, onManual }: { message: string; onManual: () => void }) {
+  const countdown = useClosedCountdown(true, () => window.location.replace("/"));
+
+  return (
+    <div className="min-h-dvh flex items-center justify-center p-4 bg-[var(--color-bg)]">
+      <Card className="max-w-md w-full p-6 text-center space-y-4">
+        <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/40 text-[var(--color-error)] flex items-center justify-center mx-auto">
+          <AlertCircle size={24} />
+        </div>
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">
+            Sessão Indisponível
+          </h1>
+          <p className="mt-1 text-sm text-[var(--color-text-muted)]">{message}</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="md"
+          onClick={() => {
+            countdown.cancel();
+            onManual();
+          }}
+        >
+          <KeyRound size={16} strokeWidth={1.75} />
+          Entrar com código
+        </Button>
+        <p className="text-xs text-[var(--color-text-muted)] tabular">
+          Voltando ao menu em {countdown.seconds}s
+        </p>
+        <span className="sr-only" aria-live="polite">
+          {countdown.announcement}
+        </span>
+      </Card>
+    </div>
   );
 }

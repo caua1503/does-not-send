@@ -459,6 +459,55 @@ describe("JoinPage", () => {
     vi.unstubAllGlobals();
   });
 
+  describe("Sessão Indisponível — retorno automático", () => {
+    let replace = vi.fn();
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      replace = vi.fn();
+      Object.defineProperty(window, "location", {
+        value: {
+          origin: "http://localhost:3000",
+          pathname: "/enviar/session-test-id",
+          search: "",
+          replace,
+        },
+        writable: true,
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("volta ao menu após 10s uma única vez no StrictMode", () => {
+      render(
+        <StrictMode>
+          <JoinPage />
+        </StrictMode>,
+      );
+
+      expect(screen.getByText("Voltando ao menu em 10s")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(2000));
+      expect(screen.getByText("Voltando ao menu em 8s")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(8000));
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledWith("/");
+    });
+
+    it("cancelar o timer ao clicar em 'Entrar com código'", () => {
+      render(<JoinPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /entrar com código/i }));
+      act(() => vi.advanceTimersByTime(10_000));
+
+      expect(replace).not.toHaveBeenCalled();
+      expect(screen.getByPlaceholderText("P79XFJ")).toBeInTheDocument();
+    });
+  });
+
   describe("Estados de conectividade e avisos", () => {
     let mockSockets: any[] = [];
 
