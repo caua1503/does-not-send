@@ -23,6 +23,12 @@ export interface Invite {
   revoked: boolean;
 }
 
+export interface InviteSummary {
+  code: string;
+  mode: InviteMode;
+  state: InviteState;
+}
+
 export function generateInviteCode(): string {
   const bytes = randomBytes(INVITE_CODE_LENGTH);
   let code = "";
@@ -69,6 +75,20 @@ export class InviteManager {
     if (invite.mode === "single" && invite.usedAt !== null) return "used";
     if (this.deps.clock.now() >= invite.expiresAt) return "expired";
     return "valid";
+  }
+
+  /** Non-revoked invites of a session, newest first. */
+  list(sessionId: string): InviteSummary[] {
+    const summaries: InviteSummary[] = [];
+    for (const invite of this.invites.values()) {
+      if (invite.sessionId !== sessionId || invite.revoked) continue;
+      summaries.push({
+        code: invite.code,
+        mode: invite.mode,
+        state: this.state(invite),
+      });
+    }
+    return summaries.reverse();
   }
 
   /** Attempts still inside the window, oldest first. */

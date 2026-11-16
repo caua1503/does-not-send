@@ -43,10 +43,22 @@ export interface PairErrorBody {
 }
 
 export type InviteState = "valid" | "expired" | "used" | "revoked";
+export type InviteMode = "single" | "multi";
 
 export interface InvitePreview {
   state: InviteState;
   sessionId: string;
+}
+
+export interface InviteSummary {
+  code: string;
+  mode: InviteMode;
+  state: InviteState;
+}
+
+export interface CreatedInvite {
+  code: string;
+  url: string;
 }
 
 export class ApiError extends Error {
@@ -143,6 +155,56 @@ export async function redeemInvite(code: string, deviceId: string): Promise<Pair
     throw new ApiError(data.error || `Failed to redeem invite: ${res.status}`, res.status, data.code);
   }
   return res.json() as Promise<PairResponse>;
+}
+
+/** GET /api/sessions/:id/invites — host only. */
+export async function listInvites(id: string, token: string): Promise<InviteSummary[]> {
+  const res = await apiFetch(`/api/sessions/${id}/invites`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to list invites: ${res.status}`, res.status, data.code);
+  }
+  const data = (await res.json()) as { invites: InviteSummary[] };
+  return data.invites;
+}
+
+/** POST /api/sessions/:id/invites — host only. */
+export async function createInvite(
+  id: string,
+  token: string,
+  mode: InviteMode,
+): Promise<CreatedInvite> {
+  const res = await apiFetch(`/api/sessions/${id}/invites`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to create invite: ${res.status}`, res.status, data.code);
+  }
+  return res.json() as Promise<CreatedInvite>;
+}
+
+/** DELETE /api/sessions/:id/invites/:code — host only. */
+export async function revokeInvite(
+  id: string,
+  code: string,
+  token: string,
+): Promise<void> {
+  const res = await apiFetch(`/api/sessions/${id}/invites/${encodeURIComponent(code)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to revoke invite: ${res.status}`, res.status, data.code);
+  }
 }
 
 export interface JoinResponse {

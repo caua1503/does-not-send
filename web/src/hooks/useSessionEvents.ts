@@ -151,7 +151,8 @@ export function useSessionEvents(
               data.type === "participant:joined" ||
               data.type === "participant:left" ||
               data.type === "item:added" ||
-              data.type === "item:deleted"
+              data.type === "item:deleted" ||
+              data.type === "invite:used"
             ) {
               onEventRef.current?.(data);
               return;

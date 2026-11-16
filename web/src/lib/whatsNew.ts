@@ -1,4 +1,4 @@
-import { Gauge, ImageIcon, KeyRound, PencilLine, QrCode, Type, type LucideIcon } from "lucide-react";
+import { Gauge, ImageIcon, KeyRound, Link2, PencilLine, QrCode, Type, type LucideIcon } from "lucide-react";
 import pkg from "../../package.json";
 
 export const APP_VERSION = pkg.version;
@@ -21,8 +21,8 @@ export interface WhatsNewConfig {
 export const WHATS_NEW: WhatsNewConfig = {
   enabled: true,
   maxViews: 3,
-  // Bumping the version starts a new cycle automatically.
-  updateId: APP_VERSION,
+  // Bumping the version (or this suffix) starts a new cycle automatically.
+  updateId: `${APP_VERSION}-convites`,
   items: [
     {
       id: "multi-access-qr",
@@ -37,6 +37,13 @@ export const WHATS_NEW: WhatsNewConfig = {
       description: "Entre numa sessão com identificador + código numérico.",
       category: "Conexão e sessões",
       icon: KeyRound,
+    },
+    {
+      id: "invite-link",
+      title: "Link de convite",
+      description: "Compartilhe um link de acesso único ou para vários aparelhos.",
+      category: "Conexão e sessões",
+      icon: Link2,
     },
     {
       id: "better-compression",

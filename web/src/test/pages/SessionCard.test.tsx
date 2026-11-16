@@ -1,4 +1,4 @@
-import { vi, it, expect, describe, beforeAll } from "vitest";
+import { vi, it, expect, describe, beforeAll, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SessionCard } from "../../pages/host/SessionCard.tsx";
 
@@ -34,6 +34,10 @@ vi.mock("qrcode.react", async (importOriginal) => {
       <svg data-testid="qr-svg" data-value={value} />
     ),
   };
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("SessionCard QR Code zoom", () => {
@@ -157,6 +161,82 @@ describe("SessionCard QR Code zoom", () => {
       "data-value",
       "http://192.168.1.100:3000/entrar/test-session-id?qrToken=qr-token"
     );
+  });
+
+  it("lista, gera e revoga links de convite", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/invites") && method === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            invites: [{ code: "old00000", mode: "multi", state: "valid" }],
+          }),
+        };
+      }
+      if (url.includes("/invites") && method === "POST") {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            code: "new00000",
+            url: "http://192.168.1.100:3000/i/new00000",
+          }),
+        };
+      }
+      if (url.includes("/invites/old00000") && method === "DELETE") {
+        return { ok: true, status: 204, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "test-session-id", state: "WAITING", fileCount: 0 }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SessionCard
+        session={session}
+        publicBaseUrl="http://192.168.1.100:3000"
+        onClose={vi.fn()}
+        selected={false}
+        onSelect={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /gerar link de convite/i }));
+
+    expect(await screen.findByText("/i/old00000")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Vários acessos" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Acesso único" }));
+    fireEvent.click(screen.getByRole("button", { name: /^gerar link$/i }));
+
+    const inviteUrl = await screen.findByTestId("invite-url");
+    expect(inviteUrl).toHaveValue("http://192.168.1.100:3000/i/new00000");
+
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        String(input).includes("/invites") && (init as RequestInit | undefined)?.method === "POST",
+    );
+    expect(createCall).toBeDefined();
+    expect((createCall![1] as RequestInit).body).toBe(JSON.stringify({ mode: "single" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Revogar convite old00000" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/sessions/test-session-id/invites/old00000"),
+        expect.objectContaining({ method: "DELETE" }),
+      ),
+    );
+    expect(screen.queryByText("/i/old00000")).not.toBeInTheDocument();
   });
 
   it("gera o código numérico sob demanda", async () => {

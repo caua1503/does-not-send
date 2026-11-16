@@ -420,8 +420,8 @@ export class SessionStore {
     return true;
   }
 
-  private sendToHost(message: LoginCodeEvent): void {
-    const conn = this.activeSockets.get(message.sessionId);
+  notifyHost(sessionId: string, message: unknown): void {
+    const conn = this.activeSockets.get(sessionId);
     if (!conn) return;
     const payload = JSON.stringify(message);
     for (const socket of conn.host) {
@@ -432,6 +432,10 @@ export class SessionStore {
         // best effort: skip sockets that already dropped
       }
     }
+  }
+
+  private sendToHost(message: LoginCodeEvent): void {
+    this.notifyHost(message.sessionId, message);
   }
 
   closeWs(sessionId: string): void {

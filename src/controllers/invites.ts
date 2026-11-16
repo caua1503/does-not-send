@@ -61,6 +61,27 @@ export async function inviteRoutes(
     });
   });
 
+  // List the session invites that are still relevant (host only).
+  app.get<{ Params: { id: string } }>(
+    "/sessions/:id/invites",
+    async (request, reply) => {
+      const auth = await authorize(request, reply, ctx, request.params.id, [
+        "owner",
+        "computer",
+      ]);
+      if (!auth) return;
+
+      const session = ctx.sessionStore.getById(auth.sessionId);
+      if (!session || session.state === "CLOSED") {
+        return reply.status(410).send({ error: "Session is closed", statusCode: 410 });
+      }
+
+      return reply.status(200).send({
+        invites: ctx.sessionStore.invites.list(session.id),
+      });
+    },
+  );
+
   // Revoke an invite link (host only, idempotent).
   app.delete<{ Params: { id: string; code: string } }>(
     "/sessions/:id/invites/:code",
@@ -157,6 +178,13 @@ export async function inviteRoutes(
         statusCode: 410,
       });
     }
+
+    ctx.sessionStore.notifyHost(session.id, {
+      type: "invite:used",
+      code: invite.code,
+      mode: invite.mode,
+      state: ctx.sessionStore.invites.state(invite),
+    });
 
     return reply.status(200).send({
       success: true,

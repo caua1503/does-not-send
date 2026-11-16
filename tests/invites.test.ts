@@ -5,6 +5,7 @@ import {
   cleanupTestApp,
   createSession,
   createTestApp,
+  getAppContext,
   type SessionTokens,
   type TestContext,
 } from "./helpers.js";
@@ -181,6 +182,75 @@ describe("convites por URL", () => {
     const res = await redeem(code, "device-a");
     expect(res.statusCode).toBe(410);
     expect(res.json().code).toBe("REVOKED");
+  });
+
+  it("lista convites da sessão com modo e estado", async () => {
+    const session = await createSession(ctx.app, false);
+    const single = await createInvite(session, "single");
+    const multi = await createInvite(session, "multi");
+
+    async function list(token = session.ownerToken) {
+      return ctx.app.inject({
+        method: "GET",
+        url: `/api/sessions/${session.id}/invites`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+    }
+
+    const initial = await list();
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().invites).toEqual([
+      { code: multi.code, mode: "multi", state: "valid" },
+      { code: single.code, mode: "single", state: "valid" },
+    ]);
+
+    expect((await redeem(single.code, "device-a")).statusCode).toBe(200);
+    expect((await list()).json().invites).toEqual([
+      { code: multi.code, mode: "multi", state: "valid" },
+      { code: single.code, mode: "single", state: "used" },
+    ]);
+
+    clock.advance(INVITE_TTL_MS);
+    expect((await list()).json().invites).toEqual([
+      { code: multi.code, mode: "multi", state: "expired" },
+      { code: single.code, mode: "single", state: "used" },
+    ]);
+
+    await ctx.app.inject({
+      method: "DELETE",
+      url: `/api/sessions/${session.id}/invites/${multi.code}`,
+      headers: { authorization: `Bearer ${session.ownerToken}` },
+    });
+    expect((await list()).json().invites).toEqual([
+      { code: single.code, mode: "single", state: "used" },
+    ]);
+
+    const guest = await createSession(ctx.app, false);
+    expect((await list(guest.ownerToken)).statusCode).toBe(401);
+  });
+
+  it("avisa o anfitrião pelo WebSocket quando um convite é usado", async () => {
+    const session = await createSession(ctx.app, false);
+    const { code } = await createInvite(session, "single");
+
+    const sent: string[] = [];
+    const hostSocket = {
+      readyState: 1,
+      send: (payload: string) => sent.push(payload),
+      close: () => {},
+    };
+    const store = getAppContext(ctx.app).sessionStore;
+    expect(
+      store.authenticateWs(session.id, "computer", session.ownerToken, hostSocket).ok,
+    ).toBe(true);
+
+    expect((await redeem(code, "device-a")).statusCode).toBe(200);
+    expect(sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: "invite:used",
+      code,
+      mode: "single",
+      state: "used",
+    });
   });
 
   it("só o anfitrião cria e revoga convites", async () => {

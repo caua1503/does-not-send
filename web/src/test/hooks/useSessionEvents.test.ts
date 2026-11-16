@@ -179,6 +179,35 @@ describe("useSessionEvents", () => {
       });
     });
 
+    it("repassa invite:used para onEvent", () => {
+      const onEvent = vi.fn();
+      renderHook(() =>
+        useSessionEvents("session-1", "host-token", { role: "host", onEvent })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+
+      const ws = mockSockets[0]!;
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "computer" });
+        ws.receiveMessage({
+          type: "invite:used",
+          code: "abc12345",
+          mode: "single",
+          state: "used",
+        });
+      });
+
+      expect(onEvent).toHaveBeenCalledWith({
+        type: "invite:used",
+        code: "abc12345",
+        mode: "single",
+        state: "used",
+      });
+    });
+
     it("ao receber session_closed encerra e bloqueia reconexão", () => {
       const onClosed = vi.fn();
       const { result } = renderHook(() =>
