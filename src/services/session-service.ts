@@ -129,9 +129,27 @@ export class SessionService {
 
     this.store.loginGuard.recordSessionSuccess(session.id);
 
+    const { guestCredential } = this.issueCredential(session);
+
+    return { sessionId: session.id, guestCredential };
+  }
+
+  /** Invite redemption: same guest credential the QR flow hands out. */
+  issueGuestCredential(
+    id: string,
+  ): { guestCredential: string; pairedAt: string } | null {
+    const session = this.store.getById(id);
+    if (!session || session.state === "CLOSED") return null;
+    return this.issueCredential(session);
+  }
+
+  private issueCredential(
+    session: Session,
+  ): { guestCredential: string; pairedAt: string } {
     const guestCredential = generateSecret();
+    const pairedAt = new Date(this.clock.now()).toISOString();
     session.guestCredentialHash = hashToken(guestCredential);
-    session.pairedAt = new Date(this.clock.now()).toISOString();
+    session.pairedAt = pairedAt;
     if (session.state === "WAITING") {
       transition(session, "PAIRED");
     }
@@ -142,7 +160,7 @@ export class SessionService {
     this.store.update(session);
     this.touchActivity(session.id);
 
-    return { sessionId: session.id, guestCredential };
+    return { guestCredential, pairedAt };
   }
 
   getById(id: string): Session | undefined {

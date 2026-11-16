@@ -9,6 +9,7 @@ import { transition } from "./states.js";
 import { authorize as domainAuthorize } from "./auth.js";
 import { LoginCodeManager, normalizeSessionId, type LoginCodeEvent } from "./login-code.js";
 import { LoginGuard } from "./login-guard.js";
+import { InviteManager } from "./invites.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 import { TWOWAY_DEFAULTS } from "./twoway.js";
@@ -90,6 +91,7 @@ export class SessionStore {
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
   readonly loginCodes: LoginCodeManager;
   readonly loginGuard: LoginGuard;
+  readonly invites: InviteManager;
 
   constructor(options: SessionStoreOptions) {
     this.clock = options.clock ?? new SystemClock();
@@ -98,6 +100,7 @@ export class SessionStore {
       notify: (message) => this.sendToHost(message),
     });
     this.loginGuard = new LoginGuard({ clock: this.clock });
+    this.invites = new InviteManager({ clock: this.clock });
     this.tempDir = options.tempDir;
     this.timingConfig = {
       ...DEFAULT_TIMING_CONFIG,
@@ -179,6 +182,7 @@ export class SessionStore {
 
   clear(): void {
     this.sessions.clear();
+    this.invites.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.participantSockets.clear();
@@ -461,6 +465,7 @@ export class SessionStore {
     // 2. Abort active uploads and forget the login code
     this.abortUploads(sessionId);
     this.loginCodes.drop(sessionId);
+    this.invites.dropSession(sessionId);
     this.textUploadTimes.delete(sessionId);
 
     // 3. Notify connected WS
@@ -654,6 +659,7 @@ export class SessionStore {
       if (pending.timer) clearTimeout(pending.timer);
     }
     this.pendingCleanups.clear();
+    this.invites.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.participantSockets.clear();

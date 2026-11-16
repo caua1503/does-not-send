@@ -11,6 +11,7 @@ import { type Config } from "./utils/config.js";
 import { errorHandler } from "./utils/error-handler.js";
 import { healthRoute } from "./controllers/health.js";
 import { sessionRoutes } from "./controllers/sessions.js";
+import { inviteRoutes } from "./controllers/invites.js";
 import { participantRoutes } from "./controllers/participants.js";
 import { fileRoutes } from "./controllers/files.js";
 import { downloadRoutes } from "./controllers/download.js";
@@ -321,6 +322,7 @@ export async function buildApp(
   // Routes
   await app.register(healthRoute);
   await app.register(sessionRoutes, { prefix: "/api", ctx });
+  await app.register(inviteRoutes, { prefix: "/api", ctx });
   await app.register(participantRoutes, { prefix: "/api", ctx });
   await app.register(fileRoutes, { prefix: "/api", ctx });
   await app.register(downloadRoutes, { prefix: "/api", ctx });
