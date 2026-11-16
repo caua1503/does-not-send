@@ -8,7 +8,7 @@ import {
 const config: WhatsNewConfig = {
   enabled: true,
   maxViews: 3,
-  updateId: "1.2",
+  updateId: "1.3",
   items: [],
 };
 
