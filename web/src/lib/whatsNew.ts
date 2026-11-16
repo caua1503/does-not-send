@@ -1,4 +1,4 @@
-import { Gauge, ImageIcon, KeyRound, Link2, PencilLine, QrCode, Type, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, LogOut, type LucideIcon } from "lucide-react";
 import pkg from "../../package.json";
 
 export const APP_VERSION = pkg.version;
@@ -25,53 +25,18 @@ export const WHATS_NEW: WhatsNewConfig = {
   updateId: `${APP_VERSION}-convites`,
   items: [
     {
-      id: "multi-access-qr",
-      title: "QR Code multiacessos",
-      description: "Reconecte e acesse a mesma sessão em vários aparelhos.",
+      id: "swap-session",
+      title: "Sessão de troca",
+      description: "Uma sala onde todos enviam e recebem arquivos, com histórico compartilhado.",
       category: "Conexão e sessões",
-      icon: QrCode,
+      icon: ArrowLeftRight,
     },
     {
-      id: "join-by-id",
-      title: "Conexão por ID",
-      description: "Entre numa sessão com identificador + código numérico.",
-      category: "Conexão e sessões",
-      icon: KeyRound,
-    },
-    {
-      id: "invite-link",
-      title: "Link de convite",
-      description: "Compartilhe um link de acesso único ou para vários aparelhos.",
-      category: "Conexão e sessões",
-      icon: Link2,
-    },
-    {
-      id: "better-compression",
-      title: "Compressão aprimorada",
-      description: "Imagens mais leves e envio mais rápido.",
-      category: "Imagens e edição",
-      icon: Gauge,
-    },
-    {
-      id: "heic-jpeg",
-      title: "HEIC → JPEG",
-      description: "Compatibilidade com fotos de Android e iPhone.",
-      category: "Imagens e edição",
-      icon: ImageIcon,
-    },
-    {
-      id: "image-editor",
-      title: "Editor de imagens",
-      description: "Desenhe, gire e corte antes de enviar.",
-      category: "Imagens e edição",
-      icon: PencilLine,
-    },
-    {
-      id: "text-upload",
-      title: "Envio de texto",
-      description: "Escreva e envie textos direto pelo app, sem precisar de arquivo.",
-      category: "Texto",
-      icon: Type,
+      id: "clear-exit",
+      title: "Saída e encerramento mais claros",
+      description: "Confirmação ao sair da sessão e contagem regressiva quando ela é encerrada.",
+      category: "Interface",
+      icon: LogOut,
     },
   ],
 };
