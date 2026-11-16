@@ -24,6 +24,25 @@ export function generateQrToken(): string {
 }
 
 /**
+ * Checks a raw QR token against the stored hash without consuming it.
+ * Twoway sessions reuse this verification for every participant entry.
+ */
+export function verifyQrToken(
+  session: PairableSession | undefined | null,
+  rawToken: string,
+): boolean {
+  if (!session?.qrTokenHash) return false;
+
+  const computedHash = hashToken(rawToken);
+  const computedBuf = Buffer.from(computedHash, "utf-8");
+  const storedBuf = Buffer.from(session.qrTokenHash, "utf-8");
+
+  return (
+    computedBuf.length === storedBuf.length && timingSafeEqual(computedBuf, storedBuf)
+  );
+}
+
+/**
  * Validates the session's QR token and issues a fresh guest credential.
  * The QR token is stable for the session's whole life: reading it again
  * replaces the previous guest credential.
@@ -40,18 +59,7 @@ export function consumePairing(
     return { ok: false, error: new PairingError("CLOSED") };
   }
 
-  if (!session.qrTokenHash) {
-    return { ok: false, error: new PairingError("INVALID") };
-  }
-
-  const computedHash = hashToken(rawToken);
-  const computedBuf = Buffer.from(computedHash, "utf-8");
-  const storedBuf = Buffer.from(session.qrTokenHash, "utf-8");
-
-  if (
-    computedBuf.length !== storedBuf.length ||
-    !timingSafeEqual(computedBuf, storedBuf)
-  ) {
+  if (!verifyQrToken(session, rawToken)) {
     return { ok: false, error: new PairingError("INVALID") };
   }
 

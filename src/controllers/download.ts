@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { AppContext } from "../app.js";
 import { authorize } from "./sessions.js";
+import { canDownload, sessionMode } from "../session/permissions.js";
 
 // ─── Preview allowlist ────────────────────────────────────────────────────────
 // Extension → MIME (canonical)
@@ -100,10 +101,18 @@ export async function downloadRoutes(
   app.get<{ Params: { id: string; fileId: string } }>(
     "/sessions/:id/files/:fileId/preview",
     async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
+      const auth = await authorize(request, reply, ctx, request.params.id, [
+        "owner",
+        "computer",
+        "phone",
+      ]);
       if (!auth) return;
 
       const session = ctx.sessionStore.getById(auth.sessionId)!;
+      if (!canDownload(session, auth.participant)) {
+        const status = sessionMode(session) === "oneway" ? 401 : 403;
+        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+      }
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {
@@ -198,10 +207,18 @@ export async function downloadRoutes(
   app.get<{ Params: { id: string; fileId: string } }>(
     "/sessions/:id/files/:fileId/download",
     async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
+      const auth = await authorize(request, reply, ctx, request.params.id, [
+        "owner",
+        "computer",
+        "phone",
+      ]);
       if (!auth) return;
 
       const session = ctx.sessionStore.getById(auth.sessionId)!;
+      if (!canDownload(session, auth.participant)) {
+        const status = sessionMode(session) === "oneway" ? 401 : 403;
+        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+      }
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {
@@ -223,10 +240,18 @@ export async function downloadRoutes(
 
   // ─── ZIP download ──────────────────────────────────────────────────────────
   app.get<{ Params: { id: string } }>("/sessions/:id/download.zip", async (request, reply) => {
-    const auth = await authorize(request, reply, ctx, request.params.id, ["owner"]);
+    const auth = await authorize(request, reply, ctx, request.params.id, [
+      "owner",
+      "computer",
+      "phone",
+    ]);
     if (!auth) return;
 
     const session = ctx.sessionStore.getById(auth.sessionId)!;
+    if (!canDownload(session, auth.participant)) {
+      const status = sessionMode(session) === "oneway" ? 401 : 403;
+      return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+    }
     const completedFiles = session.files.filter((f) => f.state === "completed");
 
     const sessionId = auth.sessionId;

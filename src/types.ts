@@ -5,6 +5,19 @@ import type { SessionState } from "./session/states.js";
 export type { SessionState } from "./session/states.js";
 export type { SessionRole } from "./session/auth.js";
 export type FileState = "receiving" | "completed" | "failed";
+export type SessionMode = "oneway" | "twoway";
+export type DeviceKind = "phone" | "desktop";
+
+export interface Participant {
+  id: string;
+  name: string;
+  device: DeviceKind;
+  /** Never sent to clients, only the raw credential is handed out once. */
+  credentialHash: string;
+  joinedAt: string;
+}
+
+export type ParticipantInfo = Pick<Participant, "id" | "name" | "device">;
 
 export interface SessionFile {
   id: string;
@@ -21,6 +34,9 @@ export interface SessionFile {
   extension: string; // Calculado de originalName
   category: string; // Calculado de extension+mimeType
   kind?: "file" | "text"; // "text": enviado pelo widget de texto
+  senderId?: string;
+  senderName?: string;
+  origin?: DeviceKind;
 }
 
 export interface Session {
@@ -46,4 +62,9 @@ export interface Session {
   computerIp?: string | null; // IP normalizado do computador
   phoneIp?: string | null; // IP normalizado do celular
   closedAt?: string | null; // ISO 8601 timestamp de fechamento
+  /** Missing means `oneway`, the historical behavior. */
+  mode?: SessionMode;
+  /** Host participant id (twoway). */
+  hostId?: string;
+  participants?: Participant[];
 }

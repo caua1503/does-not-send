@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../app.js";
+import type { Participant } from "../types.js";
 import { normalizeSessionRole, type SessionRole } from "../session/auth.js";
+import { guestActor, hostActor } from "../session/participants.js";
+import { sessionMode } from "../session/permissions.js";
 import { fileEvents, type FileEvent, type FileEventType } from "../utils/events.js";
 
 const WS_CLOSE_SESSION_CLOSED = 4000;
@@ -35,6 +38,7 @@ export async function websocketRoutes(
       ctx.sessionStore.registerPendingWs(sessionId, socket);
 
       let authenticatedRole: SessionRole | null = null;
+      let participant: Participant | null = null;
       let eventHandlers: Array<{ type: FileEventType; handler: (event: FileEvent) => void }> = [];
 
       function cleanup(): void {
@@ -43,6 +47,24 @@ export async function websocketRoutes(
           fileEvents.offFileEvent(type, sessionId, handler);
         }
         eventHandlers = [];
+
+        if (authenticatedRole === "computer") {
+          ctx.sessionStore.noteHostSocketClosed(sessionId);
+        }
+
+        if (participant && sessionMode(session!) === "twoway") {
+          const last = ctx.sessionStore.unregisterParticipantSocket(
+            sessionId,
+            participant.id,
+            socket,
+          );
+          if (last) {
+            ctx.sessionStore.notifyWs(sessionId, {
+              type: "participant:left",
+              id: participant.id,
+            });
+          }
+        }
       }
 
       socket.on("message", async (rawData) => {
@@ -71,6 +93,10 @@ export async function websocketRoutes(
             }
 
             authenticatedRole = role;
+            participant =
+              role === "phone"
+                ? ctx.participantService.authenticate(session, msg.secret) ?? guestActor()
+                : hostActor(session);
 
             // Register file event forwarding for host role
             if (authenticatedRole === "computer") {
@@ -89,6 +115,30 @@ export async function websocketRoutes(
             if (socket.readyState === socket.OPEN) {
               socket.send(JSON.stringify({ type: "auth_ok", role: authenticatedRole }));
             }
+
+            if (sessionMode(session) === "twoway") {
+              ctx.sessionStore.registerParticipantSocket(
+                sessionId,
+                participant.id,
+                socket,
+              );
+
+              if (socket.readyState === socket.OPEN) {
+                socket.send(
+                  JSON.stringify({
+                    type: "participants:list",
+                    participants: ctx.participantService.list(session),
+                  }),
+                );
+              }
+
+              ctx.sessionStore.notifyWsExcept(sessionId, socket, {
+                type: "participant:joined",
+                id: participant.id,
+                name: participant.name,
+                device: participant.device,
+              });
+            }
             return;
           }
 
@@ -102,7 +152,7 @@ export async function websocketRoutes(
           }
 
           if (msg.type === "close" && authenticatedRole === "computer") {
-            await ctx.sessionStore.closeSession(sessionId, "user_closed");
+            await ctx.sessionStore.closeSession(sessionId, "host_closed");
             return;
           }
         } catch {

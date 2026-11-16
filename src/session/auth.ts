@@ -27,6 +27,7 @@ export interface AuthorizableSession {
   hostTokenHash: string;
   guestCredentialHash: string | null;
   activeUploads?: number;
+  participants?: Array<{ credentialHash: string }>;
 }
 
 export type AuthResult =
@@ -40,7 +41,7 @@ export function generateSecret(): string {
   return randomBytes(32).toString("base64url");
 }
 
-function verifyHash(candidateSecret: string, storedHash: string | null): boolean {
+export function verifyHash(candidateSecret: string, storedHash: string | null): boolean {
   if (!storedHash) return false;
   const candidateHash = hashToken(candidateSecret);
   const candBuf = Buffer.from(candidateHash, "utf-8");
@@ -79,6 +80,11 @@ export function authorize(
     valid = verifyHash(secret, session.hostTokenHash);
   } else if (role === "phone") {
     valid = verifyHash(secret, session.guestCredentialHash);
+    if (!valid && session.participants) {
+      valid = session.participants.some((participant) =>
+        verifyHash(secret, participant.credentialHash),
+      );
+    }
   }
 
   if (!valid) {

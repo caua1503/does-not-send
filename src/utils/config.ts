@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { DEFAULT_TIMING_CONFIG } from "../session/timing.js";
 // No cycle: nothing under src/session/ imports utils/config.
 import { DEFAULT_CLEANUP_RETRY } from "../session/store.js";
+import { TWOWAY_DEFAULTS } from "../session/twoway.js";
 
 /**
  * Resolved admin credentials. `undefined` means the /admin routes are not
@@ -26,6 +27,9 @@ export interface Config {
   wsAuthTimeoutMs: number;
   cleanupMaxAttempts: number;
   cleanupInitialDelayMs: number;
+  twowayMaxParticipants?: number;
+  twowayMaxTotalBytes?: number;
+  twowayIdleTimeoutMs?: number;
   admin?: AdminConfig;
 }
 
@@ -119,6 +123,18 @@ export function loadConfig(): Config {
     "CLEANUP_INITIAL_DELAY_MS",
     optionalEnv("CLEANUP_INITIAL_DELAY_MS", String(DEFAULT_CLEANUP_RETRY.initialDelayMs)),
   );
+  const twowayMaxParticipants = parsePositiveInt(
+    "TWOWAY_MAX_PARTICIPANTS",
+    optionalEnv("TWOWAY_MAX_PARTICIPANTS", String(TWOWAY_DEFAULTS.maxParticipants)),
+  );
+  const twowayMaxTotalBytes = parsePositiveInt(
+    "TWOWAY_MAX_TOTAL_BYTES",
+    optionalEnv("TWOWAY_MAX_TOTAL_BYTES", String(TWOWAY_DEFAULTS.maxTotalBytes)),
+  );
+  const twowayIdleTimeoutMs = parsePositiveInt(
+    "TWOWAY_IDLE_TIMEOUT_MS",
+    optionalEnv("TWOWAY_IDLE_TIMEOUT_MS", String(TWOWAY_DEFAULTS.idleTimeoutMs)),
+  );
   let admin: AdminConfig | undefined;
   try {
     admin = resolveAdminConfig();
@@ -138,6 +154,9 @@ export function loadConfig(): Config {
     wsAuthTimeoutMs,
     cleanupMaxAttempts,
     cleanupInitialDelayMs,
+    twowayMaxParticipants,
+    twowayMaxTotalBytes,
+    twowayIdleTimeoutMs,
     ...(admin ? { admin } : {}),
   };
 }

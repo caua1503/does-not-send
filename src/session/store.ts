@@ -11,6 +11,16 @@ import { LoginCodeManager, normalizeSessionId, type LoginCodeEvent } from "./log
 import { LoginGuard } from "./login-guard.js";
 import type { SessionRecorder } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
+import { TWOWAY_DEFAULTS } from "./twoway.js";
+
+export type CloseReason =
+  | "user_closed"
+  | "closed"
+  | "expired"
+  | "inactivity"
+  | "host_left"
+  | "host_closed"
+  | "host_disconnected";
 
 export interface WebSocketLike {
   readyState: number;
@@ -42,6 +52,7 @@ export interface SessionStoreOptions {
   cleanupRetry?: Partial<CleanupRetryOptions>;
   logger?: FastifyBaseLogger;
   recorder?: SessionRecorder;
+  twowayIdleTimeoutMs?: number;
 }
 
 interface PendingCleanup {
@@ -71,6 +82,9 @@ export class SessionStore {
     string,
     { host: Set<WebSocketLike>; guest: Set<WebSocketLike> }
   >();
+  private participantSockets = new Map<string, Map<string, Set<WebSocketLike>>>();
+  private twowayIdleTimeoutMs: number;
+  private hostDisconnectedAt = new Map<string, number>();
   private activeUploadControllers = new Map<string, Set<AbortController>>();
   private textUploadTimes = new Map<string, number[]>();
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
@@ -90,6 +104,8 @@ export class SessionStore {
       ...options.timingConfig,
     };
     this.cleanupRetry = { ...DEFAULT_CLEANUP_RETRY, ...options.cleanupRetry };
+    this.twowayIdleTimeoutMs =
+      options.twowayIdleTimeoutMs ?? TWOWAY_DEFAULTS.idleTimeoutMs;
     this.log = options.logger ?? (undefined as unknown as FastifyBaseLogger);
     this.recorder = options.recorder;
   }
@@ -165,6 +181,8 @@ export class SessionStore {
     this.sessions.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
+    this.participantSockets.clear();
+    this.hostDisconnectedAt.clear();
     this.activeUploadControllers.clear();
     this.textUploadTimes.clear();
   }
@@ -190,6 +208,7 @@ export class SessionStore {
     const now = this.clock.now();
     session.lastSeen[roleSlot(role)] = now;
     session.lastActivity = new Date(now).toISOString();
+    if (role === "computer") this.hostDisconnectedAt.delete(sessionId);
 
     if (role === "phone" && session.state === "DISCONNECTED") {
       transition(session, "PAIRED");
@@ -282,7 +301,9 @@ export class SessionStore {
     conn[roleSlot(role)].add(socket);
     this.activeSockets.set(sessionId, conn);
 
-    // Registra presença imediata na autenticação WebSocket
+    // Registra presença imediata na autenticação WebSocket (e cancela a
+    // janela de queda do host, pois ele voltou)
+    if (role === "computer") this.hostDisconnectedAt.delete(sessionId);
     this.recordHeartbeat(sessionId, role);
 
     // A reconnect missed every rotation: send the current login code straight
@@ -325,12 +346,32 @@ export class SessionStore {
     }
   }
 
+  /**
+   * The host has no sockets left. Starts the reconnect window; a new
+   * authenticated host socket (or heartbeat) cancels it, otherwise the
+   * sweeper closes the session with host_disconnected.
+   */
+  noteHostSocketClosed(sessionId: string): void {
+    const session = this.getById(sessionId);
+    if (!session || session.state === "CLOSED") return;
+    const conn = this.activeSockets.get(sessionId);
+    if (conn && conn.host.size > 0) return;
+    if (!this.hostDisconnectedAt.has(sessionId)) {
+      this.hostDisconnectedAt.set(sessionId, this.clock.now());
+    }
+  }
+
   notifyWs(sessionId: string, message: unknown): void {
+    this.notifyWsExcept(sessionId, null, message);
+  }
+
+  notifyWsExcept(sessionId: string, excluded: WebSocketLike | null, message: unknown): void {
     const conn = this.activeSockets.get(sessionId);
     if (!conn) return;
 
     const payload = JSON.stringify(message);
     for (const socket of [...conn.guest, ...conn.host]) {
+      if (socket === excluded) continue;
       if (socket.readyState !== 1) continue;
       try {
         socket.send(payload);
@@ -338,6 +379,41 @@ export class SessionStore {
         // best effort: skip sockets that already dropped
       }
     }
+  }
+
+  registerParticipantSocket(
+    sessionId: string,
+    participantId: string,
+    socket: WebSocketLike,
+  ): void {
+    let byParticipant = this.participantSockets.get(sessionId);
+    if (!byParticipant) {
+      byParticipant = new Map();
+      this.participantSockets.set(sessionId, byParticipant);
+    }
+    let sockets = byParticipant.get(participantId);
+    if (!sockets) {
+      sockets = new Set();
+      byParticipant.set(participantId, sockets);
+    }
+    sockets.add(socket);
+  }
+
+  /** Returns true when the participant has no sockets left. */
+  unregisterParticipantSocket(
+    sessionId: string,
+    participantId: string,
+    socket: WebSocketLike,
+  ): boolean {
+    const byParticipant = this.participantSockets.get(sessionId);
+    if (!byParticipant) return true;
+    const sockets = byParticipant.get(participantId);
+    if (!sockets) return true;
+    sockets.delete(socket);
+    if (sockets.size > 0) return false;
+    byParticipant.delete(participantId);
+    if (byParticipant.size === 0) this.participantSockets.delete(sessionId);
+    return true;
   }
 
   private sendToHost(message: LoginCodeEvent): void {
@@ -369,11 +445,12 @@ export class SessionStore {
   }
 
   // Idempotent closeSession
-  async closeSession(sessionId: string, reason = "closed"): Promise<void> {
+  async closeSession(sessionId: string, reason: CloseReason = "closed"): Promise<void> {
     const session = this.getById(sessionId);
     if (!session || session.state === "CLOSED") {
       return; // Idempotent!
     }
+    this.hostDisconnectedAt.delete(sessionId);
 
     // 1. Transition to CLOSED
     const closedAt = new Date();
@@ -387,7 +464,11 @@ export class SessionStore {
     this.textUploadTimes.delete(sessionId);
 
     // 3. Notify connected WS
-    this.notifyWs(sessionId, { type: "session_closed", reason });
+    if (session.mode === "twoway") {
+      this.notifyWs(sessionId, { type: "session:closed", reason });
+    } else {
+      this.notifyWs(sessionId, { type: "session_closed", reason });
+    }
 
     // 4. Close connected WS
     this.closeWs(sessionId);
@@ -395,23 +476,33 @@ export class SessionStore {
     // 5. Delete session temp folder
     await this.removeSessionDir(sessionId, 1);
 
-    // 6. Remove secrets from memory
+    // 6. Remove secrets, files and participants from memory
     session.hostTokenHash = "";
     session.guestCredentialHash = null;
     session.qrTokenHash = null;
     session.ownerToken = undefined;
     session.uploadToken = undefined;
+    session.files = [];
+    session.participants = [];
+    session.hostId = undefined;
+    this.participantSockets.delete(sessionId);
     this.update(session);
 
     // 7. Emit session_closed event AFTER domain action is complete
     if (this.recorder && this.log) {
+      // The recording schema still only knows the legacy reasons; the wire
+      // event above keeps the specific one.
+      const recordedReason =
+        reason === "host_left" || reason === "host_closed" || reason === "user_closed"
+          ? "user_closed"
+          : "closed";
       safeRecord(
         this.recorder,
         {
           type: "session_closed",
           at: closedAt,
           sessionId,
-          reason: reason as import("../recording/events.js").SessionClosed["reason"],
+          reason: recordedReason,
         },
         this.log,
       );
@@ -511,7 +602,34 @@ export class SessionStore {
       }
     }
 
-    // 3. Drop expired login codes; new ones are issued on demand
+    // 3. Expire idle twoway sessions
+    if (this.twowayIdleTimeoutMs > 0) {
+      for (const session of this.getAllActive()) {
+        if (session.mode !== "twoway") continue;
+        const lastActivity = Date.parse(session.lastActivity);
+        if (
+          Number.isFinite(lastActivity) &&
+          now - lastActivity >= this.twowayIdleTimeoutMs
+        ) {
+          await this.closeSession(session.id, "inactivity");
+        }
+      }
+    }
+
+    // 4. Hosts that never came back inside the reconnect window close the
+    // session with the full cleanup, instead of leaving it half-alive.
+    for (const [sessionId, disconnectedAt] of Array.from(this.hostDisconnectedAt)) {
+      const session = this.getById(sessionId);
+      if (!session || session.state === "CLOSED") {
+        this.hostDisconnectedAt.delete(sessionId);
+        continue;
+      }
+      if (now - disconnectedAt >= this.timingConfig.heartbeatTimeoutMs) {
+        await this.closeSession(sessionId, "host_disconnected");
+      }
+    }
+
+    // 5. Drop expired login codes; new ones are issued on demand
     const active = this.getAllActive();
     this.loginCodes.tick();
     this.loginGuard.sweep(new Set(active.map((session) => session.id)));
@@ -538,6 +656,8 @@ export class SessionStore {
     this.pendingCleanups.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
+    this.participantSockets.clear();
+    this.hostDisconnectedAt.clear();
     this.activeUploadControllers.clear();
     this.textUploadTimes.clear();
   }

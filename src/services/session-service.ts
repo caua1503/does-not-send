@@ -1,5 +1,5 @@
 import type { Config } from "../utils/config.js";
-import type { Session } from "../types.js";
+import type { DeviceKind, Session, SessionMode } from "../types.js";
 import type { SessionStore } from "../session/store.js";
 import { generateSessionId } from "../utils/crypto.js";
 import { generateSecret } from "../session/auth.js";
@@ -7,6 +7,7 @@ import { generateVisualId } from "../session/visual-id.js";
 import { hashToken, consumePairing, type PairingResult } from "../session/pairing.js";
 import { PairingError } from "../session/errors.js";
 import { transition } from "../session/states.js";
+import { createHostParticipant } from "../session/participants.js";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock } from "../session/clock.js";
@@ -15,6 +16,12 @@ import { SystemClock } from "../session/clock.js";
 export interface SessionWithSecrets extends Session {
   rawHostToken: string;
   rawQrToken: string;
+}
+
+export interface CreateSessionInput {
+  mode?: SessionMode;
+  name?: string;
+  device?: DeviceKind;
 }
 
 export class SessionService {
@@ -28,11 +35,12 @@ export class SessionService {
     this.clock = clock ?? store.clock ?? new SystemClock();
   }
 
-  async create(): Promise<SessionWithSecrets> {
+  async create(input: CreateSessionInput = {}): Promise<SessionWithSecrets> {
     const rawHostToken = generateSecret();
     const rawQrToken = generateSecret();
     const activeVisualIds = this.store.getActiveVisualIds();
     const visualId = generateVisualId(activeVisualIds);
+    const mode: SessionMode = input.mode === "twoway" ? "twoway" : "oneway";
 
     const now = this.clock.now();
     const session: Session = {
@@ -42,7 +50,7 @@ export class SessionService {
       visualId,
       shortId: visualId,
       qrTokenHash: hashToken(rawQrToken),
-      state: "WAITING",
+      state: mode === "twoway" ? "PAIRED" : "WAITING",
       activeUploads: 0,
       createdAt: new Date(now).toISOString(),
       lastActivity: new Date(now).toISOString(),
@@ -52,7 +60,18 @@ export class SessionService {
         guest: null,
       },
       closedReason: null,
+      mode,
     };
+
+    if (mode === "twoway") {
+      const host = createHostParticipant(
+        input.name,
+        input.device,
+        new Date(now).toISOString(),
+      );
+      session.hostId = host.id;
+      session.participants = [host];
+    }
 
     this.store.create(session);
 

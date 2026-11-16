@@ -99,6 +99,24 @@ export class LoginCodeManager {
     return true;
   }
 
+  /**
+   * Non-consuming check used by twoway entries: the code stays valid, up to
+   * its TTL or the next rotation, so several participants can use it.
+   */
+  matches(sessionId: string, code: string): boolean {
+    const stored = this.codes.get(sessionId);
+    const expired = !stored || this.deps.clock.now() >= stored.expiresAt;
+    const candidate = hashCode(code);
+
+    if (expired) {
+      timingSafeEqual(candidate, this.dummyHash);
+      if (stored) this.codes.delete(sessionId);
+      return false;
+    }
+
+    return timingSafeEqual(candidate, stored.hash);
+  }
+
   drop(sessionId: string): void {
     this.codes.delete(sessionId);
   }

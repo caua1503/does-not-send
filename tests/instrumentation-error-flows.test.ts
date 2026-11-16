@@ -142,7 +142,7 @@ describe("Instrumentação: fluxos de erro", () => {
   });
 
   // Motivos de encerramento
-  it.each([{ reason: "user_closed" }, { reason: "closed" }])("session_closed emite reason=$reason", async ({ reason }) => {
+  it.each([{ reason: "user_closed" }, { reason: "closed" }] as const)("session_closed emite reason=$reason", async ({ reason }) => {
     const setup = await buildTestApp();
     app = setup.app;
     tempDir = setup.tempDir;

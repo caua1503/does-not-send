@@ -11,12 +11,14 @@ import { type Config } from "./utils/config.js";
 import { errorHandler } from "./utils/error-handler.js";
 import { healthRoute } from "./controllers/health.js";
 import { sessionRoutes } from "./controllers/sessions.js";
+import { participantRoutes } from "./controllers/participants.js";
 import { fileRoutes } from "./controllers/files.js";
 import { downloadRoutes } from "./controllers/download.js";
 import { websocketRoutes } from "./controllers/websocket.js";
 import { staticRoutes } from "./controllers/static.js";
 import { SessionStore } from "./session/store.js";
 import { SessionService } from "./services/session-service.js";
+import { ParticipantService } from "./services/participant-service.js";
 import { FileService } from "./services/file-service.js";
 import { cleanOrphans } from "./services/cleanup-service.js";
 import { type Clock, SystemClock } from "./session/clock.js";
@@ -111,6 +113,7 @@ export interface AppContext {
   clock: Clock;
   sessionStore: SessionStore;
   sessionService: SessionService;
+  participantService: ParticipantService;
   fileService: FileService;
   db?: DbClient & { isReady(): boolean };
   migrationRunner?: MigrationRunner;
@@ -266,9 +269,11 @@ export async function buildApp(
     },
     logger: app.log,
     recorder,
+    twowayIdleTimeoutMs: config.twowayIdleTimeoutMs,
   });
 
   const sessionService = new SessionService(sessionStore, config, clock);
+  const participantService = new ParticipantService(sessionStore, config, clock);
   const fileService = new FileService(config, sessionStore, recorder, app.log);
 
   const adminPageHtml = config.admin ? loadAdminPageHtml() : undefined;
@@ -281,6 +286,7 @@ export async function buildApp(
     clock,
     sessionStore,
     sessionService,
+    participantService,
     fileService,
     db,
     migrationRunner,
@@ -315,6 +321,7 @@ export async function buildApp(
   // Routes
   await app.register(healthRoute);
   await app.register(sessionRoutes, { prefix: "/api", ctx });
+  await app.register(participantRoutes, { prefix: "/api", ctx });
   await app.register(fileRoutes, { prefix: "/api", ctx });
   await app.register(downloadRoutes, { prefix: "/api", ctx });
   await app.register(websocketRoutes, { prefix: "/api", ctx });

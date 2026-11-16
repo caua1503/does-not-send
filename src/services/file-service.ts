@@ -13,6 +13,7 @@ import { extractExtension, categorize } from "../recording/normalize.js";
 import type { SessionRecorder } from "../recording/index.js";
 import type { Logger } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
+import { TWOWAY_DEFAULTS } from "../session/twoway.js";
 
 const MIME_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -428,6 +429,17 @@ export class FileService {
     fileRecord: SessionFile,
     signal?: AbortSignal,
   ): Promise<void> {
+    const session = this.repository.getById(sessionId);
+    const totalLimit =
+      session?.mode === "twoway"
+        ? this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes
+        : 0;
+    const existingBytes = session
+      ? session.files
+          .filter((f) => f.id !== fileRecord.id && f.state === "completed")
+          .reduce((sum, f) => sum + f.size, 0)
+      : 0;
+
     return new Promise<void>((resolve, reject) => {
       const onAbort = () => {
         stream.destroy();
@@ -452,6 +464,17 @@ export class FileService {
           stream.destroy();
           ws.destroy();
           reject(Object.assign(new Error("File too large"), { statusCode: 413 }));
+          return;
+        }
+
+        if (totalLimit > 0 && existingBytes + bytesReceived > totalLimit) {
+          stream.destroy();
+          ws.destroy();
+          reject(
+            Object.assign(new Error("Session storage limit exceeded"), {
+              statusCode: 413,
+            }),
+          );
           return;
         }
 

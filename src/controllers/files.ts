@@ -1,12 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
+import { rm } from "node:fs/promises";
 import type { AppContext } from "../app.js";
 import { authorize } from "./sessions.js";
-import {
-  authorize as domainAuthorize,
-  startUpload,
-  endUpload,
-} from "../session/auth.js";
+import { startUpload, endUpload } from "../session/auth.js";
+import { canDelete, canDownload, canUpload, sessionMode } from "../session/permissions.js";
+import { itemAddedEvent } from "../session/twoway.js";
 
 export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }): Promise<void> {
   const { ctx } = opts;
@@ -34,23 +33,15 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     }
 
     // 3. Credencial válida?
-    let token: string | undefined;
-    const authHeader = request.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.slice(7);
-    } else if (request.query && typeof (request.query as { token?: unknown }).token === "string") {
-      token = (request.query as { token: string }).token;
-    }
+    const auth = await authorize(request, reply, ctx, id, [
+      "phone",
+      "owner",
+      "computer",
+    ]);
+    if (!auth) return;
 
-    if (!token) {
-      return reply.status(401).send({ error: "Unauthorized", statusCode: 401 });
-    }
-
-    const guestAuth = domainAuthorize(session, "phone", token);
-    const hostAuth = domainAuthorize(session, "computer", token);
-
-    if (!guestAuth.ok && !hostAuth.ok) {
-      return reply.status(401).send({ error: "Unauthorized", statusCode: 401 });
+    if (!canUpload(session, auth.participant)) {
+      return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
     }
 
     // 4. Estado é PAIRED ou TRANSFERRING?
@@ -98,6 +89,16 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             kind,
           );
 
+          result.file.senderId = auth.participant.id;
+          result.file.senderName = auth.participant.name;
+          result.file.origin = auth.participant.device;
+          ctx.sessionStore.update(session);
+
+          if (sessionMode(session) === "twoway") {
+            const event = itemAddedEvent(result.file);
+            if (event) ctx.sessionStore.notifyWs(session.id, event);
+          }
+
           results.push({
             id: result.file.id,
             originalName: result.file.originalName,
@@ -118,7 +119,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               statusCode: 413,
             });
           }
-          if (error.statusCode === 410) {
+          if (error.statusCode === 410 || error.statusCode === 499) {
             return reply.status(410).send({
               error: "Session closed during upload",
               statusCode: 410,
@@ -199,7 +200,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
                 statusCode: error.statusCode,
               });
             }
-            if (error.statusCode === 410) {
+            if (error.statusCode === 410 || error.statusCode === 499) {
               return reply.status(410).send({
                 error: "Session closed during upload",
                 statusCode: 410,
@@ -218,14 +219,25 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     },
   );
 
-  // List files (owner only)
+  // List files (any member in twoway; host only in oneway)
   app.get<{ Params: { id: string } }>("/sessions/:id/files", async (request, reply) => {
-    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+    const auth = await authorize(request, reply, ctx, request.params.id, [
+      "owner",
+      "computer",
+      "phone",
+    ]);
     if (!auth) return;
 
     const session = ctx.sessionStore.getById(auth.sessionId)!;
+    if (!canDownload(session, auth.participant)) {
+      const status = sessionMode(session) === "oneway" ? 401 : 403;
+      return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+    }
+
     return {
-      files: session.files.map((f) => ({
+      files: session.files
+        .filter((f) => sessionMode(session) !== "twoway" || f.state !== "failed")
+        .map((f) => ({
         id: f.id,
         originalName: f.originalName,
         mimeType: f.mimeType,
@@ -235,18 +247,28 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
         version: f.version,
         createdAt: f.createdAt,
         kind: f.kind,
+        senderId: f.senderId,
+        senderName: f.senderName,
+        origin: f.origin,
       })),
     };
   });
-
-  // Download file (owner only)
   app.get<{ Params: { id: string; fileId: string } }>(
     "/sessions/:id/files/:fileId",
     async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+      const auth = await authorize(request, reply, ctx, request.params.id, [
+        "owner",
+        "computer",
+        "phone",
+      ]);
       if (!auth) return;
 
       const session = ctx.sessionStore.getById(auth.sessionId)!;
+      if (!canDownload(session, auth.participant)) {
+        const status = sessionMode(session) === "oneway" ? 401 : 403;
+        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+      }
+
       const file = session.files.find((f) => f.id === request.params.fileId);
 
       if (!file || file.state !== "completed") {
@@ -265,6 +287,41 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
         )
         .header("Content-Length", file.size)
         .send(stream);
+    },
+  );
+
+  // Delete an item (author or host in twoway)
+  app.delete<{ Params: { id: string; fileId: string } }>(
+    "/sessions/:id/files/:fileId",
+    async (request, reply) => {
+      const auth = await authorize(request, reply, ctx, request.params.id, [
+        "owner",
+        "computer",
+        "phone",
+      ]);
+      if (!auth) return;
+
+      const session = ctx.sessionStore.getById(auth.sessionId)!;
+      const file = session.files.find((f) => f.id === request.params.fileId);
+      if (!file) {
+        return reply.status(404).send({ error: "File not found", statusCode: 404 });
+      }
+
+      if (!canDelete(session, auth.participant, file)) {
+        return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+      }
+
+      await rm(ctx.fileService.getFilePath(session.id, file.storageName), {
+        force: true,
+      });
+      session.files = session.files.filter((f) => f.id !== file.id);
+      ctx.sessionStore.update(session);
+
+      if (sessionMode(session) === "twoway") {
+        ctx.sessionStore.notifyWs(session.id, { type: "item:deleted", id: file.id });
+      }
+
+      return reply.status(204).send();
     },
   );
 }

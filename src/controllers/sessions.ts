@@ -1,17 +1,21 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import type { AppContext } from "../app.js";
+import type { DeviceKind, Participant, SessionMode } from "../types.js";
 import {
   authorize as domainAuthorize,
   generateSecret,
 } from "../session/auth.js";
 import { safeRecord } from "../utils/record-event.js";
 import { normalizeIp } from "../recording/normalize.js";
+import { guestActor, hostActor } from "../session/participants.js";
+import { canClose, sessionMode } from "../session/permissions.js";
 
 type TokenRole = "owner" | "upload" | "computer" | "phone";
 
 interface AuthResult {
   sessionId: string;
   role: TokenRole;
+  participant: Participant;
 }
 
 /**
@@ -63,7 +67,12 @@ export async function authorize(
     return null;
   }
 
-  return { sessionId, role: matchedRole };
+  const participant =
+    matchedRole === "phone"
+      ? ctx.participantService.authenticate(session!, token) ?? guestActor()
+      : hostActor(session!);
+
+  return { sessionId, role: matchedRole, participant };
 }
 
 export async function sessionRoutes(
@@ -73,37 +82,63 @@ export async function sessionRoutes(
   const { ctx } = opts;
 
   // Create session
-  app.post("/sessions", async (request, reply) => {
-    const session = await ctx.sessionService.create();
-    const placeholderUploadToken = generateSecret();
+  app.post<{ Body: { mode?: unknown; name?: unknown; device?: unknown } | undefined }>(
+    "/sessions",
+    async (request, reply) => {
+      const body = request.body ?? {};
+      if (body.mode !== undefined && body.mode !== "oneway" && body.mode !== "twoway") {
+        return reply.status(400).send({ error: "Invalid mode", statusCode: 400 });
+      }
+      if (
+        body.device !== undefined &&
+        body.device !== "phone" &&
+        body.device !== "desktop"
+      ) {
+        return reply.status(400).send({ error: "Invalid device", statusCode: 400 });
+      }
 
-    // Store normalized IP in session BEFORE emitting event (action must complete first)
-    session.computerIp = normalizeIp(request.ip);
+      const session = await ctx.sessionService.create({
+        mode: body.mode as SessionMode | undefined,
+        name: typeof body.name === "string" ? body.name : undefined,
+        device: body.device as DeviceKind | undefined,
+      });
+      const placeholderUploadToken = generateSecret();
 
-    // Emit session_created event AFTER domain action (normalizeIp) is complete
-    safeRecord(
-      ctx.recorder,
-      {
-        type: "session_created",
-        at: new Date(),
-        sessionId: session.id,
+      // Store normalized IP in session BEFORE emitting event (action must complete first)
+      session.computerIp = normalizeIp(request.ip);
+
+      // Emit session_created event AFTER domain action (normalizeIp) is complete
+      safeRecord(
+        ctx.recorder,
+        {
+          type: "session_created",
+          at: new Date(),
+          sessionId: session.id,
+          visualId: session.visualId,
+          computerIp: session.computerIp ?? undefined,
+        },
+        request.log,
+      );
+
+      return reply.status(201).send({
+        id: session.id,
+        mode: sessionMode(session),
+        hostId: session.hostId,
+        participants: session.participants?.map((participant) => ({
+          id: participant.id,
+          name: participant.name,
+          device: participant.device,
+        })),
+        computerToken: session.rawHostToken,
+        ownerToken: session.rawHostToken,
+        uploadToken: placeholderUploadToken,
+        qrToken: session.rawQrToken,
         visualId: session.visualId,
-        computerIp: session.computerIp ?? undefined,
-      },
-      request.log,
-    );
-
-    return reply.status(201).send({
-      id: session.id,
-      computerToken: session.rawHostToken,
-      ownerToken: session.rawHostToken,
-      uploadToken: placeholderUploadToken,
-      qrToken: session.rawQrToken,
-      visualId: session.visualId,
-      shortId: session.visualId,
-      createdAt: session.createdAt,
-    });
-  });
+        shortId: session.visualId,
+        createdAt: session.createdAt,
+      });
+    },
+  );
 
   // Pair guest to session using the session's reusable QR token
   app.post<{
@@ -225,6 +260,39 @@ export async function sessionRoutes(
           .send({ error: "Too many attempts", statusCode: 429 });
       }
 
+      // Twoway: resolve the room so the client can ask for a name; the code
+      // stays reusable and is consumed only by the oneway phone credential.
+      const twoway = ctx.sessionStore.getByNormalizedVisualId(sessionId);
+      if (twoway && sessionMode(twoway) === "twoway") {
+        if (twoway.state === "CLOSED") {
+          return reply.status(410).send({ error: "Session is closed", statusCode: 410 });
+        }
+        if (
+          !/^\d{6}$/.test(code) ||
+          !ctx.sessionStore.loginCodes.matches(twoway.id, code)
+        ) {
+          ctx.sessionStore.loginGuard.recordIpFailure(request.ip);
+          ctx.sessionStore.loginGuard.recordSessionFailure(twoway.id, (id) => {
+            if (ctx.sessionStore.loginCodes.current(id)) {
+              ctx.sessionStore.loginCodes.issue(id);
+            }
+          });
+          return reply.status(401).send({
+            error: "Invalid session or code",
+            statusCode: 401,
+          });
+        }
+
+        ctx.sessionStore.loginGuard.recordSessionSuccess(twoway.id);
+        return reply.status(200).send({
+          success: true,
+          mode: "twoway",
+          sessionId: twoway.id,
+          visualId: twoway.visualId,
+          hostId: twoway.hostId,
+        });
+      }
+
       const joined = ctx.sessionService.joinByCode(sessionId, code);
 
       if (!joined) {
@@ -237,6 +305,7 @@ export async function sessionRoutes(
 
       return reply.status(200).send({
         success: true,
+        mode: "oneway",
         sessionId: joined.sessionId,
         phoneCredential: joined.guestCredential,
       });
@@ -274,15 +343,67 @@ export async function sessionRoutes(
       createdAt: session.createdAt,
       lastActivity: session.lastActivity,
       fileCount: session.files.length,
+      mode: sessionMode(session),
+      hostId: session.hostId,
+      participants: session.participants?.map((participant) => ({
+        id: participant.id,
+        name: participant.name,
+        device: participant.device,
+      })),
     };
   });
 
-  // Close session (owner/host only)
-  app.delete<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
-    const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer"]);
+  // Explicit leave. The server decides by identity: the host closes and
+  // wipes the session; a guest only leaves the room.
+  app.post<{ Params: { id: string } }>("/sessions/:id/leave", async (request, reply) => {
+    // A closed session is already "left": answer 204 before auth (the token
+    // hash is gone, so this is the only idempotent answer possible).
+    const target = ctx.sessionStore.getById(request.params.id);
+    if (target?.state === "CLOSED") {
+      return reply.status(204).send();
+    }
+
+    const auth = await authorize(request, reply, ctx, request.params.id, [
+      "owner",
+      "computer",
+      "phone",
+    ]);
     if (!auth) return;
 
-    await ctx.sessionStore.closeSession(auth.sessionId, "user_closed");
+    const session = ctx.sessionStore.getById(auth.sessionId);
+    if (!session || session.state === "CLOSED") {
+      return reply.status(204).send();
+    }
+
+    if (canClose(session, auth.participant)) {
+      await ctx.sessionStore.closeSession(auth.sessionId, "host_left");
+      return reply.status(204).send();
+    }
+
+    const removed = ctx.participantService.leave(session, auth.participant);
+    if (removed && sessionMode(session) === "twoway") {
+      ctx.sessionStore.notifyWs(auth.sessionId, {
+        type: "participant:left",
+        id: auth.participant.id,
+      });
+    }
+    return reply.status(204).send();
+  });
+
+  // Close session (host only)
+  app.delete<{ Params: { id: string } }>("/sessions/:id", async (request, reply) => {
+    const target = ctx.sessionStore.getById(request.params.id);
+    const allowedRoles: TokenRole[] =
+      target?.mode === "twoway" ? ["owner", "computer", "phone"] : ["owner", "computer"];
+    const auth = await authorize(request, reply, ctx, request.params.id, allowedRoles);
+    if (!auth) return;
+
+    const session = ctx.sessionStore.getById(auth.sessionId)!;
+    if (!canClose(session, auth.participant)) {
+      return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+    }
+
+    await ctx.sessionStore.closeSession(auth.sessionId, "host_closed");
     return reply.status(204).send();
   });
 
