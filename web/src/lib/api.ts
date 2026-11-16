@@ -4,8 +4,20 @@
 
 import { BASE_URL as BASE } from "./base.ts";
 
+export type DeviceKind = "phone" | "desktop";
+export type SessionMode = "oneway" | "twoway";
+
+export interface ParticipantInfo {
+  id: string;
+  name: string;
+  device: DeviceKind;
+}
+
 export interface Session {
   id: string;
+  mode?: SessionMode;
+  hostId?: string;
+  participants?: ParticipantInfo[];
   computerToken?: string;
   ownerToken: string;
   uploadToken?: string;
@@ -52,6 +64,9 @@ export interface FileEntry {
   version: number;
   createdAt: string;
   kind?: "file" | "text";
+  senderId?: string;
+  senderName?: string;
+  origin?: DeviceKind;
 }
 
 interface FileListResponse {
@@ -68,9 +83,19 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+export interface CreateSessionInput {
+  mode?: SessionMode;
+  name?: string;
+  device?: DeviceKind;
+}
+
 /** POST /api/sessions → Session */
-export async function createSession(): Promise<Session> {
-  const res = await apiFetch("/api/sessions", { method: "POST" });
+export async function createSession(input: CreateSessionInput = {}): Promise<Session> {
+  const res = await apiFetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
   if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
   return res.json() as Promise<Session>;
 }
@@ -92,29 +117,90 @@ export async function pairSession(id: string, qrToken: string): Promise<PairResp
 export interface JoinResponse {
   success: boolean;
   sessionId: string;
-  phoneCredential: string;
+  mode: SessionMode;
+  visualId?: string;
+  hostId?: string;
+  phoneCredential?: string;
 }
 
-/** Thrown by joinWithCode; `status` alone decides the user-facing message. */
+interface JoinErrorBody extends PairErrorBody {
+  sessionId?: string;
+}
+
+/** Thrown by joinWithCode; `status` and `code` decide the user-facing message. */
 export class JoinError extends Error {
   status: number;
+  code?: string;
+  sessionId?: string;
 
-  constructor(status: number) {
+  constructor(status: number, code?: string, sessionId?: string) {
     super(`Join failed: ${status}`);
     this.name = "JoinError";
     this.status = status;
+    this.code = code;
+    this.sessionId = sessionId;
   }
 }
 
-/** POST /api/sessions/join — manual login, same credential the QR delivers. */
+/** POST /api/sessions/join — manual entry shared by oneway and twoway. */
 export async function joinWithCode(sessionId: string, code: string): Promise<JoinResponse> {
   const res = await apiFetch("/api/sessions/join", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId, code }),
   });
-  if (!res.ok) throw new JoinError(res.status);
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as JoinErrorBody;
+    throw new JoinError(res.status, data.code, data.sessionId);
+  }
   return res.json() as Promise<JoinResponse>;
+}
+
+export interface TwowayJoinInput {
+  name: string;
+  device: DeviceKind;
+  qrToken?: string;
+  code?: string;
+}
+
+export interface TwowayJoinResponse {
+  sessionId: string;
+  mode: SessionMode;
+  participant: ParticipantInfo;
+  credential: string;
+}
+
+/** POST /api/sessions/:id/participants — twoway room entry. */
+export async function joinTwowaySession(
+  id: string,
+  input: TwowayJoinInput,
+): Promise<TwowayJoinResponse> {
+  const res = await apiFetch(`/api/sessions/${id}/participants`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to join session: ${res.status}`, res.status, data.code);
+  }
+  return res.json() as Promise<TwowayJoinResponse>;
+}
+
+/** DELETE /api/sessions/:id/files/:fileId — author or host. */
+export async function deleteItem(
+  sessionId: string,
+  fileId: string,
+  token: string,
+): Promise<void> {
+  const res = await apiFetch(`/api/sessions/${sessionId}/files/${fileId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as PairErrorBody;
+    throw new ApiError(data.error || `Failed to delete item: ${res.status}`, res.status, data.code);
+  }
 }
 
 /** POST /api/sessions/:id/login-code — issue a fresh manual login code on demand. */
@@ -128,6 +214,9 @@ export async function requestLoginCode(id: string, token: string): Promise<void>
 
 export interface SessionInfo {
   id: string;
+  mode?: SessionMode;
+  hostId?: string;
+  participants?: ParticipantInfo[];
   visualId?: string;
   shortId?: string;
   state: "WAITING" | "PAIRED" | "TRANSFERRING" | "DISCONNECTED" | "CLOSED" | string;
@@ -158,6 +247,17 @@ export async function deleteSession(id: string, token: string): Promise<void> {
   });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Failed to delete session: ${res.status}`);
+  }
+}
+
+/** POST /api/sessions/:id/leave — host closes and wipes, guest just leaves */
+export async function leaveSession(id: string, token: string): Promise<void> {
+  const res = await apiFetch(`/api/sessions/${id}/leave`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.status !== 204) {
+    throw new Error(`Failed to leave session: ${res.status}`);
   }
 }
 

@@ -211,6 +211,57 @@ describe("useSessionEvents", () => {
       expect(mockSockets.length).toBe(1);
     });
 
+    it("session:closed do twoway limpa o estado e repassa o evento", () => {
+      const onClosed = vi.fn();
+      const onEvent = vi.fn();
+      const { result } = renderHook(() =>
+        useSessionEvents("session-1", "guest-cred", {
+          role: "guest",
+          onSessionClosed: onClosed,
+          onEvent,
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+
+      const ws = mockSockets[0]!;
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "phone" });
+        ws.receiveMessage({ type: "session:closed" });
+      });
+
+      expect(result.current.sessionClosed).toBe(true);
+      expect(result.current.closedReason).toBe("user_closed");
+      expect(onClosed).toHaveBeenCalledWith("user_closed");
+      expect(onEvent).toHaveBeenCalledWith({ type: "session:closed" });
+    });
+
+    it("repassa o reason do session:closed do twoway", () => {
+      const onClosed = vi.fn();
+      const { result } = renderHook(() =>
+        useSessionEvents("session-1", "guest-cred", {
+          role: "guest",
+          onSessionClosed: onClosed,
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+
+      const ws = mockSockets[0]!;
+      act(() => {
+        ws.receiveMessage({ type: "auth_ok", role: "phone" });
+        ws.receiveMessage({ type: "session:closed", reason: "host_left" });
+      });
+
+      expect(result.current.sessionClosed).toBe(true);
+      expect(result.current.closedReason).toBe("host_left");
+      expect(onClosed).toHaveBeenCalledWith("host_left");
+    });
+
     it("reconecta após fechamento 4001 quando a sessão ainda existe no servidor", async () => {
       // Bug: fechar com 4001 bloqueava reconexão mesmo com token válido
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "session-1", state: "WAITING" }) });

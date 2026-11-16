@@ -59,6 +59,43 @@ describe("JoinPage", () => {
     expect(screen.getByText(/sessão indisponível/i)).toBeInTheDocument();
   });
 
+  it("entrada manual reconhece twoway e pede o nome", async () => {
+    Object.defineProperty(window, "location", {
+      value: {
+        origin: "http://localhost:3000",
+        pathname: "/enviar/session-test-id",
+        search: "",
+      },
+      writable: true,
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        mode: "twoway",
+        sessionId: "canonical-id",
+        visualId: "ABC123",
+      }),
+    });
+
+    render(<JoinPage />);
+    fireEvent.click(screen.getByRole("button", { name: /entrar com código/i }));
+    fireEvent.change(screen.getByPlaceholderText("P79XFJ"), {
+      target: { value: "ABC123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("000 000"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^entrar$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /entrar na sessão de troca/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("conclui o pareamento sob StrictMode (efeitos remontados)", async () => {
     Object.defineProperty(window, "location", {
       value: {

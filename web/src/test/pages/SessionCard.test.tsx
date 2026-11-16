@@ -128,6 +128,20 @@ describe("SessionCard QR Code zoom", () => {
     expect(modalId).toHaveTextContent("ID: A7K92F");
   });
 
+  it("não tem botão separado 'Copiar ID' no cabeçalho oneway", () => {
+    render(
+      <SessionCard
+        session={{ ...session, visualId: "A7K92F" }}
+        publicBaseUrl="http://192.168.1.100:3000"
+        onClose={vi.fn()}
+        selected={false}
+        onSelect={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText("Copiar ID")).not.toBeInTheDocument();
+  });
+
   it("gera QR na rota nova /entrar/", () => {
     render(
       <SessionCard

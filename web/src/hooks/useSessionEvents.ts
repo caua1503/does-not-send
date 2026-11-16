@@ -9,6 +9,8 @@ export interface UseSessionEventsOptions {
   role?: SessionRole;
   reconnectInterval?: number;
   onSessionClosed?: (reason: string) => void;
+  /** Twoway events only; oneway keeps using the file reducer. */
+  onEvent?: (event: Record<string, unknown>) => void;
 }
 
 export interface UseSessionEventsResult {
@@ -48,6 +50,8 @@ export function useSessionEvents(
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(true);
+  const onEventRef = useRef(options?.onEvent);
+  onEventRef.current = options?.onEvent;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -124,8 +128,11 @@ export function useSessionEvents(
               return;
             }
 
-            if (data.type === "session_closed") {
-              const reason = (data.reason as string) || "closed";
+            if (data.type === "session_closed" || data.type === "session:closed") {
+              const reason =
+                (data.reason as string) ||
+                (data.type === "session:closed" ? "user_closed" : "closed");
+              onEventRef.current?.(data);
               setSessionClosed(true);
               setClosedReason(reason);
               setConnected(false);
@@ -136,6 +143,17 @@ export function useSessionEvents(
               try {
                 ws.close(4000, "Session closed");
               } catch {}
+              return;
+            }
+
+            if (
+              data.type === "participants:list" ||
+              data.type === "participant:joined" ||
+              data.type === "participant:left" ||
+              data.type === "item:added" ||
+              data.type === "item:deleted"
+            ) {
+              onEventRef.current?.(data);
               return;
             }
 

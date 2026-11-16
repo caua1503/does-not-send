@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import JoinPage from "../../pages/guest/JoinPage.tsx";
 
 vi.mock("browser-image-compression", () => {
@@ -359,10 +359,16 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
     const leaveButton = await screen.findByRole("button", { name: /sair da sessão/i });
     fireEvent.click(leaveButton);
 
-    expect(localStorage.getItem("dns_guest_cred_sess-persist-123")).toBeNull();
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/você sairá da sessão/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^sair$/i }));
+
+    await waitFor(() => {
+      expect(localStorage.getItem("dns_guest_cred_sess-persist-123")).toBeNull();
+    });
     expect(ws.readyState).toBe(MockWebSocket.CLOSED);
     expect(screen.queryByText(/escolher arquivos/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
+    expect(await screen.findByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
   });
 
   it("Ler o QR Code de outro computador substitui a credencial salva", async () => {

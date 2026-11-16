@@ -2,14 +2,29 @@ import { useState, useRef, useEffect } from "react";
 import { AlertCircle, KeyRound } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { Card } from "../../components/ui/Card.tsx";
-import { joinWithCode, pairSession, JoinError } from "../../lib/api.ts";
+import {
+  ApiError,
+  joinTwowaySession,
+  joinWithCode,
+  pairSession,
+  JoinError,
+  type ParticipantInfo,
+} from "../../lib/api.ts";
+import { detectDevice } from "../../lib/device.ts";
 import {
   clearGuestSession,
   readGuestSession,
   writeGuestSession,
 } from "../../lib/guestSessionStorage.ts";
+import {
+  clearTwowaySession,
+  readTwowaySession,
+  writeTwowaySession,
+} from "../../lib/twowaySessionStorage.ts";
 import { JoinSessionForm } from "./JoinSessionForm.tsx";
 import { SessionPage } from "../SessionPage.tsx";
+import { TwowayNamePage } from "../twoway/TwowayNamePage.tsx";
+import { TwowayRoomPage } from "../twoway/TwowayRoomPage.tsx";
 
 const SCAN_AGAIN_MESSAGE = "Escaneie o QR Code novamente.";
 const JOIN_ERROR_MESSAGE = "ID ou código inválido ou expirado";
@@ -55,19 +70,44 @@ export default function JoinPage({
   const storedSessionId = urlSessionId || restoredJoinedId || "";
 
   const initialStored = readGuestSession(storedSessionId);
+  const storedTwoway = readTwowaySession(storedSessionId);
+  const twowayCode = searchParams.get("code") || "";
+  const initialTwoway = searchParams.get("mode") === "twoway" || storedTwoway !== null;
 
+  const [twowayMode, setTwowayMode] = useState(initialTwoway);
   const [credential, setCredential] = useState<string | null>(
     initialStored.credential || (!qrToken && legacyToken ? legacyToken : null)
   );
-  const [visualId, setVisualId] = useState<string | null>(initialStored.visualId);
+  const [visualId, setVisualId] = useState<string | null>(
+    initialStored.visualId ?? storedTwoway?.visualId ?? null,
+  );
+  const [twowayParticipant, setTwowayParticipant] = useState<ParticipantInfo | null>(
+    storedTwoway?.participant ?? null,
+  );
+  const [twowayHostId, setTwowayHostId] = useState<string | null>(
+    storedTwoway?.hostId ?? null,
+  );
+  const [pendingTwowayJoin, setPendingTwowayJoin] = useState<{
+    id: string;
+    code: string;
+  } | null>(null);
+  const isTwoway =
+    twowayMode || storedTwoway !== null || pendingTwowayJoin !== null || twowayParticipant !== null;
   const [isPairing, setIsPairing] = useState<boolean>(() => {
-    return Boolean(urlSessionId && !initialStored.credential && qrToken);
+    return Boolean(urlSessionId && !initialStored.credential && qrToken && !initialTwoway);
   });
   const [sessionError, setSessionError] = useState<string | null>(() => {
     if (!urlSessionId) {
-      return initialStored.credential ? null : SCAN_AGAIN_MESSAGE;
+      return initialStored.credential || (initialTwoway && twowayCode)
+        ? null
+        : SCAN_AGAIN_MESSAGE;
     }
-    if (!initialStored.credential && !qrToken && !legacyToken) {
+    if (
+      !initialStored.credential &&
+      !qrToken &&
+      !legacyToken &&
+      !(initialTwoway && twowayCode)
+    ) {
       return SCAN_AGAIN_MESSAGE;
     }
     return null;
@@ -80,6 +120,7 @@ export default function JoinPage({
   const pairingInProgressRef = useRef<boolean>(false);
 
   useEffect(() => {
+    if (isTwoway) return;
     if (credential || sessionError || !urlSessionId || !qrToken || joinedSessionId) {
       return;
     }
@@ -138,10 +179,13 @@ export default function JoinPage({
       isCancelled = true;
       pairingInProgressRef.current = false;
     };
-  }, [urlSessionId, qrToken, credential, sessionError, joinedSessionId]);
+  }, [urlSessionId, qrToken, credential, sessionError, joinedSessionId, isTwoway]);
 
   const leaveSession = () => {
-    if (sessionId) clearGuestSession(sessionId);
+    if (sessionId) {
+      clearGuestSession(sessionId);
+      clearTwowaySession(sessionId);
+    }
     if (joinedSessionId) {
       try {
         localStorage.removeItem(JOINED_KEY);
@@ -150,6 +194,8 @@ export default function JoinPage({
     }
     setCredential(null);
     setVisualId(null);
+    setTwowayParticipant(null);
+    setTwowayHostId(null);
     // Always back to the entry screen, never to the dead session URL
     if (window.location.pathname !== "/") {
       try {
@@ -163,15 +209,65 @@ export default function JoinPage({
   const handleSessionClosed = () => {
     if (!sessionId) return;
     clearGuestSession(sessionId);
+    clearTwowaySession(sessionId);
     try {
       if (localStorage.getItem(JOINED_KEY) === sessionId) localStorage.removeItem(JOINED_KEY);
     } catch {}
   };
 
-  // Manual login: same credential the QR pairs give, so the flow below is unchanged.
+  const exitTwowayRoom = () => {
+    if (sessionId) {
+      clearGuestSession(sessionId);
+      clearTwowaySession(sessionId);
+    }
+    window.location.assign("/");
+  };
+
+  const joinTwowayRoom = async (name: string): Promise<string | null> => {
+    if (!urlSessionId) return "Sessão inválida";
+    try {
+      const data = await joinTwowaySession(urlSessionId, {
+        name,
+        device: detectDevice(),
+        qrToken: qrToken || undefined,
+        code: twowayCode || undefined,
+      });
+      writeGuestSession(data.sessionId, data.credential);
+      writeTwowaySession(data.sessionId, data.participant);
+      setCredential(data.credential);
+      setTwowayParticipant(data.participant);
+      setSessionError(null);
+      if (window.history?.replaceState) {
+        try {
+          window.history.replaceState({}, "", window.location.pathname);
+        } catch {}
+      }
+      return null;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 429) return "Muitas tentativas, aguarde um pouco";
+        if (error.status === 410) return "Sessão encerrada";
+        if (error.code === "SESSION_FULL") return "Sala cheia";
+        if (error.code === "WRONG_MODE") return "Esta sessão não é uma sessão de troca";
+        if (error.status === 400) return "Nome inválido";
+        if (error.status === 401) return "QR Code inválido ou expirado";
+      }
+      return "Não foi possível entrar na sala. Tente novamente.";
+    }
+  };
+
+  // Manual entry shared by oneway and twoway: twoway resolves the room first
+  // and asks for a name; its code stays valid for the next request.
   const joinWithManualCode = async (rawId: string, rawCode: string) => {
     try {
       const data = await joinWithCode(rawId, rawCode);
+      if (data.mode === "twoway") {
+        setJoining(false);
+        setTwowayMode(true);
+        setPendingTwowayJoin({ id: data.sessionId, code: rawCode });
+        return null;
+      }
+      if (!data.phoneCredential) return JOIN_ERROR_MESSAGE;
       // The canonical id: routes and WS never normalize, only the join lookup does
       const id = data.sessionId;
       try {
@@ -186,9 +282,56 @@ export default function JoinPage({
       if (err instanceof JoinError && err.status === 429) {
         return "Muitas tentativas, aguarde um pouco";
       }
+      if (err instanceof JoinError && err.status === 410) {
+        return "Sessão encerrada";
+      }
       return JOIN_ERROR_MESSAGE;
     }
   };
+
+  const joinTwowayByName = async (name: string): Promise<string | null> => {
+    if (!pendingTwowayJoin) return "Sessão inválida";
+    try {
+      const data = await joinTwowaySession(pendingTwowayJoin.id, {
+        name,
+        device: detectDevice(),
+        code: pendingTwowayJoin.code,
+      });
+      writeGuestSession(data.sessionId, data.credential);
+      writeTwowaySession(data.sessionId, data.participant);
+      setCredential(data.credential);
+      setTwowayParticipant(data.participant);
+      setJoinedSessionId(data.sessionId);
+      setPendingTwowayJoin(null);
+      setSessionError(null);
+      return null;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 429) return "Muitas tentativas, aguarde um pouco";
+        if (error.status === 410) return "Sessão encerrada";
+        if (error.code === "SESSION_FULL") return "Sala cheia";
+        if (error.code === "WRONG_MODE") return "Esta sessão não é uma sessão de troca";
+        if (error.status === 400) return "Nome inválido";
+        if (error.status === 401) return "ID ou código inválido ou expirado";
+      }
+      return "Não foi possível entrar na sala. Tente novamente.";
+    }
+  };
+
+  if (pendingTwowayJoin && (!credential || !twowayParticipant)) {
+    return (
+      <TwowayNamePage
+        title="Entrar na sessão de troca"
+        description="Escolha o nome que os outros participantes verão nesta sala."
+        submitLabel="Entrar na sala"
+        onSubmit={joinTwowayByName}
+        onCancel={() => {
+          setPendingTwowayJoin(null);
+          setTwowayMode(false);
+        }}
+      />
+    );
+  }
 
   if (sessionError) {
     if (joining) {
@@ -214,6 +357,32 @@ export default function JoinPage({
           </Button>
         </Card>
       </div>
+    );
+  }
+
+  if (isTwoway) {
+    if (!credential || !twowayParticipant) {
+      return (
+        <TwowayNamePage
+          title="Entrar na sessão de troca"
+          description="Escolha o nome que os outros participantes verão nesta sala."
+          submitLabel="Entrar na sala"
+          onSubmit={joinTwowayRoom}
+          onCancel={exitTwowayRoom}
+        />
+      );
+    }
+    return (
+      <TwowayRoomPage
+        role="guest"
+        sessionId={sessionId}
+        token={credential}
+        visualId={visualId}
+        hostId={twowayHostId}
+        self={twowayParticipant}
+        onExit={exitTwowayRoom}
+        onSessionClosed={handleSessionClosed}
+      />
     );
   }
 

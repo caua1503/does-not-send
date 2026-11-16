@@ -9,9 +9,17 @@ interface FileListProps {
   files: FileEntry[];
   sessionId: string;
   ownerToken: string;
+  canDelete?: (file: FileEntry) => boolean;
+  onDelete?: (file: FileEntry) => void;
 }
 
-export function FileList({ files, sessionId, ownerToken }: FileListProps) {
+export function FileList({
+  files,
+  sessionId,
+  ownerToken,
+  canDelete,
+  onDelete,
+}: FileListProps) {
   const completedCount = files.filter((f) => f.state === "completed").length;
 
   if (files.length === 0) {
@@ -50,6 +58,8 @@ export function FileList({ files, sessionId, ownerToken }: FileListProps) {
             file={file}
             sessionId={sessionId}
             ownerToken={ownerToken}
+            canDelete={canDelete?.(file)}
+            onDelete={onDelete}
           />
         ))}
       </div>

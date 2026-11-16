@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Eye, Download, FileText, Image, Film, Music, File as FileIcon, Pencil, AlignLeft, Copy, Check } from "lucide-react";
+import { Eye, Download, FileText, Image, Film, Music, File as FileIcon, Pencil, AlignLeft, Copy, Check, Trash2, Monitor, Smartphone } from "lucide-react";
 import { ImageEditor } from "../../components/ImageEditor/ImageEditor.tsx";
 import { Modal } from "../../components/ui/Modal.tsx";
 import { Button } from "../../components/ui/Button.tsx";
@@ -16,6 +16,8 @@ interface FileRowProps {
   file: FileEntry;
   sessionId: string;
   ownerToken: string;
+  canDelete?: boolean;
+  onDelete?: (file: FileEntry) => void;
 }
 
 const categoryIcon: Record<FileCategory, typeof FileIcon> = {
@@ -35,7 +37,7 @@ const stateBadgeVariant: Record<
   failed: "error",
 };
 
-export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
+export function FileRow({ file, sessionId, ownerToken, canDelete, onDelete }: FileRowProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [editFile, setEditFile] = useState<File | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
@@ -98,6 +100,10 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
   const openPreview = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     setPreviewOpen(true);
+  };
+  const remove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete?.(file);
   };
   const startEdit = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -166,11 +172,24 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
               {textError}
             </p>
           )}
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex flex-wrap items-center gap-2 mt-0.5">
             <span className="text-xs tabular text-[var(--color-text-muted)]">
               {formatBytes(file.size)}
             </span>
             <Badge label={fileStateLabel(file.state)} variant={stateBadgeVariant[file.state]} />
+            {file.senderName && (
+              <span
+                className="inline-flex items-center gap-1 min-w-0 text-xs text-[var(--color-text-muted)]"
+                title={`Enviado por ${file.senderName}`}
+              >
+                {file.origin === "desktop" ? (
+                  <Monitor size={12} strokeWidth={1.5} className="shrink-0" />
+                ) : (
+                  <Smartphone size={12} strokeWidth={1.5} className="shrink-0" />
+                )}
+                <span className="truncate max-w-32">{file.senderName}</span>
+              </span>
+            )}
           </div>
           {editError && (
             <p className="mt-0.5 text-xs text-[var(--color-error)]" role="alert">
@@ -219,6 +238,15 @@ export function FileRow({ file, sessionId, ownerToken }: FileRowProps) {
               aria-label={`Editar ${file.originalName}`}
             >
               <Pencil size={16} strokeWidth={1.5} />
+            </button>
+          )}
+          {canDelete && onDelete && (
+            <button
+              onClick={remove}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-error)] hover:bg-[var(--color-border)] transition-colors"
+              aria-label={`Apagar ${file.originalName}`}
+            >
+              <Trash2 size={16} strokeWidth={1.5} />
             </button>
           )}
           {file.state === "completed" && (

@@ -6,7 +6,7 @@ import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
-import { formatCodeGroups } from "../../lib/loginCode.ts";
+import { ManualLoginCode } from "../../components/ManualLoginCode.tsx";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import { getSession, requestLoginCode, type SessionInfo } from "../../lib/api.ts";
 import { copyText } from "../../lib/clipboard.ts";
@@ -201,6 +201,7 @@ export function SessionCard({
               onGenerate={generateCode}
               copied={copied === "code"}
               onCopy={() => copyValue("code", activeCode!)}
+              className="mt-1 w-full"
             />
           </div>
 
@@ -313,67 +314,5 @@ export function SessionCard({
         document.body,
       )}
     </>
-  );
-}
-
-/** On-demand numeric code, for devices that cannot read the QR. */
-function ManualLoginCode({
-  code,
-  seconds,
-  generating,
-  error,
-  onGenerate,
-  copied,
-  onCopy,
-}: {
-  code: string | null;
-  seconds: number;
-  generating: boolean;
-  error: string | null;
-  onGenerate: () => void;
-  copied: boolean;
-  onCopy: () => void;
-}) {
-  return (
-    <div
-      data-testid="manual-login-code"
-      className="mt-1 w-full flex flex-col items-center gap-0.5 text-center"
-    >
-      {code ? (
-        <>
-          <span className="text-[10px] text-[var(--color-text-muted)]">Código</span>
-          <button
-            type="button"
-            data-testid="manual-login-code-value"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopy();
-            }}
-            title="Clique para copiar o código"
-            className="font-mono font-bold text-sm tracking-widest tabular text-[var(--color-accent)] cursor-pointer hover:underline"
-          >
-            {formatCodeGroups(code)}
-            {copied && (
-              <Check size={12} strokeWidth={2.5} className="ml-1 inline align-[-2px]" />
-            )}
-          </button>
-          <span className="text-[10px] tabular text-[var(--color-text-muted)]">
-            troca em {seconds}s
-          </span>
-        </>
-      ) : (
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={generating}
-          className="text-[11px] font-semibold px-2 py-1 rounded bg-[var(--color-accent-light)] text-[var(--color-accent)] hover:ring-2 hover:ring-[var(--color-accent)] transition-all disabled:opacity-50"
-        >
-          {generating ? "Gerando…" : "Gerar código"}
-        </button>
-      )}
-      {error && (
-        <span className="text-[10px] text-[var(--color-error)]">{error}</span>
-      )}
-    </div>
   );
 }

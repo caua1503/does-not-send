@@ -2,16 +2,14 @@ import { useState, useRef, useEffect } from "react";
 import { Upload, AlertCircle, Plus } from "lucide-react";
 import { Button } from "../components/ui/Button.tsx";
 import { Card } from "../components/ui/Card.tsx";
-import { ProgressBar } from "../components/ui/ProgressBar.tsx";
-import { UploadItem, type GuestUploadItem } from "./guest/UploadItem.tsx";
-import { getSession, type SessionInfo } from "../lib/api.ts";
+import { UploadArea } from "../components/UploadArea.tsx";
+import { LeaveSessionModal } from "../components/LeaveSessionModal.tsx";
+import { getSession, leaveSession, type SessionInfo } from "../lib/api.ts";
+import { sessionClosedMessage } from "../lib/sessionClosedMessage.ts";
 import { useSessionEvents } from "../hooks/useSessionEvents.ts";
-import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
-import { convertHeicToJpeg, isHeic } from "../lib/convertHeic.ts";
-import { BASE_URL } from "../lib/base.ts";
+import { useSessionUpload } from "../hooks/useSessionUpload.ts";
+import { useClosedCountdown } from "../hooks/useClosedCountdown.ts";
 import { ImageEditor } from "../components/ImageEditor/ImageEditor.tsx";
-import { TextWidget } from "../components/TextWidget.tsx";
-import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
 import { FileList } from "./host/FileList.tsx";
 import { APP_VERSION } from "../lib/whatsNew.ts";
 
@@ -68,10 +66,9 @@ interface GuestSessionProps {
 }
 
 function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessionClosed }: GuestSessionProps) {
-  const [items, setItems] = useState<GuestUploadItem[]>([]);
-  const [textError, setTextError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   // (a) Cliente WS do visitante: auth primeiro, heartbeat a cada 10s, reconexão a cada 2s
   const {
@@ -87,8 +84,33 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
 
   // Estados derivados
   const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
-  const isSessionClosedRef = useRef(isSessionClosed);
-  isSessionClosedRef.current = isSessionClosed;
+  const closedCountdown = useClosedCountdown(isSessionClosed, () => onLeave?.());
+
+  const closeFromServer = () => {
+    setRemoteSession((prev) =>
+      prev
+        ? { ...prev, state: "CLOSED" }
+        : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" },
+    );
+  };
+
+  const {
+    items,
+    textError,
+    fileInputRef,
+    handleFilesChosen,
+    sendText,
+    replaceEditedImage,
+    retryUpload,
+    totalFiles,
+    completedFiles,
+    isUploading,
+  } = useSessionUpload({
+    sessionId,
+    credential,
+    disabled: isSessionClosed,
+    onClosed: closeFromServer,
+  });
   const isReconnecting =
     !isSessionClosed &&
     (wsReconnecting || remoteSession?.state === "DISCONNECTED");
@@ -129,257 +151,21 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
     };
   }, [sessionId, credential, isSessionClosed]);
 
-  const uploadSingleFile = (item: GuestUploadItem) => {
-    if (isSessionClosed) return;
-
-    setItems((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", progress: 0, error: undefined } : i))
-    );
-
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    // Fastify multipart accepts field name 'files' or single file parts
-    formData.append("files", item.file, item.file.name);
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const progress = e.loaded / e.total;
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, progress } : i))
-        );
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status === 201) {
-        let remoteId: string | undefined;
-        try {
-          const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
-          remoteId = body.files?.[0]?.id;
-        } catch {
-          // resposta sem corpo válido: upload concluído, sem id remoto
-        }
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === item.id ? { ...i, state: "completed", progress: 1, remoteId } : i
-          )
-        );
-        if (item.kind === "text") setTextError(null);
-      } else if (xhr.status === 401) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Falha de autorização no envio" } : i))
-        );
-      } else if (xhr.status === 410) {
-        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão encerrada" } : i))
-        );
-      } else if (xhr.status === 404) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não encontrada" } : i))
-        );
-      } else if (xhr.status === 409) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sessão não aceita envios" } : i))
-        );
-      } else if (xhr.status === 400 || xhr.status === 429) {
-        let message =
-          xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
-        try {
-          const body = JSON.parse(xhr.responseText) as { error?: unknown };
-          if (typeof body.error === "string") message = body.error;
-        } catch {
-          // resposta sem corpo válido: mantém a mensagem padrão
-        }
-        if (item.kind === "text") setTextError(message);
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: message } : i))
-        );
-      } else if (xhr.status === 413) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Arquivo muito grande ou limite excedido" } : i))
-        );
-      } else if (xhr.status >= 500 && xhr.status < 600) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Servidor temporariamente indisponível" } : i))
-        );
-      } else {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: `Erro ${xhr.status}` } : i))
-        );
-      }
-    };
-
-    xhr.onerror = () => {
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error: "Sem conexão com o servidor" } : i))
-      );
-    };
-
-    xhr.open(
-      "POST",
-      `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
-    );
-    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
-  };
-
-  const processAndUpload = async (id: string, initialFile: File) => {
-    if (isSessionClosedRef.current) return;
-
-    let finalFile = initialFile;
-    try {
-      finalFile = await compressPhoto(initialFile);
-    } catch {
-      finalFile = initialFile;
-    }
-
-    if (isSessionClosedRef.current) return;
-
-    // HEIC com falha de conversão não vira upload cru: sem JPEG não há pré-visualização.
-    try {
-      finalFile = await convertHeicToJpeg(finalFile);
-    } catch {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === id ? { ...i, state: "error", error: "Não foi possível converter a imagem HEIC" } : i
-        )
-      );
-      return;
-    }
-
-    // Drop reference to initialFile from React state and set finalFile
-    setItems((prev) =>
-      prev.map((i) =>
-        i.id === id ? { ...i, file: finalFile, state: "uploading", progress: 0 } : i
-      )
-    );
-
-    uploadSingleFile({
-      id,
-      file: finalFile,
-      progress: 0,
-      state: "uploading",
-    });
-  };
-
-  const handleFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isSessionClosed) return;
-    if (!e.target.files || e.target.files.length === 0) return;
-    const fileList = Array.from(e.target.files);
-
-    const newItems: GuestUploadItem[] = fileList.map((file) => ({
-      id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
-      file,
-      progress: 0,
-      state: isHeic(file) || isCompressiblePhoto(file) ? "optimizing" : "pending",
-    }));
-
-    setItems((prev) => [...prev, ...newItems]);
-    // Reset file input
-    if (fileInputRef.current) fileInputRef.current.value = "";
-
-    // Trigger upload or async compression pipeline
-    newItems.forEach((item) => {
-      if (item.state === "optimizing") {
-        void processAndUpload(item.id, item.file);
-      } else {
-        uploadSingleFile(item);
-      }
-    });
-  };
-
-  const sendText = (raw: string): boolean => {
-    if (isSessionClosedRef.current) return false;
-    const text = raw.trim();
-    if (!text) {
-      setTextError("Texto não pode ser vazio");
-      return false;
-    }
-    if (text.length > TEXT_MAX_LENGTH) {
-      setTextError(`Texto excede o limite de ${TEXT_MAX_LENGTH} caracteres`);
-      return false;
-    }
-    const file = buildTextFile(text, new Date(), items.map((i) => i.file.name));
-    const item: GuestUploadItem = {
-      id: `text-${Date.now()}-${Math.random()}`,
-      file,
-      progress: 0,
-      state: "pending",
-      kind: "text",
-    };
-    setTextError(null);
-    setItems((prev) => [...prev, item]);
-    uploadSingleFile(item);
-    return true;
-  };
-
-  // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: GuestUploadItem, file: File) => {
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    formData.append("files", file, file.name);
-    // The old content is gone once the replace starts: never show it as fine.
-    const fail = (error: string) => {
-      if (xhr.status === 410) {
-        setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
-      }
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, state: "error", error } : i))
-      );
-    };
-
-    xhr.onload = () => {
-      if (xhr.status !== 200) {
-        if (xhr.status === 401) fail("Falha de autorização na edição");
-        else if (xhr.status === 410) fail("Sessão encerrada");
-        else if (xhr.status === 404) fail("Arquivo não encontrado");
-        else if (xhr.status === 409) fail("Sessão não aceita envios");
-        else if (xhr.status === 413) fail("Arquivo muito grande ou limite excedido");
-        else if (xhr.status >= 500) fail("Servidor temporariamente indisponível");
-        else fail(`Erro ${xhr.status}`);
-        return;
-      }
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === item.id
-            ? {
-                ...i,
-                file,
-                edited: true,
-                error: undefined,
-              }
-            : i
-        )
-      );
-    };
-    xhr.onerror = () => fail("Sem conexão com o servidor");
-    xhr.open("PUT", `${BASE_URL}/api/sessions/${sessionId}/files/${item.remoteId}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
-  };
-
-  const retryUpload = (id: string) => {
-    const item = items.find((i) => i.id === id);
-    if (!item) return;
-    // A file that already reached the server is retried by replace, not POST.
-    if (item.remoteId) {
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, state: "uploading", error: undefined } : i))
-      );
-      replaceEditedImage(item, item.file);
-      return;
-    }
-    uploadSingleFile(item);
-  };
-
   const editingItem = editingId ? items.find((i) => i.id === editingId) : undefined;
 
-  const totalFiles = items.length;
-  const completedFiles = items.filter((i) => i.state === "completed").length;
-  const isUploading = items.some(
-    (i) => i.state === "uploading" || i.state === "pending" || i.state === "optimizing"
-  );
+  // Guest leave is best-effort on the server: files stay in the room and the
+  // user can come back with the code while the session is open.
+  const confirmGuestLeave = async () => {
+    setLeaving(true);
+    try {
+      await leaveSession(sessionId, credential);
+    } catch {
+      // Offline or already closed: still drop the local session.
+    }
+    setLeaving(false);
+    setConfirmLeave(false);
+    onLeave?.();
+  };
 
   return (
     <div className="min-h-dvh flex flex-col bg-[var(--color-bg)] max-w-md mx-auto md:max-w-2xl md:h-dvh md:overflow-hidden md:border-x md:border-[var(--color-border)]">
@@ -407,7 +193,7 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
             {completedFiles}/{totalFiles} enviados
           </span>
           {!isSessionClosed && (
-            <Button variant="ghost" size="sm" onClick={onLeave}>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmLeave(true)}>
               Sair da sessão
             </Button>
           )}
@@ -418,18 +204,33 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
       {isSessionClosed && (
         <div
           data-testid="status-session-closed"
-          role="alert"
           className="bg-red-500/10 border-b border-red-500/20 px-4 py-3 text-center space-y-1"
         >
-          <div className="flex items-center justify-center gap-1.5 text-sm font-semibold text-[var(--color-error)]">
-            <AlertCircle size={16} />
-            <span>Sessão encerrada</span>
+          <div role="alert" className="space-y-1">
+            <div className="flex items-center justify-center gap-1.5 text-sm font-semibold text-[var(--color-error)]">
+              <AlertCircle size={16} />
+              <span>Sessão encerrada</span>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              {sessionClosedMessage(wsClosedReason)}
+            </p>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            {wsClosedReason === "user_closed"
-              ? "Sessão encerrada pelo host."
-              : "Sessão encerrada."}
+            Voltando para o início em {closedCountdown.seconds}s…
           </p>
+          <span className="sr-only" aria-live="polite">
+            {closedCountdown.announcement}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              closedCountdown.cancel();
+              onLeave?.();
+            }}
+          >
+            Voltar ao início
+          </Button>
         </div>
       )}
 
@@ -457,70 +258,19 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
 
       {/* Main Container */}
       <main className="flex-1 p-4 flex flex-col gap-4 md:p-6 md:overflow-y-auto md:min-h-0">
-        {/* Big Tap Area */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
+        <UploadArea
+          inputId="guest-file-input"
+          inputRef={fileInputRef}
           disabled={isSessionClosed}
-          className="hidden"
-          id="guest-file-input"
-          onChange={handleFilesChosen}
+          items={items}
+          textError={textError}
+          totalFiles={totalFiles}
+          completedFiles={completedFiles}
+          onFilesChosen={handleFilesChosen}
+          onSendText={sendText}
+          onRetry={retryUpload}
+          onEdit={setEditingId}
         />
-
-        <label
-          htmlFor={isSessionClosed ? undefined : "guest-file-input"}
-          className={[
-            "border-2 border-dashed border-[var(--color-border)]",
-            isSessionClosed
-              ? "opacity-50 cursor-not-allowed bg-[var(--color-surface)]"
-              : "hover:border-[var(--color-accent)] cursor-pointer bg-[var(--color-surface)] active:scale-[0.99]",
-            "rounded-2xl p-8 flex flex-col items-center justify-center gap-3 transition-all min-h-[160px] md:min-h-[120px] md:p-6",
-          ].join(" ")}
-          onClick={(e) => {
-            if (isSessionClosed) {
-              e.preventDefault();
-            }
-          }}
-        >
-          <div className="w-12 h-12 rounded-full bg-[var(--color-accent-light)] flex items-center justify-center text-[var(--color-accent)]">
-            <Upload size={24} strokeWidth={1.75} />
-          </div>
-          <div className="text-center">
-            <span className="font-semibold text-base text-[var(--color-text)]">
-              {isSessionClosed ? "Sessão encerrada" : "Escolher arquivos"}
-            </span>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-              {isSessionClosed ? "Envio bloqueado" : "Fotos, vídeos e documentos"}
-            </p>
-          </div>
-        </label>
-
-        <TextWidget onSend={sendText} disabled={isSessionClosed} error={textError} />
-
-        {/* Global Progress */}
-        {totalFiles > 0 && (
-          <div className="bg-[var(--color-surface)] p-3 rounded-xl border border-[var(--color-border)] space-y-1.5">
-            <div className="flex justify-between text-xs text-[var(--color-text-muted)]">
-              <span>Progresso geral</span>
-              <span className="tabular">{Math.round((completedFiles / totalFiles) * 100)}%</span>
-            </div>
-            <ProgressBar value={completedFiles} max={totalFiles} />
-          </div>
-        )}
-
-        {/* Upload List */}
-        <div className="flex-1 space-y-2">
-          {items.map((item) => (
-            <UploadItem
-              key={item.id}
-              item={item}
-              onRetry={retryUpload}
-              onEdit={isSessionClosed ? undefined : setEditingId}
-            />
-          ))}
-        </div>
-
       </main>
 
       {/* Bottom Actions */}
@@ -553,6 +303,14 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
           }}
         />
       )}
+
+      <LeaveSessionModal
+        open={confirmLeave}
+        role="guest"
+        busy={leaving}
+        onCancel={() => setConfirmLeave(false)}
+        onConfirm={() => void confirmGuestLeave()}
+      />
     </div>
   );
 }
