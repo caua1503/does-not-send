@@ -8,6 +8,7 @@ import type {
 import {
   CLOSE_REASON_LABELS,
   POSITION_LABELS,
+  SESSION_MODE_LABELS,
   TRANSFER_STATUS_LABELS,
   categoryLabel,
 } from "../../../../src/shared/admin/labels.ts";
@@ -145,6 +146,7 @@ export function SessionsTable({ page, sort, onPage, tz }: ListProps<SessionRow>)
             <SortHeader label="Criada em" column="createdAt" state={sort} />
             <SortHeader label="Pareada em" column="pairedAt" state={sort} />
             <th scope="col" className="px-3 py-2 text-left font-medium">Situação</th>
+            <SortHeader label="Pessoas" column="participantCount" state={sort} className="text-right" />
             <SortHeader label="Arquivos" column="fileCount" state={sort} className="text-right" />
             <SortHeader label="Volume" column="totalBytes" state={sort} className="text-right" />
           </tr>
@@ -154,10 +156,16 @@ export function SessionsTable({ page, sort, onPage, tz }: ListProps<SessionRow>)
             <tr key={s.id} className="border-b border-[var(--color-border)]/60 last:border-0 hover:bg-[var(--color-accent-light)]/40">
               <td className="px-3 py-2">
                 <Link to={`#/sessions/${encodeURIComponent(s.id)}`} className="font-medium">{s.visualId}</Link>
+                <span className="ml-2 text-xs text-[var(--color-text-muted)]">
+                  {s.mode ? SESSION_MODE_LABELS[s.mode] : "Desconhecido"}
+                </span>
               </td>
               <td className="px-3 py-2 tabular">{formatDateTime(s.createdAt, tz)}</td>
               <td className="px-3 py-2 tabular">{s.pairedAt ? formatDateTime(s.pairedAt, tz) : "—"}</td>
               <td className="px-3 py-2"><SessionStatus session={s} /></td>
+              <td className="px-3 py-2 text-right tabular">
+                {s.mode === "twoway" ? s.participantCount : "—"}
+              </td>
               <td className="px-3 py-2 text-right tabular">{s.fileCount}</td>
               <td className="px-3 py-2 text-right tabular">{formatBytes(s.totalBytes)}</td>
             </tr>
@@ -172,9 +180,18 @@ export function SessionsTable({ page, sort, onPage, tz }: ListProps<SessionRow>)
                 <Link to={`#/sessions/${encodeURIComponent(s.id)}`} className="font-medium">{s.visualId}</Link>
                 <SessionStatus session={s} />
               </div>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {s.mode ? SESSION_MODE_LABELS[s.mode] : "Desconhecido"}
+              </p>
               <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
                 <dt>Criada em</dt>
                 <dd className="text-right text-[var(--color-text)] tabular">{formatDateTime(s.createdAt, tz)}</dd>
+                {s.mode === "twoway" && (
+                  <>
+                    <dt>Pessoas</dt>
+                    <dd className="text-right text-[var(--color-text)] tabular">{s.participantCount}</dd>
+                  </>
+                )}
                 <dt>Arquivos</dt>
                 <dd className="text-right text-[var(--color-text)] tabular">{s.fileCount}</dd>
                 <dt>Volume</dt>
