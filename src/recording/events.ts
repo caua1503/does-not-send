@@ -10,6 +10,17 @@ export interface SessionCreated {
   sessionId: string;
   visualId: string;
   computerIp?: string;
+  /** Absent means the row predates the mode column. */
+  mode?: "oneway" | "twoway";
+}
+
+/** One row per participant membership; reconnects never emit this again. */
+export interface ParticipantJoined {
+  type: "participant_joined";
+  at: Date;
+  sessionId: string;
+  participantId: string;
+  role: "host" | "guest";
 }
 
 export interface SessionPaired {
@@ -59,6 +70,7 @@ export interface PairingRefused {
 
 export type DomainEvent =
   | SessionCreated
+  | ParticipantJoined
   | SessionPaired
   | SessionClosed
   | TransferStarted

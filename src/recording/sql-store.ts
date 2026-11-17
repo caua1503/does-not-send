@@ -52,6 +52,21 @@ export class SqlStore implements Store {
             visualId: event.visualId,
             computerIp: normalizeIp(event.computerIp),
             createdAt: event.at.toISOString(),
+            mode: event.mode ?? null,
+          })
+          .onConflictDoNothing();
+        break;
+
+      case "participant_joined":
+        // Participant id is the dedupe key: a reconnect authenticates the
+        // existing credential instead of emitting this event again.
+        await tx
+          .insert(schema.sessionParticipants)
+          .values({
+            id: event.participantId,
+            sessionId: event.sessionId,
+            role: event.role,
+            joinedAt: event.at.toISOString(),
           })
           .onConflictDoNothing();
         break;

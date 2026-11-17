@@ -3,6 +3,7 @@ import type {
   MeResponse,
   Paginated,
   SessionDetail,
+  SessionMetrics,
   SessionRow,
   TimeseriesResponse,
   TransferDetail,
@@ -151,6 +152,13 @@ export class AdminClient {
 
   async timeseries(filters: Partial<AdminFilters>, signal?: AbortSignal): Promise<TimeseriesResponse> {
     return this.request<TimeseriesResponse>(this.path("/admin/api/timeseries", filters), signal);
+  }
+
+  async sessionMetrics(
+    filters: Partial<AdminFilters>,
+    signal?: AbortSignal,
+  ): Promise<SessionMetrics> {
+    return this.request<SessionMetrics>(this.path("/admin/api/sessions/metrics", filters), signal);
   }
 
   async transfers(

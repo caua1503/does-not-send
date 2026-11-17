@@ -1,12 +1,14 @@
-import { and, asc, count, desc, eq, gte, inArray, lte, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, or, sql, sum } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { BunSQLDatabase } from "drizzle-orm/bun-sql";
 import * as schema from "../db/schema.js";
-import { events, sessions, transfers } from "../db/schema.js";
+import { events, sessionParticipants, sessions, transfers } from "../db/schema.js";
 import type {
   AdminFilters,
   Category,
   CloseReason,
+  SessionMetrics,
+  SessionMode,
   TransferStatus,
 } from "../shared/admin/types.js";
 import { toIsoString } from "../shared/admin/format.js";
@@ -97,9 +99,11 @@ export interface SessionRowDto {
   pairedAt: string | null;
   closedAt: string | null;
   closeReason: CloseReason | null;
+  mode: SessionMode | null;
   isActive: boolean;
   fileCount: number;
   totalBytes: number;
+  participantCount: number;
 }
 
 interface TransferSourceRow {
@@ -125,8 +129,10 @@ interface SessionSourceRow {
   pairedAt: string | Date | null;
   closedAt: string | Date | null;
   closeReason: CloseReason | null;
+  mode?: SessionMode | null;
   fileCount: number | string | bigint | null;
   totalBytes: number | string | bigint | null;
+  participantCount?: number | string | bigint | null;
 }
 
 function mapTransfer(row: TransferSourceRow): TransferRowDto {
@@ -155,9 +161,11 @@ function mapSession(row: SessionSourceRow): SessionRowDto {
     pairedAt: toIsoString(row.pairedAt),
     closedAt: toIsoString(row.closedAt),
     closeReason: row.closeReason,
+    mode: row.mode ?? null,
     isActive: row.closedAt === null,
     fileCount: Number(row.fileCount ?? 0),
     totalBytes: Number(row.totalBytes ?? 0),
+    participantCount: Number(row.participantCount ?? 0),
   };
 }
 
@@ -248,6 +256,18 @@ export function createAdminQueries(db: ReaderDb) {
       .as("totals");
   }
 
+  /** Distinct participant rows per session (reconnects never add rows). */
+  function participantTotals() {
+    return db
+      .select({
+        sessionId: sessionParticipants.sessionId,
+        participantCount: count(sessionParticipants.id).as("participant_count"),
+      })
+      .from(sessionParticipants)
+      .groupBy(sessionParticipants.sessionId)
+      .as("participant_totals");
+  }
+
   const sessionColumns = {
     id: sessions.id,
     visualId: sessions.visualId,
@@ -257,6 +277,7 @@ export function createAdminQueries(db: ReaderDb) {
     pairedAt: sessions.pairedAt,
     closedAt: sessions.closedAt,
     closeReason: sessions.closeReason,
+    mode: sessions.mode,
   };
 
   // Bounds are ISO instants (Period); a bare date reaches the driver as
@@ -374,6 +395,7 @@ export function createAdminQueries(db: ReaderDb) {
   ) {
     const where = sessionWhere(filters);
     const totals = sessionTotals();
+    const participants = participantTotals();
     const totalRows = await db.select({ total: count() }).from(sessions).where(where);
     const orderColumns: Record<string, AnyColumn | SQL.Aliased> = {
       createdAt: sessions.createdAt,
@@ -381,12 +403,19 @@ export function createAdminQueries(db: ReaderDb) {
       closedAt: sessions.closedAt,
       fileCount: totals.fileCount,
       totalBytes: totals.totalBytes,
+      participantCount: participants.participantCount,
     };
     const column = orderColumns[sort] ?? sessions.createdAt;
     const rows = await db
-      .select({ ...sessionColumns, fileCount: totals.fileCount, totalBytes: totals.totalBytes })
+      .select({
+        ...sessionColumns,
+        fileCount: totals.fileCount,
+        totalBytes: totals.totalBytes,
+        participantCount: participants.participantCount,
+      })
       .from(sessions)
       .leftJoin(totals, eq(totals.sessionId, sessions.id))
+      .leftJoin(participants, eq(participants.sessionId, sessions.id))
       .where(where)
       .orderBy(orderDir(dir, column), desc(sessions.id))
       .limit(filters.pageSize)
@@ -484,6 +513,106 @@ export function createAdminQueries(db: ReaderDb) {
     };
   }
 
+  async function sessionsMetrics(filters: AdminFilters): Promise<SessionMetrics> {
+    const where = sessionWhere(filters);
+    // One row per twoway session; count(p.id) is 0 when nobody joined.
+    const perTwowaySession = db
+      .select({
+        sessionId: sessions.id,
+        participantCount: count(sessionParticipants.id).as("participant_count"),
+      })
+      .from(sessions)
+      .leftJoin(sessionParticipants, eq(sessionParticipants.sessionId, sessions.id))
+      .where(and(eq(sessions.mode, "twoway"), where))
+      .groupBy(sessions.id)
+      .as("twoway_participants");
+
+    const [modeRows, abandonedRows, participantRows, durationRows, transferRows] =
+      await Promise.all([
+        db
+          .select({ mode: sessions.mode, total: count() })
+          .from(sessions)
+          .where(where)
+          .groupBy(sessions.mode),
+        // oneway: never paired. twoway: no guest participant. NULL mode is not classified.
+        db
+          .select({ mode: sessions.mode, total: count() })
+          .from(sessions)
+          .where(
+            and(
+              where,
+              or(
+                and(eq(sessions.mode, "oneway"), isNull(sessions.pairedAt)),
+                and(
+                  eq(sessions.mode, "twoway"),
+                  sql`not exists (select 1 from ${sessionParticipants} where ${sessionParticipants.sessionId} = ${sessions.id} and ${sessionParticipants.role} = 'guest')`,
+                ),
+              ),
+            ),
+          )
+          .groupBy(sessions.mode),
+        db
+          .select({
+            total: sum(perTwowaySession.participantCount),
+            average: sql<number>`coalesce(avg(${perTwowaySession.participantCount}), 0)::float8`,
+            max: sql<number>`coalesce(max(${perTwowaySession.participantCount}), 0)::int`,
+          })
+          .from(perTwowaySession),
+        db
+          .select({
+            avgSeconds: sql<
+              number | null
+            >`avg(extract(epoch from (${sessions.closedAt} - ${sessions.createdAt})))::float8`,
+          })
+          .from(sessions)
+          .where(and(where, sql`${sessions.closedAt} is not null`)),
+        db
+          .select({
+            totalSessions: sql<number>`count(distinct ${sessions.id})::int`,
+            completedTransfers: sql<number>`count(${transfers.id}) filter (where ${transfers.status} = 'completed')::int`,
+          })
+          .from(sessions)
+          .leftJoin(transfers, eq(transfers.sessionId, sessions.id))
+          .where(where),
+      ]);
+
+    const totals = { oneway: 0, twoway: 0, unknown: 0 };
+    for (const row of modeRows) {
+      const n = Number(row.total);
+      if (row.mode === "oneway" || row.mode === "twoway") totals[row.mode] = n;
+      else totals.unknown += n;
+    }
+
+    const abandoned = { oneway: 0, twoway: 0 };
+    for (const row of abandonedRows) {
+      if (row.mode === "oneway" || row.mode === "twoway") abandoned[row.mode] = Number(row.total);
+    }
+
+    const participantRow = participantRows[0];
+    const durationSeconds = durationRows[0]?.avgSeconds ?? null;
+    const transferRow = transferRows[0];
+    const totalSessions = Number(transferRow?.totalSessions ?? 0);
+    const completedTransfers = Number(transferRow?.completedTransfers ?? 0);
+    const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+    return {
+      byMode: {
+        oneway: { total: totals.oneway, abandoned: abandoned.oneway },
+        twoway: { total: totals.twoway, abandoned: abandoned.twoway },
+        unknown: { total: totals.unknown },
+      },
+      twowayParticipants: {
+        total: Number(participantRow?.total ?? 0),
+        average: round1(Number(participantRow?.average ?? 0)),
+        max: Number(participantRow?.max ?? 0),
+      },
+      averageDurationSeconds:
+        durationSeconds === null ? null : Math.round(Number(durationSeconds)),
+      averageTransfersPerSession:
+        totalSessions > 0 ? round1(completedTransfers / totalSessions) : 0,
+    };
+  }
+
   async function timeseries(
     filters: AdminFilters,
     buckets: Array<{ bucketStart: string; bucketEnd: string }>,
@@ -528,10 +657,17 @@ export function createAdminQueries(db: ReaderDb) {
 
   async function getSessionRow(id: string): Promise<SessionRowDto | null> {
     const totals = sessionTotals();
+    const participants = participantTotals();
     const rows = await db
-      .select({ ...sessionColumns, fileCount: totals.fileCount, totalBytes: totals.totalBytes })
+      .select({
+        ...sessionColumns,
+        fileCount: totals.fileCount,
+        totalBytes: totals.totalBytes,
+        participantCount: participants.participantCount,
+      })
       .from(sessions)
       .leftJoin(totals, eq(totals.sessionId, sessions.id))
+      .leftJoin(participants, eq(participants.sessionId, sessions.id))
       .where(eq(sessions.id, id))
       .limit(1);
     const row = rows[0];
@@ -610,6 +746,14 @@ export function createAdminQueries(db: ReaderDb) {
     };
   }
 
-  return { listTransfers, listSessions, summary, timeseries, getTransfer, getSessionDetail };
+  return {
+    listTransfers,
+    listSessions,
+    summary,
+    sessionsMetrics,
+    timeseries,
+    getTransfer,
+    getSessionDetail,
+  };
 }
 

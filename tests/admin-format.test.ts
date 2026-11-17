@@ -3,6 +3,8 @@ import {
   formatBucketLabel,
   formatBytes,
   formatDateTime,
+  formatDecimal,
+  formatDuration,
   formatNumber,
   formatDate,
   formatTime,
@@ -39,6 +41,21 @@ describe("formatNumber", () => {
   it("agrupa milhares em pt-BR e trata não-numéricos", () => {
     expect(formatNumber(1234567)).toBe("1.234.567");
     expect(formatNumber(Number.NaN)).toBe("0");
+  });
+});
+
+describe("formatDuration e formatDecimal", () => {
+  it("duração em segundos vira h/min/s legível", () => {
+    expect(formatDuration(0)).toBe("0 s");
+    expect(formatDuration(45.4)).toBe("45 s");
+    expect(formatDuration(750)).toBe("12 min 30 s");
+    expect(formatDuration(3900)).toBe("1 h 05 min");
+    expect(formatDuration(-1)).toBe("—");
+  });
+
+  it("média usa uma casa decimal em pt-BR", () => {
+    expect(formatDecimal(2.5)).toBe("2,5");
+    expect(formatDecimal(0.8)).toBe("0,8");
   });
 });
 

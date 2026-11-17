@@ -10,7 +10,8 @@ export type SortKey =
   | "pairedAt"
   | "closedAt"
   | "fileCount"
-  | "totalBytes";
+  | "totalBytes"
+  | "participantCount";
 
 export const TRANSFER_SORTS: readonly SortKey[] = [
   "startedAt",
@@ -26,6 +27,7 @@ export const SESSION_SORTS: readonly SortKey[] = [
   "closedAt",
   "fileCount",
   "totalBytes",
+  "participantCount",
 ];
 
 /** Shared with the admin frontend so its table headers match the whitelist. */

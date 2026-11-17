@@ -1,4 +1,9 @@
-import type { Category, CloseReason, Granularity, TransferStatus } from "./types.js";
+import type { Category, CloseReason, Granularity, SessionMode, TransferStatus } from "./types.js";
+
+export const SESSION_MODE_LABELS: Record<SessionMode, string> = {
+  oneway: "Comum",
+  twoway: "Troca",
+};
 
 export const TRANSFER_STATUS_LABELS: Record<TransferStatus, string> = {
   completed: "Concluída",
