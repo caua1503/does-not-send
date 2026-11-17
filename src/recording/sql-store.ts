@@ -89,6 +89,7 @@ export class SqlStore implements Store {
             mime: event.mime,
             category: event.category,
             size: event.size,
+            originalSizeBytes: event.originalSize ?? null,
             status: "receiving",
             startedAt: event.at.toISOString(),
           })
@@ -101,6 +102,9 @@ export class SqlStore implements Store {
           .set({
             status: event.status,
             size: event.size,
+            ...(event.originalSize !== undefined
+              ? { originalSizeBytes: event.originalSize }
+              : {}),
             version: sql`${schema.transfers.version} + 1`,
             finishedAt: event.at.toISOString(),
           })

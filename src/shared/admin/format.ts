@@ -35,6 +35,12 @@ export function formatNumber(value: number): string {
   return INTEGER.format(value);
 }
 
+/** Bytes saved by client compression; never negative (a bigger result counts as 0). */
+export function savingsBytes(original: number | null | undefined, received: number): number {
+  if (original === null || original === undefined || !Number.isFinite(original)) return 0;
+  return Math.max(0, original - received);
+}
+
 /**
  * Canonical ISO-8601 UTC string for the admin contract ("YYYY-MM-DDTHH:mm:ss.sssZ").
  * Accepts Date and the strings Postgres/Bun.SQL return ("2026-01-02 03:04:05+00"),

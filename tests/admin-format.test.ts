@@ -6,6 +6,7 @@ import {
   formatNumber,
   formatDate,
   formatTime,
+  savingsBytes,
 } from "../src/shared/admin/format.js";
 
 describe("formatBytes (base 1024)", () => {
@@ -62,6 +63,21 @@ describe("datas com Intl e ADMIN_TZ", () => {
     expect(formatDateTime("não é data")).toBe("—");
     expect(formatDate("")).toBe("—");
     expect(formatBucketLabel("lixo", "day")).toBe("—");
+  });
+});
+
+describe("savingsBytes", () => {
+  it("economia é original - enviado, sem ficar negativa", () => {
+    // Que bug pega: compressão que deixou o arquivo maior viraria "economia" negativa no card.
+    expect(savingsBytes(5_000_000, 1_000_000)).toBe(4_000_000);
+    expect(savingsBytes(1_000_000, 1_500_000)).toBe(0);
+    expect(savingsBytes(1_000, 1_000)).toBe(0);
+  });
+
+  it("original desconhecido conta como zero", () => {
+    expect(savingsBytes(null, 1_000)).toBe(0);
+    expect(savingsBytes(undefined, 1_000)).toBe(0);
+    expect(savingsBytes(Number.NaN, 1_000)).toBe(0);
   });
 });
 

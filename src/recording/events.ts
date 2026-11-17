@@ -36,6 +36,8 @@ export interface TransferStarted {
   mime: string;
   category: Category;
   size: number;
+  /** Client-declared pre-compression size; absent when unknown/invalid. */
+  originalSize?: number | null;
 }
 
 export interface TransferFinished {
@@ -44,6 +46,8 @@ export interface TransferFinished {
   id: string;
   status: TransferStatus;
   size: number;
+  /** Present only on edits/replacements, which emit no transfer_started. */
+  originalSize?: number | null;
 }
 
 export interface PairingRefused {

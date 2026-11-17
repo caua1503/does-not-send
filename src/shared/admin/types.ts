@@ -76,6 +76,8 @@ export interface TransferRow {
   extension: string;
   category: Category;
   size: number;
+  /** Client-declared pre-compression size; null for old/invalid/unknown. */
+  originalSize: number | null;
   status: TransferStatus;
   /** ISO UTC. */
   startedAt: string;
@@ -132,6 +134,8 @@ export interface AdminSummary {
   topExtensions: Array<{ extension: string; count: number; volumeBytes: number }>;
   topPhoneIps: Array<{ ip: string; count: number }>;
   refusedPairings: number;
+  /** Compression savings on completed transfers; rows without originalSize ignored. */
+  trafficSaved: { originalBytes: number; savedBytes: number };
 }
 
 export interface SessionTimelineItemBase {

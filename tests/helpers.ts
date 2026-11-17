@@ -8,9 +8,19 @@ import type { Writable } from "node:stream";
 
 export function createMultipartPayload(
   files: Array<{ name: string; content: Buffer; filename: string; contentType?: string }>,
+  fields: Array<{ name: string; value: string }> = [],
 ): { body: Buffer; contentType: string } {
   const boundary = "----TestBoundary" + Date.now();
   const parts: Buffer[] = [];
+
+  // Fields first: the server streams file parts and reads them before the bytes.
+  for (const field of fields) {
+    parts.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${field.name}"\r\n\r\n${field.value}\r\n`,
+      ),
+    );
+  }
 
   for (const file of files) {
     const ct = file.contentType ?? "application/octet-stream";

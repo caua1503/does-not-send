@@ -62,6 +62,8 @@ export const transfers = pgTable(
     mime: text("mime").notNull(),
     category: categoryEnum("category").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
+    /** Client-declared pre-compression size; NULL for old/invalid/unknown. */
+    originalSizeBytes: bigint("original_size_bytes", { mode: "number" }),
     status: transferStatusEnum("status").notNull(),
     version: integer("version").notNull().default(1),
     startedAt: timestamp("started_at")

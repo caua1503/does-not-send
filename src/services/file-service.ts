@@ -102,6 +102,7 @@ export class FileService {
     declaredSize?: number,
     signal?: AbortSignal,
     kind?: "text",
+    originalSize?: number | null,
   ): Promise<UploadResult> {
     if (signal?.aborted) {
       throw Object.assign(new Error("Upload aborted"), { statusCode: 499 });
@@ -162,6 +163,7 @@ export class FileService {
       mimeType: effectiveMime,
       size: uploadSize ?? 0,
       bytesReceived: 0,
+      originalSize: originalSize ?? null,
       state: "receiving",
       createdAt: now,
       startedAt: now,
@@ -205,6 +207,7 @@ export class FileService {
           mime: fileRecord.mimeType,
           category: fileRecord.category as import("../recording/events.js").TransferStarted["category"],
           size: 0, // real size unknown at start; updated by transfer_finished
+          originalSize: fileRecord.originalSize,
         },
         this.log,
       );
@@ -323,6 +326,7 @@ export class FileService {
     mimeType: string,
     stream: Readable,
     signal?: AbortSignal,
+    originalSize?: number | null,
   ): Promise<UploadResult> {
     const session = this.repository.getById(sessionId);
     if (!session || session.state === "CLOSED") {
@@ -379,6 +383,7 @@ export class FileService {
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.finishedAt = new Date().toISOString();
       fileRecord.version += 1;
+      fileRecord.originalSize = originalSize ?? null;
       if (nextExtension) fileRecord.extension = nextExtension;
       fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
       this.repository.update(session);
@@ -409,6 +414,7 @@ export class FileService {
             id: fileRecord.id,
             status: "completed" as const,
             size: fileStat.size,
+            originalSize: fileRecord.originalSize,
           },
           this.log,
         );

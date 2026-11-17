@@ -81,6 +81,8 @@ export interface TransferRowDto {
   extension: string;
   category: Category;
   size: number;
+  /** Client-declared pre-compression size; null for old/invalid/unknown. */
+  originalSize: number | null;
   status: TransferStatus;
   startedAt: string;
   finishedAt: string | null;
@@ -108,6 +110,7 @@ interface TransferSourceRow {
   extension: string;
   category: Category;
   size: number | string | bigint;
+  originalSize: number | string | bigint | null;
   status: TransferStatus;
   startedAt: string | Date;
   finishedAt: string | Date | null;
@@ -135,6 +138,7 @@ function mapTransfer(row: TransferSourceRow): TransferRowDto {
     extension: row.extension,
     category: row.category,
     size: Number(row.size),
+    originalSize: row.originalSize === null ? null : Number(row.originalSize),
     status: row.status,
     startedAt: toIsoString(row.startedAt) ?? "",
     finishedAt: toIsoString(row.finishedAt),
@@ -185,6 +189,7 @@ const transferColumns = {
   extension: transfers.extension,
   category: transfers.category,
   size: transfers.size,
+  originalSize: transfers.originalSizeBytes,
   status: transfers.status,
   startedAt: transfers.startedAt,
   finishedAt: transfers.finishedAt,
@@ -204,6 +209,9 @@ export interface SummaryDto {
   topExtensions: Array<{ extension: string; count: number; volumeBytes: number }>;
   topPhoneIps: Array<{ ip: string; count: number }>;
   refusedPairings: number;
+  /** Client-side compression savings over completed transfers; rows without
+   *  original_size_bytes are ignored. */
+  trafficSaved: { originalBytes: number; savedBytes: number };
 }
 
 export interface TimelineQueryRow {
@@ -398,6 +406,10 @@ export function createAdminQueries(db: ReaderDb) {
             volume: sum(transfers.size),
             avg: sql<number>`coalesce(avg(${transfers.size}), 0)::float8`,
             largest: sql<number>`coalesce(max(${transfers.size}), 0)::bigint`,
+            original: sum(transfers.originalSizeBytes),
+            // greatest(NULL, 0) is 0 in Postgres: rows without originalSize are
+            // ignored by the SUM without needing a WHERE filter.
+            saved: sql<number>`coalesce(sum(greatest(${transfers.originalSizeBytes} - ${transfers.size}, 0)), 0)::bigint`,
           })
           .from(transfers)
           .where(completed),
@@ -465,6 +477,10 @@ export function createAdminQueries(db: ReaderDb) {
         .filter((r): r is { ip: string; n: number } => r.ip !== null)
         .map((r) => ({ ip: r.ip, count: Number(r.n) })),
       refusedPairings: Number(refusedRows[0]?.n ?? 0),
+      trafficSaved: {
+        originalBytes: Number(completedRow?.original ?? 0),
+        savedBytes: Number(completedRow?.saved ?? 0),
+      },
     };
   }
 

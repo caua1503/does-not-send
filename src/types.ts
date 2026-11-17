@@ -26,6 +26,8 @@ export interface SessionFile {
   mimeType: string;
   size: number;
   bytesReceived: number;
+  /** Client-declared size before compression; null when unknown. */
+  originalSize?: number | null;
   state: FileState;
   createdAt: string;
   startedAt: string; // Alias para createdAt (usado em eventos)
