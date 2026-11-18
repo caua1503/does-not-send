@@ -70,10 +70,7 @@ Exemplo de IP encontrado: `192.168.1.50`.
 ### 3. Compilar o Front-end e Iniciar
 
 ```bash
-# Gerar os estáticos do front-end em web/dist
-bun run build:web
-
-# Iniciar o servidor apontando a URL pública para o QR Code
+# Compilar a interface atual e iniciar o servidor com a URL pública para o QR Code
 PUBLIC_BASE_URL=http://192.168.1.50:3000 PORT=3000 bun run start
 ```
 

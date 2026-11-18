@@ -267,6 +267,13 @@ export function useSessionUpload({
 
   // PUT replaces the file content keeping the same remote id: no new item.
   const replaceEditedImage = (item: GuestUploadItem, file: File) => {
+    setItems((prev) =>
+      prev.map((current) =>
+        current.id === item.id
+          ? { ...current, file, state: "uploading", progress: 0, error: undefined }
+          : current,
+      ),
+    );
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("originalSize", String(file.size));
@@ -294,7 +301,15 @@ export function useSessionUpload({
       setItems((prev) =>
         prev.map((current) =>
           current.id === item.id
-            ? { ...current, file, originalSize: file.size, edited: true, error: undefined }
+            ? {
+                ...current,
+                file,
+                state: "completed",
+                progress: 1,
+                originalSize: file.size,
+                edited: true,
+                error: undefined,
+              }
             : current,
         ),
       );
@@ -309,13 +324,6 @@ export function useSessionUpload({
     const item = items.find((current) => current.id === id);
     if (!item) return;
     if (item.remoteId) {
-      setItems((prev) =>
-        prev.map((current) =>
-          current.id === item.id
-            ? { ...current, state: "uploading", error: undefined }
-            : current,
-        ),
-      );
       replaceEditedImage(item, item.file);
       return;
     }
