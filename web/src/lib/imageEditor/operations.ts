@@ -3,64 +3,31 @@
  * Zoom-independent because everything stays in image pixels.
  */
 
-import {
-  normalizeCropRect,
-  rectsIntersect,
-  rotateSize,
-  simplifyPoints,
-  strokeBounds,
-  transformCropRect,
-} from "./geometry.ts";
-import type { AspectRatio, CropOp, EditorState, FlipOp, ImageOp, Rect, RotationOp, StrokeOp, TextOp } from "./types.ts";
+import { normalizeCropRect, rectsIntersect, simplifyPoints, strokeBounds } from "./geometry.ts";
+import { mapPoint, structuralStep, type StructuralOp } from "./structuralTransform.ts";
+import type { AspectRatio, EditorState, ImageOp, StrokeOp, TextOp } from "./types.ts";
 
-function transformStroke(stroke: StrokeOp, rotation: RotationOp["type"], from: { width: number; height: number }): StrokeOp {
-  return {
-    ...stroke,
-    points: stroke.points.map((p) =>
-      rotation === "rotate"
-        ? { x: from.height - p.y, y: p.x }
-        : { x: p.y, y: from.width - p.x },
-    ),
-  };
-}
-
-function transformFlip(op: ImageOp, flip: FlipOp["type"], size: { width: number; height: number }): ImageOp {
-  switch (op.type) {
-    case "stroke":
-      return {
-        ...op,
-        points: op.points.map((p) =>
-          flip === "flip-horizontal" ? { x: size.width - p.x, y: p.y } : { x: p.x, y: size.height - p.y },
-        ),
-      };
-    case "text":
-      return flip === "flip-horizontal"
-        ? { ...op, x: size.width - op.x }
-        : { ...op, y: size.height - op.y };
-    case "crop":
-      return { ...op, rect: transformCropRect(op.rect, flip, size) };
-    default:
-      return op;
-  }
-}
-
-/** Crop clips content already drawn onto the cropped coordinate space. */
-function transformOpForCrop(op: ImageOp, rect: Rect): ImageOp {
-  switch (op.type) {
-    case "crop": {
-      const r = op.rect;
-      return { ...op, rect: { x: r.x - rect.x, y: r.y - rect.y, width: r.width, height: r.height } };
+function applyStructural(state: EditorState, op: StructuralOp): EditorState {
+  const { matrix, size } = structuralStep(op, state);
+  const annotations = state.ops.map((existing): ImageOp => {
+    if (existing.type === "stroke") {
+      const moved = { ...existing, points: existing.points.map((point) => mapPoint(matrix, point)) };
+      if (op.type === "crop" && !rectsIntersect(strokeBounds(moved), { x: 0, y: 0, ...size })) {
+        return { ...moved, points: [] };
+      }
+      return moved;
     }
-    case "stroke": {
-      const moved: StrokeOp = { ...op, points: op.points.map((p) => ({ x: p.x - rect.x, y: p.y - rect.y })) };
-      const visible = rectsIntersect(strokeBounds(moved), { x: 0, y: 0, width: rect.width, height: rect.height });
-      return visible ? moved : { ...moved, points: [] };
+    if (existing.type === "text") {
+      const rotation = existing.rotation;
+      const nextRotation =
+        op.type === "rotate" ? rotation + 90 :
+        op.type === "rotate-ccw" ? rotation - 90 :
+        op.type === "crop" ? rotation : -rotation;
+      return { ...existing, ...mapPoint(matrix, existing), rotation: ((nextRotation + 360) % 360) as TextOp["rotation"] };
     }
-    case "text":
-      return { ...op, x: op.x - rect.x, y: op.y - rect.y };
-    default:
-      return op;
-  }
+    return existing;
+  });
+  return { width: size.width, height: size.height, ops: [op, ...annotations] };
 }
 
 export interface ApplyOptions {
@@ -77,23 +44,14 @@ export function applyOp(state: EditorState, op: ImageOp, options: ApplyOptions =
     case "crop": {
       const rect = normalizeCropRect(op.rect, state, options.aspect ?? "free");
       if (!rect) throw new Error("crop rect is empty");
-      const crop: CropOp = { type: "crop", rect };
-      const ops: ImageOp[] = [crop, ...state.ops.map((o) => transformOpForCrop(o, rect))];
-      return { width: rect.width, height: rect.height, ops };
+      return applyStructural(state, { type: "crop", rect });
     }
 
     case "rotate":
-    case "rotate-ccw": {
-      const next = rotateSize(state, op.type === "rotate" ? 1 : -1);
-      const ops = state.ops.map((o) => (o.type === "stroke" ? transformStroke(o, op.type, state) : o));
-      return { width: next.width, height: next.height, ops };
-    }
-
+    case "rotate-ccw":
     case "flip-horizontal":
-    case "flip-vertical": {
-      const ops = state.ops.map((o) => transformFlip(o, op.type, state));
-      return { width: state.width, height: state.height, ops };
-    }
+    case "flip-vertical":
+      return applyStructural(state, op);
 
     case "stroke": {
       const points = simplifyPoints(op.points);

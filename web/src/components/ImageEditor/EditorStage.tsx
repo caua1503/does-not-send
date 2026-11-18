@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Crop as CropIcon, Eraser, Minus, Plus, Type } from "lucide-react";
 import {
   CROP_ASPECTS,
+  TEXT_FONT_FAMILY,
   centeredCropRect,
   containFit,
   normalizeCropRect,
@@ -358,7 +359,16 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
     const text = draft.text.trim();
     setDraft(null);
     if (!text) return;
-    editor.apply({ type: "text", text, x: draft.start.x, y: draft.start.y + draft.size, color: draft.color, size: draft.size });
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.font = `${draft.size}px ${TEXT_FONT_FAMILY}`;
+    const width = ctx.measureText(text).width;
+    ctx.restore();
+    editor.apply({
+      type: "text", text, x: draft.start.x + width / 2, y: draft.start.y + draft.size / 2,
+      color: draft.color, size: draft.size, width, rotation: 0,
+    });
     onCommit();
   };
 

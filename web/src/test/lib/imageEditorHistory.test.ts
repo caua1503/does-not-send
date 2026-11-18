@@ -12,7 +12,7 @@ import {
 } from "../../lib/imageEditor/history.ts";
 import { applyOp } from "../../lib/imageEditor/operations.ts";
 
-const text = (t: string) => ({ type: "text" as const, text: t, x: 1, y: 1, color: "#000", size: 12 });
+const text = (t: string) => ({ type: "text" as const, text: t, x: 1, y: 1, color: "#000", size: 12, width: 8, rotation: 0 as const });
 
 function historyWith(...labels: string[]) {
   let h = createHistory(100, 80);

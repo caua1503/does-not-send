@@ -1,7 +1,7 @@
 /**
  * Image editor domain types. Pure: no DOM, no React.
- * All coordinates are in the CURRENT image space (post-crop/rotate/flip),
- * never in screen/canvas space. Integer pixels.
+ * Crop coordinates are in the input space of that operation. Annotation
+ * coordinates are in the current image space, in image pixels.
  */
 
 export interface Point {
@@ -57,19 +57,21 @@ export interface StrokeOp {
 export interface TextOp {
   type: "text";
   text: string;
-  /** Baseline origin in image pixels (left, text baseline). */
+  /** Center of the text box in image pixels. */
   x: number;
   y: number;
   color: string;
   /** Font size in image pixels. */
   size: number;
+  width: number;
+  rotation: 0 | 90 | 180 | 270;
 }
 
 export type ImageOp = CropOp | RotationOp | FlipOp | StrokeOp | TextOp;
 
 /** Immutable editor state: applying an op returns a new state. */
 export interface EditorState {
-  /** Computed from ops; ops were already clipped/transformed to it. */
+  /** Computed from structural ops. Annotations are mapped to this size. */
   width: number;
   height: number;
   ops: ImageOp[];

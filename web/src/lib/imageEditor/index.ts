@@ -5,3 +5,4 @@ export * from "./history.ts";
 export * from "./render.ts";
 export * from "./controller.ts";
 export * from "./decode.ts";
+export { structuralTransform } from "./structuralTransform.ts";

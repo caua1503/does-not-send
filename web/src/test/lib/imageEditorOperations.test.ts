@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { structuralTransform } from "../../lib/imageEditor/structuralTransform.ts";
 import { applyOp } from "../../lib/imageEditor/operations.ts";
 import {
   centeredCropRect,
@@ -43,7 +44,7 @@ describe("imageEditor geometry", () => {
 
   it("crop transformado por giro/espelho continua na mesma região", () => {
     const r = { x: 10, y: 5, width: 20, height: 10 };
-    expect(transformCropRect(r, "rotate", base)).toEqual({ x: 60 - 5, y: 10, width: 10, height: 20 });
+    expect(transformCropRect(r, "rotate", base)).toEqual({ x: 60 - 15, y: 10, width: 10, height: 20 });
     expect(transformCropRect(r, "flip-horizontal", base)).toEqual({ x: 100 - 30, y: 5, width: 20, height: 10 });
     expect(transformCropRect(r, "flip-vertical", base)).toEqual({ x: 10, y: 60 - 15, width: 20, height: 10 });
   });
@@ -74,7 +75,8 @@ describe("imageEditor operations", () => {
     const rotated = applyOp(drawn, { type: "rotate" });
     expect(rotated.width).toBe(60);
     expect(rotated.height).toBe(100);
-    const s = rotated.ops[0]!;
+    expect(rotated.ops[0]).toEqual({ type: "rotate" });
+    const s = rotated.ops[1]!;
     expect(s.type).toBe("stroke");
     if (s.type === "stroke") expect(s.points).toEqual([{ x: 60, y: 10 }, { x: 0, y: 10 }]);
   });
@@ -87,12 +89,18 @@ describe("imageEditor operations", () => {
       y: 20,
       color: "#000",
       size: 10,
+      width: 12,
+      rotation: 0,
     });
     const flipped = applyOp(state, { type: "flip-horizontal" });
-    const s = flipped.ops[0]!;
-    const t = flipped.ops[1]!;
-    if (s.type === "stroke") expect(s.points[0]).toEqual({ x: 90, y: 20 });
-    if (t.type === "text") expect(t.x).toBe(90);
+    expect(flipped.ops[0]).toEqual({ type: "flip-horizontal" });
+    expect(flipped.ops[1]).toMatchObject({ type: "stroke", points: [{ x: 90, y: 20 }] });
+    expect(flipped.ops[2]).toMatchObject({ type: "text", x: 90, y: 20, rotation: 0 });
+    const rotated = applyOp(state, { type: "rotate" });
+    expect(rotated.ops[2]).toMatchObject({ type: "text", x: 40, y: 10, rotation: 90 });
+    expect(applyOp(rotated, { type: "flip-vertical" }).ops[3]).toMatchObject({
+      type: "text", x: 40, y: 90, rotation: 270,
+    });
     expect(flipped.width).toBe(state.width);
   });
 
@@ -106,7 +114,7 @@ describe("imageEditor operations", () => {
   it("rejeita crop vazio, traço vazio e texto em branco", () => {
     expect(() => applyOp(base, { type: "crop", rect: { x: 0, y: 0, width: 0, height: 10 } })).toThrow();
     expect(() => applyOp(base, stroke([]))).toThrow();
-    expect(() => applyOp(base, { type: "text", text: "   ", x: 0, y: 0, color: "#000", size: 10 })).toThrow();
+    expect(() => applyOp(base, { type: "text", text: "   ", x: 0, y: 0, color: "#000", size: 10, width: 0, rotation: 0 })).toThrow();
   });
 
   it("não muta o estado de entrada", () => {
@@ -114,6 +122,36 @@ describe("imageEditor operations", () => {
     applyOp(base, { type: "rotate" });
     applyOp(base, stroke([[1, 1], [2, 2]]));
     expect(JSON.stringify(base)).toBe(snapshot);
+  });
+});
+
+describe("structuralTransform", () => {
+  const rotate = { type: "rotate" } as const;
+  const crop = { type: "crop", rect: { x: 10, y: 5, width: 30, height: 20 } } as const;
+  const innerSize = { width: 100, height: 60 };
+
+  it.each([
+    ["rotate", [rotate], [0, 1, -1, 0, 60, 0], { width: 60, height: 100 }],
+    ["rotate CCW", [{ type: "rotate-ccw" }], [0, -1, 1, 0, 0, 100], { width: 60, height: 100 }],
+    ["flip horizontal", [{ type: "flip-horizontal" }], [-1, 0, 0, 1, 100, 0], innerSize],
+    ["flip vertical", [{ type: "flip-vertical" }], [1, 0, 0, -1, 0, 60], innerSize],
+    ["crop → rotate", [rotate, crop], [0, 1, -1, 0, 25, -10], { width: 20, height: 30 }],
+    ["rotate → crop", [crop, rotate], [0, 1, -1, 0, 50, -5], { width: 30, height: 20 }],
+    ["4 × rotate", [rotate, rotate, rotate, rotate], [1, 0, 0, 1, 0, 0], innerSize],
+  ] as const)("%s", (_label, ops, matrix, size) => {
+    const result = structuralTransform(ops, innerSize);
+    expect(result.size).toEqual(size);
+    expect(result.matrix.map((value) => value + 0)).toEqual(matrix);
+  });
+
+  it("crop → crop soma deslocamentos sem reescrever o primeiro corte", () => {
+    const second = { type: "crop", rect: { x: 3, y: 4, width: 15, height: 10 } } as const;
+    const state = applyOp(applyOp(base, crop), second);
+    expect(state.ops).toEqual([second, crop]);
+    expect(structuralTransform(state.ops, innerSize)).toEqual({
+      matrix: [1, 0, 0, 1, -13, -9],
+      size: { width: 15, height: 10 },
+    });
   });
 });
 

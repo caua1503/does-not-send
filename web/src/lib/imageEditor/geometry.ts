@@ -3,6 +3,7 @@
  * pointer→image-space mapping. No canvas, no DOM.
  */
 
+import { mapPoint, structuralStep, type StructuralOp } from "./structuralTransform.ts";
 import type { AspectRatio, Point, Rect, Size, StrokeOp } from "./types.ts";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
@@ -59,36 +60,17 @@ export function centeredCropRect(image: Size, aspect: AspectRatio): Rect {
   return { x: Math.round((image.width - w) / 2), y: Math.round((image.height - h) / 2), width: w, height: h };
 }
 
-function mapPoint(p: Point, op: "rotate" | "rotate-ccw" | "flip-horizontal" | "flip-vertical", from: Size): Point {
-  switch (op) {
-    case "rotate": // 90° CW: (x, y) → (from.height - y, x)
-      return { x: from.height - p.y, y: p.x };
-    case "rotate-ccw": // 90° CCW: (x, y) → (y, from.width - x)
-      return { x: p.y, y: from.width - p.x };
-    case "flip-horizontal":
-      return { x: from.width - p.x, y: p.y };
-    case "flip-vertical":
-      return { x: p.x, y: from.height - p.y };
-  }
-}
-
-/**
- * Re-express a crop rect in the coordinate space of the image after a
- * rotate/flip. The rect stays the same picture region.
- */
-export function transformCropRect(
-  rect: Rect,
-  op: "rotate" | "rotate-ccw" | "flip-horizontal" | "flip-vertical",
-  from: Size,
-): Rect {
-  const p = mapPoint({ x: rect.x, y: rect.y }, op, from);
-  const horizontal = op === "rotate" || op === "rotate-ccw";
-  const width = horizontal ? rect.height : rect.width;
-  const height = horizontal ? rect.width : rect.height;
-  // mapPoint gives one corner; for flips it is the opposite corner.
-  const x = op === "flip-horizontal" ? p.x - width : p.x;
-  const y = op === "flip-vertical" ? p.y - height : p.y;
-  return { x, y, width, height };
+/** Re-express the same picture region after a rotate or flip. */
+export function transformCropRect(rect: Rect, op: Exclude<StructuralOp["type"], "crop">, from: Size): Rect {
+  const { matrix } = structuralStep({ type: op }, from);
+  const first = mapPoint(matrix, rect);
+  const last = mapPoint(matrix, { x: rect.x + rect.width, y: rect.y + rect.height });
+  return {
+    x: Math.min(first.x, last.x),
+    y: Math.min(first.y, last.y),
+    width: Math.abs(first.x - last.x),
+    height: Math.abs(first.y - last.y),
+  };
 }
 
 /**
