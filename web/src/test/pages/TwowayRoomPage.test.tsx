@@ -136,6 +136,22 @@ describe("TwowayRoomPage", () => {
     expect(screen.queryByRole("button", { name: /gerar código/i })).not.toBeInTheDocument();
   });
 
+  it("anfitrião vê o botão de gerar link de convite", () => {
+    render(<TwowayRoomPage {...props} role="host" />);
+
+    expect(
+      screen.getByRole("button", { name: /gerar link de convite/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("convidado não vê o botão de gerar link de convite", () => {
+    render(<TwowayRoomPage {...props} role="guest" />);
+
+    expect(
+      screen.queryByRole("button", { name: /gerar link de convite/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("convidado confirma a saída antes de deixar a sala", async () => {
     render(<TwowayRoomPage {...props} role="guest" />);
 

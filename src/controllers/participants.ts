@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../app.js";
 import type { DeviceKind } from "../types.js";
+import type { Invite } from "../session/invites.js";
 import { verifyQrToken } from "../session/pairing.js";
 import { sessionMode } from "../session/permissions.js";
 
@@ -51,10 +52,30 @@ export async function participantRoutes(
       }
 
       let authorized = false;
+      let invite: Invite | null = null;
       if (typeof body.qrToken === "string" && body.qrToken.length > 0) {
         authorized = verifyQrToken(session, body.qrToken);
       } else if (typeof body.code === "string" && body.code.length > 0) {
         authorized = ctx.sessionStore.loginCodes.matches(session.id, body.code);
+        if (!authorized) {
+          const candidate = ctx.sessionStore.invites.get(body.code);
+          if (candidate && candidate.sessionId === session.id) {
+            const inviteRetryAfterMs = ctx.sessionStore.invites.attemptRetryAfterMs(
+              candidate.code,
+            );
+            if (inviteRetryAfterMs > 0) {
+              return reply
+                .status(429)
+                .header("Retry-After", String(Math.ceil(inviteRetryAfterMs / 1000)))
+                .send({ error: "Too many attempts", statusCode: 429 });
+            }
+            ctx.sessionStore.invites.recordAttempt(candidate.code);
+            if (ctx.sessionStore.invites.state(candidate) === "valid") {
+              authorized = true;
+              invite = candidate;
+            }
+          }
+        }
       }
 
       if (!authorized) {
@@ -95,6 +116,16 @@ export async function participantRoutes(
       }
 
       ctx.sessionStore.loginGuard.recordSessionSuccess(session.id);
+
+      if (invite) {
+        ctx.sessionStore.invites.consume(invite, null);
+        ctx.sessionStore.notifyHost(session.id, {
+          type: "invite:used",
+          code: invite.code,
+          mode: invite.mode,
+          state: ctx.sessionStore.invites.state(invite),
+        });
+      }
 
       return reply.status(201).send({
         sessionId: session.id,

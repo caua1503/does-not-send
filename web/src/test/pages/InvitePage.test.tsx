@@ -105,6 +105,21 @@ describe("InvitePage", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/invites/abc12345");
   });
 
+  it("convite de twoway vai para a escolha de nome sem resgatar", async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, { state: "valid", sessionId: "sess-2", mode: "twoway" }),
+    );
+
+    render(<InvitePage />);
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/entrar/sess-2?mode=twoway&code=abc12345",
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["expired", /convite expirou/i],
     ["used", /convite já foi usado/i],

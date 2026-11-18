@@ -1,47 +1,22 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect } from "react";
 import { QRCodeSVG, QRCodeCanvas } from "qrcode.react";
-import { X, Files, Maximize2, Check, Link2, Share2, Trash2 } from "lucide-react";
+import { X, Files, Maximize2, Check } from "lucide-react";
 import { Card } from "../../components/ui/Card.tsx";
 import { Badge } from "../../components/ui/Badge.tsx";
 import { StatusDot } from "../../components/ui/StatusDot.tsx";
-import { Button } from "../../components/ui/Button.tsx";
+import { InviteLinksPanel } from "../../components/InviteLinksPanel.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
 import { ManualLoginCode } from "../../components/ManualLoginCode.tsx";
 import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import {
-  createInvite,
   getSession,
-  listInvites,
   requestLoginCode,
-  revokeInvite,
-  type InviteMode,
-  type InviteSummary,
   type SessionInfo,
 } from "../../lib/api.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { FileList } from "./FileList.tsx";
 import { createPortal } from "react-dom";
-
-const INVITE_MODE_LABEL: Record<InviteMode, string> = {
-  single: "Acesso único",
-  multi: "Vários acessos",
-};
-
-const INVITE_MODE_SHORT: Record<InviteMode, string> = {
-  single: "Único",
-  multi: "Vários",
-};
-
-const INVITE_STATE: Record<
-  InviteSummary["state"],
-  { label: string; variant: "neutral" | "success" | "warn" | "error" }
-> = {
-  valid: { label: "Ativo", variant: "success" },
-  used: { label: "Usado", variant: "warn" },
-  expired: { label: "Expirado", variant: "neutral" },
-  revoked: { label: "Revogado", variant: "neutral" },
-};
 
 interface ActiveSession {
   id: string;
@@ -75,30 +50,7 @@ export function SessionCard({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteMode, setInviteMode] = useState<InviteMode>("multi");
-  const [invites, setInvites] = useState<InviteSummary[]>([]);
-  const [invitesLoading, setInvitesLoading] = useState(false);
-  const [inviteBusy, setInviteBusy] = useState(false);
-  const [revokingCode, setRevokingCode] = useState<string | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [generatedInvite, setGeneratedInvite] = useState<{
-    code: string;
-    url: string;
-  } | null>(null);
-  const [inviteCopied, setInviteCopied] = useState(false);
-
-  const refreshInvites = useCallback(async () => {
-    setInvitesLoading(true);
-    try {
-      setInvites(await listInvites(session.id, session.ownerToken));
-      setInviteError(null);
-    } catch {
-      setInviteError("Falha ao carregar convites");
-    } finally {
-      setInvitesLoading(false);
-    }
-  }, [session.id, session.ownerToken]);
+  const [inviteRefresh, setInviteRefresh] = useState(0);
 
   const { files, connected } = useSessionEvents(
     session.id,
@@ -109,8 +61,8 @@ export function SessionCard({
         if (reason === "session_expired") onExpired?.();
       },
       onEvent: (event) => {
-        if (event.type === "invite:used" && inviteOpen) {
-          void refreshInvites();
+        if (event.type === "invite:used") {
+          setInviteRefresh((current) => current + 1);
         }
       },
     },
@@ -146,64 +98,6 @@ export function SessionCard({
   }
 
   useEffect(() => {
-    if (inviteOpen) void refreshInvites();
-  }, [inviteOpen, refreshInvites]);
-
-  async function generateInvite() {
-    setInviteBusy(true);
-    setInviteError(null);
-    try {
-      const created = await createInvite(session.id, session.ownerToken, inviteMode);
-      setGeneratedInvite(created);
-      setInviteCopied(false);
-      setInvites((prev) => [
-        { code: created.code, mode: inviteMode, state: "valid" },
-        ...prev.filter((invite) => invite.code !== created.code),
-      ]);
-    } catch {
-      setInviteError("Falha ao gerar link");
-    } finally {
-      setInviteBusy(false);
-    }
-  }
-
-  function copyInviteUrl() {
-    if (!generatedInvite) return;
-    void copyText(generatedInvite.url).then((ok) => {
-      if (!ok) return;
-      setInviteCopied(true);
-      window.setTimeout(() => setInviteCopied(false), 1500);
-    });
-  }
-
-  async function shareInviteUrl() {
-    if (!generatedInvite || typeof navigator.share !== "function") return;
-    try {
-      await navigator.share({
-        title: "Link de convite",
-        text: "Entre na sessão pelo link:",
-        url: generatedInvite.url,
-      });
-    } catch {
-      // User cancelled the share sheet.
-    }
-  }
-
-  async function revokeInviteCode(code: string) {
-    setRevokingCode(code);
-    setInviteError(null);
-    try {
-      await revokeInvite(session.id, code, session.ownerToken);
-      setInvites((prev) => prev.filter((invite) => invite.code !== code));
-      setGeneratedInvite((prev) => (prev?.code === code ? null : prev));
-    } catch {
-      setInviteError("Falha ao revogar convite");
-    } finally {
-      setRevokingCode(null);
-    }
-  }
-
-  useEffect(() => {
     let active = true;
     async function check() {
       try {
@@ -226,7 +120,6 @@ export function SessionCard({
   const uploadUrl = qrToken
     ? `${publicBaseUrl}/entrar/${session.id}?qrToken=${encodeURIComponent(qrToken)}`
     : `${publicBaseUrl}/entrar/${session.id}`;
-  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
   // Fecha com Esc
   useEffect(() => {
@@ -360,152 +253,16 @@ export function SessionCard({
             <p className="mt-2 text-xs text-[var(--color-text-muted)] break-all leading-relaxed">
               Escaneie o QR Code no outro dispositivo
             </p>
-
-            <button
-              type="button"
-              aria-expanded={inviteOpen}
-              onClick={(event) => {
-                event.stopPropagation();
-                setInviteOpen((open) => !open);
-              }}
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-accent)] hover:underline"
-            >
-              <Link2 size={13} strokeWidth={1.75} />
-              Gerar link de convite
-            </button>
           </div>
         </div>
 
-        {inviteOpen && (
-          <div
-            className="border-t border-[var(--color-border)] px-4 py-3 space-y-2"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-xs font-semibold">Links de convite</h3>
-              {invitesLoading && (
-                <span className="text-[10px] text-[var(--color-text-muted)]">Atualizando…</span>
-              )}
-            </div>
-
-            <div
-              role="group"
-              aria-label="Modo do convite"
-              className="flex gap-0.5 rounded-[var(--radius-btn)] border border-[var(--color-border)] p-0.5"
-            >
-              {(["single", "multi"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={inviteMode === mode}
-                  onClick={() => setInviteMode(mode)}
-                  className={[
-                    "flex-1 rounded-[var(--radius-btn)] px-2 py-1.5 text-[11px] font-medium transition-colors",
-                    inviteMode === mode
-                      ? "bg-[var(--color-accent)] text-white"
-                      : "text-[var(--color-text-muted)] hover:bg-[var(--color-accent-light)]",
-                  ].join(" ")}
-                >
-                  {INVITE_MODE_LABEL[mode]}
-                </button>
-              ))}
-            </div>
-
-            <Button
-              size="sm"
-              className="w-full"
-              onClick={() => void generateInvite()}
-              disabled={inviteBusy}
-            >
-              <Link2 size={13} strokeWidth={1.75} />
-              {inviteBusy ? "Gerando…" : "Gerar link"}
-            </Button>
-
-            {generatedInvite && (
-              <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
-                <input
-                  data-testid="invite-url"
-                  aria-label="URL do convite"
-                  readOnly
-                  value={generatedInvite.url}
-                  onFocus={(event) => event.currentTarget.select()}
-                  className="w-full bg-transparent font-mono text-[11px] text-[var(--color-text)]"
-                />
-                <div className="mt-1.5 flex gap-1.5">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1"
-                    onClick={copyInviteUrl}
-                  >
-                    {inviteCopied ? (
-                      <Check size={13} strokeWidth={2.5} />
-                    ) : (
-                      <Link2 size={13} strokeWidth={1.75} />
-                    )}
-                    {inviteCopied ? "Copiado" : "Copiar"}
-                  </Button>
-                  {canShare && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => void shareInviteUrl()}
-                    >
-                      <Share2 size={13} strokeWidth={1.75} />
-                      Compartilhar
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {inviteError && (
-              <p className="text-[11px] text-[var(--color-error)]">{inviteError}</p>
-            )}
-
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                Convites da sessão
-              </p>
-              {invites.length === 0 ? (
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                  {invitesLoading ? "Carregando…" : "Nenhum link ativo"}
-                </p>
-              ) : (
-                <ul className="mt-1 divide-y divide-[var(--color-border)]">
-                  {invites.map((invite) => {
-                    const state = INVITE_STATE[invite.state];
-                    return (
-                      <li
-                        key={invite.code}
-                        className="flex items-center justify-between gap-2 py-1.5"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-mono text-[11px]">/i/{invite.code}</p>
-                          <div className="mt-0.5 flex flex-wrap gap-1">
-                            <Badge label={INVITE_MODE_SHORT[invite.mode]} variant="neutral" />
-                            <Badge label={state.label} variant={state.variant} />
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          aria-label={`Revogar convite ${invite.code}`}
-                          title="Revogar convite"
-                          onClick={() => void revokeInviteCode(invite.code)}
-                          disabled={revokingCode === invite.code}
-                          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-red-50 hover:text-[var(--color-error)] disabled:opacity-40 dark:hover:bg-red-950/30"
-                        >
-                          <Trash2 size={13} strokeWidth={1.75} />
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
+        <div className="px-4 pb-4">
+          <InviteLinksPanel
+            sessionId={session.id}
+            token={session.ownerToken}
+            refreshSignal={inviteRefresh}
+          />
+        </div>
 
         {/* File list inline (for selected session) */}
         {selected && files.length > 0 && (

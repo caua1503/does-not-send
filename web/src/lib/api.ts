@@ -48,6 +48,7 @@ export type InviteMode = "single" | "multi";
 export interface InvitePreview {
   state: InviteState;
   sessionId: string;
+  mode: SessionMode;
 }
 
 export interface InviteSummary {
