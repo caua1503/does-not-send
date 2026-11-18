@@ -3,6 +3,7 @@ import {
   Crop,
   Eraser,
   FlipHorizontal2,
+  FlipVertical2,
   Pencil,
   Redo2,
   RotateCcw,
@@ -13,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/Button.tsx";
 import { canRedo, canUndo, createImageEditor, decodeImage } from "../../lib/imageEditor/index.ts";
-import type { ImageEditorController } from "../../lib/imageEditor/index.ts";
+import type { History, ImageEditorController } from "../../lib/imageEditor/index.ts";
 import { EditorStage, type EditorTool } from "./EditorStage.tsx";
 
 interface ImageEditorProps {
@@ -40,11 +41,13 @@ const actionButton =
 
 export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
+  const [decodeAttempt, setDecodeAttempt] = useState(0);
   const [tool, setTool] = useState<EditorTool>("crop");
   const [version, setVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const editorRef = useRef<ImageEditorController | null>(null);
+  const suspended = useRef<{ file: File; history: History } | null>(null);
   const layerRef = useRef<HTMLDivElement>(null);
 
   const editor = load.phase === "ready" ? load.editor : null;
@@ -59,7 +62,9 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
           decoded.source.close?.();
           return;
         }
-        opened = createImageEditor(file, decoded);
+        const history = suspended.current?.file === file ? suspended.current.history : undefined;
+        opened = createImageEditor(file, decoded, history);
+        suspended.current = null;
         setLoad({ phase: "ready", editor: opened });
       })
       .catch((err: unknown) => {
@@ -70,27 +75,22 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
       cancelled = true;
       opened?.close();
     };
-  }, [file]);
+  }, [file, decodeAttempt]);
 
   // Never leave the decoded bitmap behind (phone memory).
   useEffect(() => {
-    const release = () => {
-      if (editorRef.current && !editorRef.current.closed) editorRef.current.close();
-    };
     // The session may survive pagehide (iOS app switch): free only the bitmap.
     const releaseBitmap = () => {
       const current = editorRef.current;
       if (!current || current.closed) return;
+      suspended.current = { file, history: current.getHistory() };
       current.dispose();
       setLoad({ phase: "error", message: "Imagem liberada. Abra novamente para continuar editando." });
     };
     const onPageHide = () => releaseBitmap();
     window.addEventListener("pagehide", onPageHide);
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      release();
-    };
-  }, []);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [file]);
 
   useEffect(() => {
     if (load.phase === "ready") layerRef.current?.focus({ preventScroll: true });
@@ -196,7 +196,10 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
               variant="ghost"
               size="sm"
               className="text-white"
-              onClick={() => setLoad({ phase: "loading" })}
+              onClick={() => {
+                setLoad({ phase: "loading" });
+                setDecodeAttempt((attempt) => attempt + 1);
+              }}
             >
               Reabrir
             </Button>
@@ -210,7 +213,6 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
             editor={editor}
             version={version}
             tool={tool}
-            onToolChange={setTool}
             onCommit={change}
           />
         )}
@@ -235,6 +237,10 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
             <button type="button" className={actionButton} aria-label="Espelhar horizontalmente"
               onClick={() => { editor.apply({ type: "flip-horizontal" }); change(); }}>
               <FlipHorizontal2 size={20} aria-hidden="true" />
+            </button>
+            <button type="button" className={actionButton} aria-label="Espelhar verticalmente"
+              onClick={() => { editor.apply({ type: "flip-vertical" }); change(); }}>
+              <FlipVertical2 size={20} aria-hidden="true" />
             </button>
           </div>
         )}

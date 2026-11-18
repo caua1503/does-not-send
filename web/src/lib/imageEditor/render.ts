@@ -6,6 +6,8 @@
 
 import type { EditorState, ExportOptions, ImageOp, Size, StrokeOp, TextOp } from "./types.ts";
 
+import { structuralTransform } from "./structuralTransform.ts";
+
 type Ctx2D = CanvasRenderingContext2D;
 
 /** Font family used for text ops; must match what the UI previews. */
@@ -43,13 +45,10 @@ function drawText(ctx: Ctx2D, text: TextOp): void {
   ctx.fillStyle = text.color;
   ctx.font = `${text.size}px ${TEXT_FONT_FAMILY}`;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(text.text, text.x, text.y);
+  ctx.translate(text.x, text.y);
+  ctx.rotate(text.rotation * Math.PI / 180);
+  ctx.fillText(text.text, -text.width / 2, text.size / 2);
   ctx.restore();
-}
-
-/** Replay drawn ops over existing pixels (no clear). */
-function drawOps(ctx: Ctx2D, state: EditorState): void {
-  for (const op of state.ops) drawOp(ctx, op);
 }
 
 export function drawOp(ctx: Ctx2D, op: ImageOp): void {
@@ -65,7 +64,7 @@ export function drawOp(ctx: Ctx2D, op: ImageOp): void {
     case "rotate-ccw":
     case "flip-horizontal":
     case "flip-vertical":
-      // Already baked into coordinates by operations.ts; nothing to draw.
+      // Structural edits apply to the source image.
       return;
   }
 }
@@ -88,46 +87,30 @@ export interface RasterizeOptions {
   source?: Size;
 }
 
-/**
- * Rasterize the source + ops at the state's resolution. Structural ops
- * (crop/rotate/flip) are baked into the source transform, so the decoded
- * source may be any size; drawn ops are then replayed at scale 1.
- * The crop transform only composes with rotations because crops always land
- * at the head of the op list (see applyOp).
- */
+/** Rasterize the photo, then composite strokes and text in current image space. */
 export function rasterize(source: CanvasImageSource, state: EditorState, options: RasterizeOptions = {}): HTMLCanvasElement {
   const canvas = createCanvas(state.width, state.height);
   const ctx = getContext2D(canvas);
   const sourceSize = options.source ?? state;
+  const { matrix } = structuralTransform(state.ops, sourceSize);
   ctx.save();
-  for (const op of state.ops) {
-    switch (op.type) {
-      case "crop":
-        ctx.translate(-op.rect.x, -op.rect.y);
-        break;
-      case "rotate":
-        ctx.translate(sourceSize.height, 0);
-        ctx.rotate(Math.PI / 2);
-        break;
-      case "rotate-ccw":
-        ctx.translate(0, sourceSize.width);
-        ctx.rotate(-Math.PI / 2);
-        break;
-      case "flip-horizontal":
-        ctx.translate(sourceSize.width, 0);
-        ctx.scale(-1, 1);
-        break;
-      case "flip-vertical":
-        ctx.translate(0, sourceSize.height);
-        ctx.scale(1, -1);
-        break;
-      default:
-        break;
-    }
-  }
+  ctx.setTransform(...matrix);
   ctx.drawImage(source, 0, 0, sourceSize.width, sourceSize.height);
   ctx.restore();
-  drawOps(ctx, state);
+
+  if (state.ops.some((op) => op.type === "stroke")) {
+    const layer = createCanvas(state.width, state.height);
+    const layerCtx = getContext2D(layer);
+    for (const op of state.ops) {
+      if (op.type === "stroke") drawStroke(layerCtx, op);
+    }
+    ctx.drawImage(layer, 0, 0);
+    layer.width = 0;
+    layer.height = 0;
+  }
+  for (const op of state.ops) {
+    if (op.type === "text") drawText(ctx, op);
+  }
   return canvas;
 }
 

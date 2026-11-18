@@ -2,22 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Crop as CropIcon, Eraser, Minus, Plus, Type } from "lucide-react";
 import {
   CROP_ASPECTS,
-  centeredCropRect,
+  TEXT_FONT_FAMILY,
   containFit,
   normalizeCropRect,
   rasterize,
-  transformCropRect,
 } from "../../lib/imageEditor/index.ts";
 import type {
   AspectRatio,
   ImageEditorController,
-  ImageOp,
   Point,
   Rect,
   Size,
 } from "../../lib/imageEditor/index.ts";
 
-type TransformOp = Extract<ImageOp, { type: "rotate" | "rotate-ccw" | "flip-horizontal" | "flip-vertical" }>["type"];
 
 export type EditorTool = "crop" | "rotate" | "draw" | "text";
 
@@ -27,22 +24,20 @@ const TEXT_SIZE_RATIO = 0.06;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
 const ZOOM_STEP = 1.25;
-const STRUCTURAL: ReadonlySet<string> = new Set(["crop", "rotate", "rotate-ccw", "flip-horizontal", "flip-vertical"]);
 
 interface EditorStageProps {
   editor: ImageEditorController;
   version: number;
   tool: EditorTool;
-  onToolChange: (tool: EditorTool) => void;
   onCommit: () => void;
 }
 
-type Corner = "nw" | "ne" | "sw" | "se";
+type Handle = "nw" | "n" | "ne" | "w" | "e" | "sw" | "s" | "se";
 
 type Drag =
   | { kind: "pan"; x: number; y: number; left: number; top: number }
   | { kind: "crop-move"; start: Point; rect: Rect }
-  | { kind: "crop-resize"; corner: Corner; start: Point; rect: Rect }
+  | { kind: "crop-resize"; handle: Handle; start: Point; rect: Rect }
   | { kind: "stroke"; pts: Point[] };
 
 interface Draft {
@@ -52,36 +47,51 @@ interface Draft {
   size: number;
 }
 
-const cornerCursor: Record<Corner, string> = {
-  nw: "nwse-resize",
-  ne: "nesw-resize",
-  sw: "nesw-resize",
-  se: "nwse-resize",
-};
+const MIN_CROP_SIZE = 16;
 
-const corners: Array<{ corner: Corner; className: string }> = [
-  { corner: "nw", className: "-top-2 -left-2 cursor-nwse-resize" },
-  { corner: "ne", className: "-top-2 -right-2 cursor-nesw-resize" },
-  { corner: "sw", className: "-bottom-2 -left-2 cursor-nesw-resize" },
-  { corner: "se", className: "-bottom-2 -right-2 cursor-nwse-resize" },
-];
+const handles = [
+  { id: "nw", cell: "1 / 1", label: "canto superior esquerdo", cursor: "nwse-resize", mark: "self-start justify-self-start border-t-[3px] border-l-[3px]" },
+  { id: "n", cell: "1 / 2", label: "superior", cursor: "ns-resize", mark: "self-start justify-self-center border-t-[3px]" },
+  { id: "ne", cell: "1 / 3", label: "canto superior direito", cursor: "nesw-resize", mark: "self-start justify-self-end border-t-[3px] border-r-[3px]" },
+  { id: "w", cell: "2 / 1", label: "esquerda", cursor: "ew-resize", mark: "self-center justify-self-start border-l-[3px]" },
+  { id: "e", cell: "2 / 3", label: "direita", cursor: "ew-resize", mark: "self-center justify-self-end border-r-[3px]" },
+  { id: "sw", cell: "3 / 1", label: "canto inferior esquerdo", cursor: "nesw-resize", mark: "self-end justify-self-start border-b-[3px] border-l-[3px]" },
+  { id: "s", cell: "3 / 2", label: "inferior", cursor: "ns-resize", mark: "self-end justify-self-center border-b-[3px]" },
+  { id: "se", cell: "3 / 3", label: "canto inferior direito", cursor: "nwse-resize", mark: "self-end justify-self-end border-b-[3px] border-r-[3px]" },
+] as const;
 
-function resizeRect(rect: Rect, corner: Corner, p: Point, aspect: AspectRatio, image: Size): Rect {
-  const left = corner === "nw" || corner === "sw";
-  const top = corner === "nw" || corner === "ne";
-  const anchorX = left ? rect.x + rect.width : rect.x;
-  const anchorY = top ? rect.y + rect.height : rect.y;
-  let width = Math.abs(p.x - anchorX);
-  let height = Math.abs(p.y - anchorY);
-  if (aspect !== "free" && aspect > 0) {
-    if (width / aspect > height) height = width / aspect;
-    else width = height * aspect;
+function resizeRect(rect: Rect, handle: Handle, delta: Point, aspect: AspectRatio, image: Size): Rect {
+  const horizontal = handle.includes("w") ? -1 : handle.includes("e") ? 1 : 0;
+  const vertical = handle.includes("n") ? -1 : handle.includes("s") ? 1 : 0;
+  const anchorX = rect.x + rect.width * (1 - horizontal) / 2;
+  const anchorY = rect.y + rect.height * (1 - vertical) / 2;
+  const maxWidth = horizontal === 0 ? 2 * Math.min(anchorX, image.width - anchorX)
+    : horizontal < 0 ? anchorX : image.width - anchorX;
+  const maxHeight = vertical === 0 ? 2 * Math.min(anchorY, image.height - anchorY)
+    : vertical < 0 ? anchorY : image.height - anchorY;
+  let width = rect.width + delta.x * horizontal;
+  let height = rect.height + delta.y * vertical;
+
+  if (aspect === "free") {
+    if (horizontal) width = Math.min(maxWidth, Math.max(Math.min(MIN_CROP_SIZE, maxWidth), width));
+    if (vertical) height = Math.min(maxHeight, Math.max(Math.min(MIN_CROP_SIZE, maxHeight), height));
+  } else {
+    // A side drives its own dimension. For corners, project the drag onto
+    // the constrained diagonal. The opposite edge or corner stays anchored.
+    const targetWidth = horizontal === 0 ? height * aspect
+      : vertical === 0 ? width : (width * aspect + height) * aspect / (aspect * aspect + 1);
+    const limit = Math.min(maxWidth, maxHeight * aspect);
+    const minimum = Math.min(limit, MIN_CROP_SIZE * Math.max(1, aspect));
+    width = Math.min(limit, Math.max(minimum, targetWidth));
+    height = width / aspect;
   }
-  // Shrink until the dragged corner fits inside the image.
-  const shrink = Math.min(1, (left ? anchorX : image.width - anchorX) / Math.max(width, 1), (top ? anchorY : image.height - anchorY) / Math.max(height, 1));
-  width *= shrink;
-  height *= shrink;
-  return { x: left ? anchorX - width : anchorX, y: top ? anchorY - height : anchorY, width, height };
+
+  return {
+    x: anchorX - width * (1 - horizontal) / 2,
+    y: anchorY - height * (1 - vertical) / 2,
+    width,
+    height,
+  };
 }
 
 function CropOverlay({ crop, scale }: { crop: Rect; scale: number }) {
@@ -89,31 +99,35 @@ function CropOverlay({ crop, scale }: { crop: Rect; scale: number }) {
     <div
       data-hit="crop-body"
       aria-label="Área de corte"
-      className="absolute border border-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"
+      className="absolute grid outline outline-1 outline-white/90 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"
       style={{
         left: crop.x * scale,
         top: crop.y * scale,
         width: crop.width * scale,
         height: crop.height * scale,
         cursor: "move",
+        gridTemplateColumns: "min(44px, 33%) 1fr min(44px, 33%)",
+        gridTemplateRows: "min(44px, 33%) 1fr min(44px, 33%)",
         backgroundImage:
           "linear-gradient(to right, transparent 33.2%, rgba(255,255,255,.4) 33.3%, transparent 33.4%, transparent 66.5%, rgba(255,255,255,.4) 66.6%, transparent 66.7%), linear-gradient(to bottom, transparent 33.2%, rgba(255,255,255,.4) 33.3%, transparent 33.4%, transparent 66.5%, rgba(255,255,255,.4) 66.6%, transparent 66.7%)",
       }}
     >
-      {corners.map(({ corner, className }) => (
+      {handles.map(({ id, cell, label, cursor, mark }) => (
         <div
-          key={corner}
-          data-hit={corner}
-          aria-label={`Alça ${corner}`}
-          className={`absolute h-8 w-8 touch-none ${className}`}
-          style={{ cursor: cornerCursor[corner] }}
-        />
+          key={id}
+          data-hit={id}
+          aria-label={`Alça ${label}`}
+          className="grid touch-none"
+          style={{ gridArea: cell, cursor }}
+        >
+          <span aria-hidden="true" className={`pointer-events-none h-4 w-4 max-h-full max-w-full border-white ${mark}`} />
+        </div>
       ))}
     </div>
   );
 }
 
-export function EditorStage({ editor, version, tool, onToolChange, onCommit }: EditorStageProps) {
+export function EditorStage({ editor, version, tool, onCommit }: EditorStageProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -156,8 +170,6 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
   const viewH = state.height * scale;
   const viewX = Math.max(0, (box.width - viewW) / 2);
   const viewY = Math.max(0, (box.height - viewH) / 2);
-  const structuralKey = state.ops.filter((op) => STRUCTURAL.has(op.type)).map((op) => op.type).join();
-
   // Source + committed ops, repainted whenever the state changes.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -179,40 +191,20 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
     baked.height = 0;
   }, [editor, state, version]);
 
-  // New crop frame on entering crop mode or changing aspect.
   useEffect(() => {
-    if (tool === "crop") setCrop(centeredCropRect(editor.getState(), aspect));
-  }, [tool, aspect, editor]);
-
-  // Structural ops (rotate/flip) re-express the kept crop region, so the frame
-  // stays over the same picture content.
-  const applied = useRef<{ ops: ImageOp[]; width: number; height: number }>({ ops: [], width: 0, height: 0 });
-  useEffect(() => {
-    const previous = applied.current;
-    applied.current = { ops: state.ops, width: state.width, height: state.height };
-    if (tool !== "crop" || previous.ops.length === 0) return;
-    const fresh = state.ops.slice(previous.ops.length).filter((op) => STRUCTURAL.has(op.type) && op.type !== "crop");
-    if (fresh.length === 0) return;
-    const from = { width: previous.width, height: previous.height };
-    setCrop((c) => {
-      if (!c) return c;
-      let next: Rect = { ...c };
-      let size = from;
-      for (const op of fresh) {
-        const type = op.type as TransformOp;
-        if (type !== "rotate" && type !== "rotate-ccw" && type !== "flip-horizontal" && type !== "flip-vertical") continue;
-        next = transformCropRect(next, type, size);
-        size = type === "rotate" || type === "rotate-ccw" ? { width: size.height, height: size.width } : size;
+    if (tool === "crop") {
+      dragRef.current = null;
+      if (aspect === "free") {
+        setCrop({ x: 0, y: 0, width: state.width, height: state.height });
+      } else {
+        const width = Math.min(state.width, state.height * aspect);
+        const height = width / aspect;
+        setCrop({ x: (state.width - width) / 2, y: (state.height - height) / 2, width, height });
       }
-      return normalizeCropRect(next, state, aspect) ?? centeredCropRect(state, aspect);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structuralKey]);
+    }
+  }, [tool, aspect, state]);
 
   const activeCrop = tool === "crop" ? crop : null;
-  useEffect(() => {
-    if (tool === "crop") applied.current = { ops: state.ops, width: state.width, height: state.height };
-  });
 
   const clientToImage = (client: Point): Point => {
     const rect = contentRef.current!.getBoundingClientRect();
@@ -242,7 +234,7 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
   const hitTarget = (e: React.PointerEvent) =>
     ((e.target as HTMLElement).closest<HTMLElement>("[data-hit]")?.dataset.hit ?? null) as
       | "crop-body"
-      | Corner
+      | Handle
       | null;
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -251,13 +243,13 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
     const target = hitTarget(e);
     const p = clientToImage({ x: e.clientX, y: e.clientY });
 
-    if (crop && tool !== "draw" && tool !== "text") {
+    if (activeCrop) {
       if (target === "crop-body") {
-        dragRef.current = { kind: "crop-move", start: p, rect: crop };
+        dragRef.current = { kind: "crop-move", start: p, rect: activeCrop };
         return;
       }
       if (target) {
-        dragRef.current = { kind: "crop-resize", corner: target, start: p, rect: crop };
+        dragRef.current = { kind: "crop-resize", handle: target, start: p, rect: activeCrop };
         return;
       }
     }
@@ -306,7 +298,7 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
         y: Math.min(Math.max(0, d.rect.y + p.y - d.start.y), state.height - d.rect.height),
       });
     } else if (d.kind === "crop-resize") {
-      setCrop(resizeRect(d.rect, d.corner, p, aspect, state));
+      setCrop(resizeRect(d.rect, d.handle, { x: p.x - d.start.x, y: p.y - d.start.y }, aspect, state));
     } else {
       const last = d.pts[d.pts.length - 1]!;
       if (Math.hypot(p.x - last.x, p.y - last.y) < 1 / scale) return;
@@ -345,12 +337,10 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
     if (crop) {
       const rect = normalizeCropRect(crop, state, aspect);
       if (rect) {
-        editor.apply({ type: "crop", rect }, { aspect });
+        editor.apply({ type: "crop", rect });
         onCommit();
       }
     }
-    setCrop(null);
-    onToolChange("crop");
   };
 
   const commitDraft = () => {
@@ -358,7 +348,16 @@ export function EditorStage({ editor, version, tool, onToolChange, onCommit }: E
     const text = draft.text.trim();
     setDraft(null);
     if (!text) return;
-    editor.apply({ type: "text", text, x: draft.start.x, y: draft.start.y + draft.size, color: draft.color, size: draft.size });
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.font = `${draft.size}px ${TEXT_FONT_FAMILY}`;
+    const width = ctx.measureText(text).width;
+    ctx.restore();
+    editor.apply({
+      type: "text", text, x: draft.start.x + width / 2, y: draft.start.y + draft.size / 2,
+      color: draft.color, size: draft.size, width, rotation: 0,
+    });
     onCommit();
   };
 
