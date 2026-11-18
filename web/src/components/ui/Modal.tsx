@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -8,6 +8,7 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   fullscreenOnMobile?: boolean;
 }
 
@@ -16,7 +17,7 @@ const FOCUSABLE =
 
 const CLOSE_MS = 150;
 
-export function Modal({ open, onClose, title, children, footer, fullscreenOnMobile = false }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, onKeyDown, fullscreenOnMobile = false }: ModalProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -78,6 +79,13 @@ export function Modal({ open, onClose, title, children, footer, fullscreenOnMobi
     };
   }, [open]);
 
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (open && onKeyDown && panel && !panel.contains(document.activeElement)) {
+      panel.focus();
+    }
+  }, [open, onKeyDown, title]);
+
   // Lock body scroll when open
   useEffect(() => {
     if (!open) return;
@@ -95,6 +103,7 @@ export function Modal({ open, onClose, title, children, footer, fullscreenOnMobi
         "fixed inset-0 z-50 flex items-center justify-center",
         fullscreenOnMobile ? "p-0 sm:p-4" : "p-4",
       ].join(" ")}
+      onKeyDown={open ? onKeyDown : undefined}
       aria-modal="true"
       role="dialog"
       aria-labelledby={titleId}

@@ -1,5 +1,6 @@
 import { it, expect, describe, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { FileList } from "../../pages/host/FileList.tsx";
 import { FileRow } from "../../pages/host/FileRow.tsx";
 import type { FileEntry } from "../../lib/api.ts";
 
@@ -220,5 +221,53 @@ describe("FileRow texto", () => {
     expect(await screen.findByText("Não foi possível copiar")).toBeInTheDocument();
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     await waitFor(() => expect(window.getSelection()?.toString()).toContain("linha 1"));
+  });
+});
+
+describe("Navegação entre arquivos", () => {
+  const files = [
+    makeFile(),
+    makeFile({ id: "pending", originalName: "recebendo.png", state: "receiving" }),
+    makeFile({ id: "zip", originalName: "documentos.zip", mimeType: "application/zip" }),
+    makeFile({ id: "last", originalName: "outra.png" }),
+  ];
+
+  it("move o foco pelas linhas e abre o arquivo focado com Enter", () => {
+    render(<FileList files={files} sessionId="sess" ownerToken="token" />);
+    const first = screen.getByText("foto.png").closest<HTMLElement>("[data-file-row]")!;
+    const pending = screen.getByText("recebendo.png").closest<HTMLElement>("[data-file-row]")!;
+    const zip = screen.getByText("documentos.zip").closest<HTMLElement>("[data-file-row]")!;
+
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(pending).toHaveFocus();
+    fireEvent.keyDown(pending, { key: "ArrowDown" });
+    expect(zip).toHaveFocus();
+    fireEvent.keyDown(zip, { key: "Enter" });
+    expect(screen.getByRole("dialog", { name: "documentos.zip" })).toBeInTheDocument();
+  });
+
+  it("troca arquivos no mesmo diálogo e pula envios incompletos", () => {
+    render(<FileList files={files} sessionId="sess" ownerToken="token" />);
+    const open = screen.getByRole("button", { name: "Pré-visualizar foto.png" });
+    open.focus();
+    fireEvent.click(open);
+    const dialog = screen.getByRole("dialog", { name: "foto.png" });
+
+    const download = within(dialog).getByRole("link", { name: "Baixar" });
+    download.focus();
+    fireEvent.keyDown(download, { key: "ArrowRight" });
+    expect(screen.getByRole("dialog", { name: "documentos.zip" })).toBe(dialog);
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(within(dialog).getByRole("img", { name: "outra.png" })).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(dialog).toHaveAccessibleName("outra.png");
+
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(dialog).toHaveAccessibleName("documentos.zip");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(open).toHaveFocus();
   });
 });

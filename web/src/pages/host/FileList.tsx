@@ -1,8 +1,11 @@
+import { useState, type KeyboardEvent } from "react";
 import { Files, Download } from "lucide-react";
 import { Button } from "../../components/ui/Button.tsx";
 import { EmptyState } from "../../components/ui/EmptyState.tsx";
 import { FileRow } from "./FileRow.tsx";
-import { zipUrl } from "../../lib/api.ts";
+import { FilePreview } from "./FilePreview.tsx";
+import { fileCategory } from "../../lib/format.ts";
+import { previewUrl, downloadUrl, zipUrl } from "../../lib/api.ts";
 import type { FileEntry } from "../../lib/api.ts";
 
 interface FileListProps {
@@ -20,7 +23,29 @@ export function FileList({
   canDelete,
   onDelete,
 }: FileListProps) {
-  const completedCount = files.filter((f) => f.state === "completed").length;
+  const [preview, setPreview] = useState<{ id: string; open: boolean; selectText?: boolean } | null>(null);
+  const completed = files.filter((file) => file.state === "completed");
+  const previewIndex = completed.findIndex((file) => file.id === preview?.id);
+  const previewFile = completed[previewIndex];
+  const completedCount = completed.length;
+
+  const showPreview = (file: FileEntry, selectText = false) => {
+    setPreview({ id: file.id, open: true, selectText });
+  };
+
+  const focusAdjacentRow = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const previous = event.key === "ArrowUp" || event.key === "ArrowLeft";
+    if (!previous && event.key !== "ArrowDown" && event.key !== "ArrowRight") return;
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-file-row]");
+    if (!row || row.parentElement !== event.currentTarget) return;
+    const adjacent = previous ? row.previousElementSibling : row.nextElementSibling;
+    event.preventDefault();
+    if (adjacent instanceof HTMLElement && adjacent.hasAttribute("data-file-row")) adjacent.focus();
+  };
+
+  const previousFile = completed[previewIndex - 1];
+  const nextFile = completed[previewIndex + 1];
 
   if (files.length === 0) {
     return (
@@ -51,18 +76,32 @@ export function FileList({
       </div>
 
       {/* File rows */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" onKeyDown={focusAdjacentRow}>
         {files.map((file) => (
           <FileRow
             key={file.id}
             file={file}
             sessionId={sessionId}
             ownerToken={ownerToken}
+            onPreview={(selectText) => showPreview(file, selectText)}
             canDelete={canDelete?.(file)}
             onDelete={onDelete}
           />
         ))}
       </div>
+      {previewFile && preview && (
+        <FilePreview
+          open={preview.open}
+          onClose={() => setPreview({ ...preview, open: false })}
+          file={previewFile}
+          category={fileCategory(previewFile.mimeType, previewFile.originalName)}
+          previewSrc={previewUrl(sessionId, previewFile.id, ownerToken, previewFile.version)}
+          downloadSrc={downloadUrl(sessionId, previewFile.id, ownerToken, previewFile.version)}
+          selectOnOpen={preview.selectText}
+          onPrevious={previousFile ? () => showPreview(previousFile) : undefined}
+          onNext={nextFile ? () => showPreview(nextFile) : undefined}
+        />
+      )}
     </div>
   );
 }
