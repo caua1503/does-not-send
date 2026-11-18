@@ -33,6 +33,10 @@ export const categoryEnum = pgEnum("category", [
 
 export const eventTypeEnum = pgEnum("event_type", ["pairing_refused"]);
 
+export const sessionModeEnum = pgEnum("session_mode", ["oneway", "twoway"]);
+
+export const participantRoleEnum = pgEnum("participant_role", ["host", "guest"]);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -46,8 +50,26 @@ export const sessions = pgTable(
     pairedAt: timestamp("paired_at"),
     closedAt: timestamp("closed_at"),
     closeReason: closeReasonEnum("close_reason"),
+    /** NULL for sessions created before the column existed. */
+    mode: sessionModeEnum("mode"),
   },
   (table) => [index("sessions_created_at_idx").on(table.createdAt)],
+);
+
+export const sessionParticipants = pgTable(
+  "session_participants",
+  {
+    /** Server-generated participant id, stable across reconnects. */
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    role: participantRoleEnum("role").notNull(),
+    joinedAt: timestamp("joined_at")
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [index("session_participants_session_id_idx").on(table.sessionId)],
 );
 
 export const transfers = pgTable(
@@ -62,6 +84,8 @@ export const transfers = pgTable(
     mime: text("mime").notNull(),
     category: categoryEnum("category").notNull(),
     size: bigint("size", { mode: "number" }).notNull(),
+    /** Client-declared pre-compression size; NULL for old/invalid/unknown. */
+    originalSizeBytes: bigint("original_size_bytes", { mode: "number" }),
     status: transferStatusEnum("status").notNull(),
     version: integer("version").notNull().default(1),
     startedAt: timestamp("started_at")

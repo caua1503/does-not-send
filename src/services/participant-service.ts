@@ -66,6 +66,13 @@ export class ParticipantService {
     session.participants.push(participant);
     session.lastActivity = new Date(this.clock.now()).toISOString();
     this.store.update(session);
+    this.store.recordEvent({
+      type: "participant_joined",
+      at: new Date(this.clock.now()),
+      sessionId: session.id,
+      participantId: participant.id,
+      role: "guest",
+    });
 
     return { ok: true, participant, credential };
   }

@@ -3,9 +3,12 @@ import {
   formatBucketLabel,
   formatBytes,
   formatDateTime,
+  formatDecimal,
+  formatDuration,
   formatNumber,
   formatDate,
   formatTime,
+  savingsBytes,
 } from "../src/shared/admin/format.js";
 
 describe("formatBytes (base 1024)", () => {
@@ -41,6 +44,21 @@ describe("formatNumber", () => {
   });
 });
 
+describe("formatDuration e formatDecimal", () => {
+  it("duração em segundos vira h/min/s legível", () => {
+    expect(formatDuration(0)).toBe("0 s");
+    expect(formatDuration(45.4)).toBe("45 s");
+    expect(formatDuration(750)).toBe("12 min 30 s");
+    expect(formatDuration(3900)).toBe("1 h 05 min");
+    expect(formatDuration(-1)).toBe("—");
+  });
+
+  it("média usa uma casa decimal em pt-BR", () => {
+    expect(formatDecimal(2.5)).toBe("2,5");
+    expect(formatDecimal(0.8)).toBe("0,8");
+  });
+});
+
 describe("datas com Intl e ADMIN_TZ", () => {
   const instant = "2026-11-06T00:30:00.000Z";
 
@@ -62,6 +80,21 @@ describe("datas com Intl e ADMIN_TZ", () => {
     expect(formatDateTime("não é data")).toBe("—");
     expect(formatDate("")).toBe("—");
     expect(formatBucketLabel("lixo", "day")).toBe("—");
+  });
+});
+
+describe("savingsBytes", () => {
+  it("economia é original - enviado, sem ficar negativa", () => {
+    // Que bug pega: compressão que deixou o arquivo maior viraria "economia" negativa no card.
+    expect(savingsBytes(5_000_000, 1_000_000)).toBe(4_000_000);
+    expect(savingsBytes(1_000_000, 1_500_000)).toBe(0);
+    expect(savingsBytes(1_000, 1_000)).toBe(0);
+  });
+
+  it("original desconhecido conta como zero", () => {
+    expect(savingsBytes(null, 1_000)).toBe(0);
+    expect(savingsBytes(undefined, 1_000)).toBe(0);
+    expect(savingsBytes(Number.NaN, 1_000)).toBe(0);
   });
 });
 

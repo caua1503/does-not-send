@@ -10,7 +10,7 @@ import { authorize as domainAuthorize } from "./auth.js";
 import { LoginCodeManager, normalizeSessionId, type LoginCodeEvent } from "./login-code.js";
 import { LoginGuard } from "./login-guard.js";
 import { InviteManager } from "./invites.js";
-import type { SessionRecorder } from "../recording/index.js";
+import type { SessionRecorder, DomainEvent } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
 import { TWOWAY_DEFAULTS } from "./twoway.js";
 
@@ -111,6 +111,12 @@ export class SessionStore {
       options.twowayIdleTimeoutMs ?? TWOWAY_DEFAULTS.idleTimeoutMs;
     this.log = options.logger ?? (undefined as unknown as FastifyBaseLogger);
     this.recorder = options.recorder;
+  }
+
+  /** Best-effort async recording (queued); never throws into the caller. */
+  recordEvent(event: DomainEvent): void {
+    if (!this.recorder || !this.log) return;
+    safeRecord(this.recorder, event, this.log);
   }
 
   // Repository-compatible methods

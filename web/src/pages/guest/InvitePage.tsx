@@ -100,6 +100,20 @@ export default function InvitePage() {
           return;
         }
 
+        // Twoway joins need a name, so the invite code rides along to the
+        // session page and is consumed there by the participants route.
+        if (invite.mode === "twoway") {
+          if (invite.state !== "valid") {
+            setError(invite.state);
+            return;
+          }
+          const params = new URLSearchParams({ mode: "twoway", code });
+          window.location.assign(
+            `/entrar/${encodeURIComponent(invite.sessionId)}?${params.toString()}`,
+          );
+          return;
+        }
+
         if (invite.state !== "valid") {
           setError(invite.state);
           return;

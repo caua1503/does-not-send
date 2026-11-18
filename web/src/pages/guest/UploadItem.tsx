@@ -8,6 +8,8 @@ export interface GuestUploadItem {
   file: File;
   progress: number; // 0 - 1
   state: "pending" | "optimizing" | "uploading" | "completed" | "error";
+  /** Size before compression, sent to the server as originalSize. */
+  originalSize?: number;
   error?: string;
   remoteId?: string;
   edited?: boolean;

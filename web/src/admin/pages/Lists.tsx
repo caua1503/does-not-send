@@ -1,4 +1,8 @@
-import type { AdminFilters, Paginated } from "../../../../src/shared/admin/types.ts";
+import type {
+  AdminFilters,
+  Paginated,
+  SessionMetrics,
+} from "../../../../src/shared/admin/types.ts";
 import { SORT_KEYS } from "../../../../src/shared/admin/sorts.ts";
 import type { AdminApi } from "../api.ts";
 import { filterKey, readListSort, withPeriod } from "../filter-url.ts";
@@ -6,6 +10,8 @@ import { useRemote, type RemoteState } from "../use-remote.ts";
 import { FiltersBar, type FilterChange } from "../components/Filters.tsx";
 import { SessionsTable, TransfersTable, type SortState } from "../components/Lists.tsx";
 import { EmptyStateCard, ErrorState, Skeleton } from "../components/States.tsx";
+import { MetricCard } from "../components/MetricCard.tsx";
+import { formatDecimal, formatDuration, formatNumber } from "../../../../src/shared/admin/format.ts";
 import { Card } from "../../components/ui/index.ts";
 
 interface FiltersPageProps extends FilterChange {
@@ -68,6 +74,10 @@ export function SessionsPage(props: PageProps) {
     (signal) => api.sessions({ filters: query, sort, dir }, signal),
     [filterKey(query), query.page, query.pageSize, sort, dir, props.refreshKey],
   );
+  const metrics = useRemote(
+    (signal) => api.sessionMetrics(query, signal),
+    [filterKey(query), props.refreshKey],
+  );
   const sortState = sortStateFor(sort, dir, props.onParams, params);
 
   return (
@@ -79,6 +89,10 @@ export function SessionsPage(props: PageProps) {
         granularity={filters.granularity}
         onGranularity={() => {}}
       />
+      {metrics.status === "error" && !metrics.data && (
+        <ErrorState error={metrics.error} onRetry={metrics.reload} />
+      )}
+      {metrics.data && <SessionMetricsCards metrics={metrics.data} />}
       <Content state={state} noun="transferências">
         {state.data && (
           <Card className="overflow-hidden p-3">
@@ -92,6 +106,49 @@ export function SessionsPage(props: PageProps) {
         )}
       </Content>
     </section>
+  );
+}
+
+function abandonmentHint(stats: { total: number; abandoned: number }): string {
+  if (stats.total === 0) return "sem sessões no período";
+  return `${formatNumber(stats.abandoned)} sem ninguém (${Math.round((stats.abandoned / stats.total) * 100)}%)`;
+}
+
+function SessionMetricsCards({ metrics }: { metrics: SessionMetrics }) {
+  const { byMode, twowayParticipants } = metrics;
+  const unknown = byMode.unknown.total;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <MetricCard
+        label="Sessões comuns"
+        value={formatNumber(byMode.oneway.total)}
+        hint={`${abandonmentHint(byMode.oneway)}${unknown > 0 ? ` · ${formatNumber(unknown)} sem tipo registrado` : ""}`}
+      />
+      <MetricCard
+        label="Sessões de troca"
+        value={formatNumber(byMode.twoway.total)}
+        hint={abandonmentHint(byMode.twoway)}
+      />
+      <MetricCard
+        label="Pessoas em troca"
+        value={formatNumber(twowayParticipants.total)}
+        hint={`média ${formatDecimal(twowayParticipants.average)} · máx ${formatNumber(twowayParticipants.max)} por sessão`}
+      />
+      <MetricCard
+        label="Duração média"
+        value={
+          metrics.averageDurationSeconds === null
+            ? "—"
+            : formatDuration(metrics.averageDurationSeconds)
+        }
+        hint="sessões encerradas"
+      />
+      <MetricCard
+        label="Transferências/sessão"
+        value={formatDecimal(metrics.averageTransfersPerSession)}
+        hint="concluídas, no período"
+      />
+    </div>
   );
 }
 

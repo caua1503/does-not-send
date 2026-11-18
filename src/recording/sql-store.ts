@@ -52,6 +52,21 @@ export class SqlStore implements Store {
             visualId: event.visualId,
             computerIp: normalizeIp(event.computerIp),
             createdAt: event.at.toISOString(),
+            mode: event.mode ?? null,
+          })
+          .onConflictDoNothing();
+        break;
+
+      case "participant_joined":
+        // Participant id is the dedupe key: a reconnect authenticates the
+        // existing credential instead of emitting this event again.
+        await tx
+          .insert(schema.sessionParticipants)
+          .values({
+            id: event.participantId,
+            sessionId: event.sessionId,
+            role: event.role,
+            joinedAt: event.at.toISOString(),
           })
           .onConflictDoNothing();
         break;
@@ -89,6 +104,7 @@ export class SqlStore implements Store {
             mime: event.mime,
             category: event.category,
             size: event.size,
+            originalSizeBytes: event.originalSize ?? null,
             status: "receiving",
             startedAt: event.at.toISOString(),
           })
@@ -101,6 +117,9 @@ export class SqlStore implements Store {
           .set({
             status: event.status,
             size: event.size,
+            ...(event.originalSize !== undefined
+              ? { originalSizeBytes: event.originalSize }
+              : {}),
             version: sql`${schema.transfers.version} + 1`,
             finishedAt: event.at.toISOString(),
           })

@@ -4,9 +4,17 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { createDbClient, type DbClient } from "../src/db/client.js";
 import { MigrationRunner } from "../src/db/migrate.js";
-import { events, sessions, transfers } from "../src/db/schema.js";
+import { events, sessionParticipants, sessions, transfers } from "../src/db/schema.js";
 import { loadConfig } from "../src/utils/config.js";
-import type { AdminSummary, Paginated, SessionDetail, TimeseriesResponse, TransferRow } from "../src/shared/admin/types.js";
+import type {
+  AdminSummary,
+  Paginated,
+  SessionDetail,
+  SessionMetrics,
+  SessionRow,
+  TimeseriesResponse,
+  TransferRow,
+} from "../src/shared/admin/types.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 // Drops the public schema, so refuse anything that is not clearly a test database.
@@ -16,6 +24,8 @@ const ADMIN_PASSWORD = "senha-de-teste-123";
 const SESSION_A = "11111111-1111-4111-8111-111111111111";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
 const SESSION_C = "33333333-3333-4333-8333-333333333333";
+const SESSION_D = "55555555-5555-4555-8555-555555555555"; // twoway, 3 pessoas
+const SESSION_E = "66666666-6666-4666-8666-666666666666"; // twoway, só host
 
 const insertedAt: Record<string, string> = {};
 
@@ -73,6 +83,7 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
         pairedAt: at("2026-01-05T10:01:00-03:00"),
         closedAt: at("2026-01-05T11:00:00-03:00"),
         closeReason: "user_closed",
+        mode: "oneway",
       },
       {
         id: SESSION_B,
@@ -82,6 +93,7 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
         createdAt: at("2026-01-06T10:00:00-03:00"),
         pairedAt: at("2026-01-06T10:01:00-03:00"),
         closedAt: null,
+        mode: "oneway",
       },
       {
         id: SESSION_C,
@@ -98,7 +110,38 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
         visualId: "OLD-000",
         createdAt: at("2025-12-20T10:00:00-03:00"),
       },
+      {
+        id: SESSION_D,
+        visualId: "DDD-444",
+        computerIp: "10.0.0.4",
+        createdAt: at("2026-01-08T10:00:00-03:00"),
+        closedAt: at("2026-01-08T11:00:00-03:00"),
+        closeReason: "user_closed",
+        mode: "twoway",
+      },
+      {
+        id: SESSION_E,
+        visualId: "EEE-555",
+        computerIp: "10.0.0.5",
+        createdAt: at("2026-01-09T10:00:00-03:00"),
+        closedAt: at("2026-01-09T10:10:00-03:00"),
+        closeReason: "user_closed",
+        mode: "twoway",
+      },
     ]);
+
+    const participants: Array<typeof sessionParticipants.$inferInsert> = [
+      { id: "p-d-host", sessionId: SESSION_D, role: "host", joinedAt: at("2026-01-08T10:00:00-03:00") },
+      { id: "p-d-1", sessionId: SESSION_D, role: "guest", joinedAt: at("2026-01-08T10:01:00-03:00") },
+      { id: "p-d-2", sessionId: SESSION_D, role: "guest", joinedAt: at("2026-01-08T10:02:00-03:00") },
+      { id: "p-e-host", sessionId: SESSION_E, role: "host", joinedAt: at("2026-01-09T10:00:00-03:00") },
+    ];
+    await client.writer.insert(sessionParticipants).values(participants);
+    // Dedupe real do banco: mesmo participante reentregue não vira pessoa nova.
+    await client.writer
+      .insert(sessionParticipants)
+      .values({ id: "p-d-1", sessionId: SESSION_D, role: "guest", joinedAt: at("2026-01-08T10:05:00-03:00") })
+      .onConflictDoNothing();
 
     const transferRows: Array<typeof transfers.$inferInsert> = [
       {
@@ -320,6 +363,33 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
     const missing = await app.inject({ method: "GET", url: "/admin/api/transfers/nope", headers: { cookie } });
     expect(missing.statusCode).toBe(404);
     expect(missing.json()).toMatchObject({ error: { code: "not_found" } });
+  });
+
+  it("@db métricas de sessões: tipos, abandono, participantes e duração", async () => {
+    const metrics = (await get(
+      "/admin/api/sessions/metrics?from=2026-01-01&to=2026-01-31",
+    )) as SessionMetrics;
+
+    expect(metrics.byMode.oneway).toEqual({ total: 2, abandoned: 0 });
+    expect(metrics.byMode.twoway).toEqual({ total: 2, abandoned: 1 });
+    expect(metrics.byMode.unknown).toEqual({ total: 1 }); // sessão C, legado sem tipo
+    // D: host + 2 convidados; E: só host. Reentrega de p-d-1 não conta de novo.
+    expect(metrics.twowayParticipants).toEqual({ total: 4, average: 2, max: 3 });
+    // A(1h) + C(30min) + D(1h) + E(10min) / 4 sessões fechadas.
+    expect(metrics.averageDurationSeconds).toBe(2400);
+    // 4 concluídas / 5 sessões no período.
+    expect(metrics.averageTransfersPerSession).toBe(0.8);
+  });
+
+  it("@db lista de sessões traz o tipo e as pessoas de cada troca", async () => {
+    const page = (await get(
+      "/admin/api/sessions?from=2026-01-01&to=2026-01-31&pageSize=100",
+    )) as Paginated<SessionRow>;
+    const byId = new Map(page.items.map((session) => [session.id, session]));
+    expect(byId.get(SESSION_A)).toMatchObject({ mode: "oneway", participantCount: 0 });
+    expect(byId.get(SESSION_C)).toMatchObject({ mode: null, participantCount: 0 });
+    expect(byId.get(SESSION_D)).toMatchObject({ mode: "twoway", participantCount: 3 });
+    expect(byId.get(SESSION_E)).toMatchObject({ mode: "twoway", participantCount: 1 });
   });
 
   it("@db sem sessão: 401 (painel não vaza dados)", () => {

@@ -15,6 +15,7 @@ import { Badge } from "../../components/ui/Badge.tsx";
 import { Modal } from "../../components/ui/Modal.tsx";
 import { UploadArea } from "../../components/UploadArea.tsx";
 import { ManualLoginCode } from "../../components/ManualLoginCode.tsx";
+import { InviteLinksPanel } from "../../components/InviteLinksPanel.tsx";
 import { LeaveSessionModal } from "../../components/LeaveSessionModal.tsx";
 import { FileList } from "../host/FileList.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
@@ -83,6 +84,7 @@ export function TwowayRoomPage({
   const [copied, setCopied] = useState<"id" | "code" | null>(null);
   const [requestingCode, setRequestingCode] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [inviteRefresh, setInviteRefresh] = useState(0);
   const onSessionClosedRef = useRef(onSessionClosed);
   onSessionClosedRef.current = onSessionClosed;
 
@@ -94,6 +96,9 @@ export function TwowayRoomPage({
   const activeCode = loginCode && countdown > 0 ? loginCode : null;
 
   const handleServerEvent = (event: Record<string, unknown>) => {
+    if (event.type === "invite:used") {
+      setInviteRefresh((current) => current + 1);
+    }
     dispatch(event as unknown as TwowayEvent);
   };
 
@@ -330,6 +335,14 @@ export function TwowayRoomPage({
                 ? "Compartilhe o QR Code ou o código. Todos enviam, baixam e veem o mesmo histórico."
                 : "Todos participantes enviam e baixam os mesmos itens."}
             </p>
+
+            {role === "host" && (
+              <InviteLinksPanel
+                sessionId={sessionId}
+                token={token}
+                refreshSignal={inviteRefresh}
+              />
+            )}
           </div>
 
           <div className="flex flex-col items-end gap-2 shrink-0">

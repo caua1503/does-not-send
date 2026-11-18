@@ -116,9 +116,24 @@ export async function sessionRoutes(
           sessionId: session.id,
           visualId: session.visualId,
           computerIp: session.computerIp ?? undefined,
+          mode: session.mode ?? "oneway",
         },
         request.log,
       );
+
+      if (session.mode === "twoway" && session.hostId) {
+        safeRecord(
+          ctx.recorder,
+          {
+            type: "participant_joined",
+            at: new Date(),
+            sessionId: session.id,
+            participantId: session.hostId,
+            role: "host",
+          },
+          request.log,
+        );
+      }
 
       return reply.status(201).send({
         id: session.id,

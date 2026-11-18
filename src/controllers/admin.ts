@@ -217,6 +217,12 @@ export async function adminRoutes(app: FastifyInstance, opts: AdminRouteOptions)
     return reply.send(await queries().listSessions(filters, sort, dir));
   });
 
+  app.get("/api/sessions/metrics", async (request, reply) => {
+    if (!requireDb(reply)) return reply;
+    const { filters } = readFilters(request);
+    return reply.send(await queries().sessionsMetrics(filters));
+  });
+
   app.get<{ Params: { id: string } }>("/api/transfers/:id", async (request, reply) => {
     if (!requireDb(reply)) return reply;
     const id = String(request.params.id).slice(0, 128);

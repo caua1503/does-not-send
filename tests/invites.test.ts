@@ -77,14 +77,14 @@ describe("convites por URL", () => {
     for (let i = 0; i < 3; i++) {
       const res = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ state: "valid", sessionId: session.id });
+      expect(res.json()).toEqual({ state: "valid", sessionId: session.id, mode: "oneway" });
     }
 
     const used = await redeem(code, "device-a");
     expect(used.statusCode).toBe(200);
 
     const after = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(after.json()).toEqual({ state: "used", sessionId: session.id });
+    expect(after.json()).toEqual({ state: "used", sessionId: session.id, mode: "oneway" });
   });
 
   it("single: mesmo dispositivo reusa, outro dispositivo encontra usado", async () => {
@@ -125,7 +125,7 @@ describe("convites por URL", () => {
       expect((res.json() as Redeemed).phoneCredential).toBeTruthy();
 
       const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-      expect(state.json()).toEqual({ state: "valid", sessionId: session.id });
+      expect(state.json()).toEqual({ state: "valid", sessionId: session.id, mode: "oneway" });
     }
   });
 
@@ -158,7 +158,7 @@ describe("convites por URL", () => {
     clock.advance(INVITE_TTL_MS);
 
     const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(state.json()).toEqual({ state: "expired", sessionId: session.id });
+    expect(state.json()).toEqual({ state: "expired", sessionId: session.id, mode: "oneway" });
 
     const res = await redeem(code, "device-a");
     expect(res.statusCode).toBe(410);
@@ -177,7 +177,7 @@ describe("convites por URL", () => {
     expect(revoked.statusCode).toBe(204);
 
     const state = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
-    expect(state.json()).toEqual({ state: "revoked", sessionId: session.id });
+    expect(state.json()).toEqual({ state: "revoked", sessionId: session.id, mode: "oneway" });
 
     const res = await redeem(code, "device-a");
     expect(res.statusCode).toBe(410);
@@ -283,6 +283,37 @@ describe("convites por URL", () => {
       payload: { mode: "forever" },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("convite entra em sessão de twoway como participante", async () => {
+    const created = await ctx.app.inject({
+      method: "POST",
+      url: "/api/sessions",
+      payload: { mode: "twoway", name: "Host" },
+    });
+    expect(created.statusCode).toBe(201);
+    const session = created.json() as SessionTokens;
+    const inviteRes = await invite(session, "single");
+    expect(inviteRes.statusCode).toBe(201);
+    const { code } = inviteRes.json() as InviteCreated;
+
+    const preview = await ctx.app.inject({ method: "GET", url: `/api/invites/${code}` });
+    expect(preview.json()).toMatchObject({ state: "valid", mode: "twoway" });
+
+    const join = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/participants`,
+      payload: { name: "Convidado", device: "phone", code },
+    });
+    expect(join.statusCode).toBe(201);
+    expect(join.json().participant.name).toBe("Convidado");
+
+    const again = await ctx.app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/participants`,
+      payload: { name: "Outro", device: "phone", code },
+    });
+    expect(again.statusCode).toBe(401);
   });
 
   it("limita tentativas por convite", async () => {

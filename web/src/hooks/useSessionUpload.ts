@@ -40,6 +40,8 @@ export function useSessionUpload({
 
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
+    // Field first: the server streams the file part and reads it before the bytes.
+    formData.append("originalSize", String(item.originalSize ?? item.file.size));
     formData.append("files", item.file, item.file.name);
 
     xhr.upload.onprogress = (event) => {
@@ -216,6 +218,7 @@ export function useSessionUpload({
     const newItems: GuestUploadItem[] = fileList.map((file) => ({
       id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
       file,
+      originalSize: file.size,
       progress: 0,
       state: isHeic(file) || isCompressiblePhoto(file) ? "optimizing" : "pending",
     }));
@@ -251,6 +254,7 @@ export function useSessionUpload({
     const item: GuestUploadItem = {
       id: `text-${Date.now()}-${Math.random()}`,
       file,
+      originalSize: file.size,
       progress: 0,
       state: "pending",
       kind: "text",
@@ -272,6 +276,7 @@ export function useSessionUpload({
     );
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
+    formData.append("originalSize", String(file.size));
     formData.append("files", file, file.name);
     const fail = (error: string) => {
       if (xhr.status === 410) onClosedRef.current?.();
@@ -296,7 +301,15 @@ export function useSessionUpload({
       setItems((prev) =>
         prev.map((current) =>
           current.id === item.id
-            ? { ...current, file, state: "completed", progress: 1, edited: true, error: undefined }
+            ? {
+                ...current,
+                file,
+                state: "completed",
+                progress: 1,
+                originalSize: file.size,
+                edited: true,
+                error: undefined,
+              }
             : current,
         ),
       );

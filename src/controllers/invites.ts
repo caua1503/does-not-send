@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppContext } from "../app.js";
 import type { InviteMode } from "../session/invites.js";
+import { sessionMode } from "../session/permissions.js";
 import { authorize } from "./sessions.js";
 
 const MAX_DEVICE_ID_LENGTH = 200;
@@ -114,9 +115,11 @@ export async function inviteRoutes(
     if (!invite) {
       return reply.status(404).send({ error: "Invite not found", statusCode: 404 });
     }
+    const session = ctx.sessionStore.getById(invite.sessionId);
     return reply.status(200).send({
       state: ctx.sessionStore.invites.state(invite),
       sessionId: invite.sessionId,
+      mode: session ? sessionMode(session) : "oneway",
     });
   });
 

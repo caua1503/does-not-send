@@ -30,6 +30,8 @@ export type CloseReason = "user_closed" | "closed" | "server_restart";
 
 export type EventType = "pairing_refused";
 
+export type SessionMode = "oneway" | "twoway";
+
 export type Granularity = "day" | "week" | "month" | "year";
 
 export const GRANULARITIES: readonly Granularity[] = ["day", "week", "month", "year"];
@@ -76,6 +78,8 @@ export interface TransferRow {
   extension: string;
   category: Category;
   size: number;
+  /** Client-declared pre-compression size; null for old/invalid/unknown. */
+  originalSize: number | null;
   status: TransferStatus;
   /** ISO UTC. */
   startedAt: string;
@@ -96,11 +100,36 @@ export interface SessionRow {
   /** ISO UTC or null while active. */
   closedAt: string | null;
   closeReason: CloseReason | null;
+  /** null for sessions created before the mode column existed. */
+  mode: SessionMode | null;
   /** true when closedAt is null. */
   isActive: boolean;
   /** Completed files and bytes counted from transfers (never a session column). */
   fileCount: number;
   totalBytes: number;
+  /** Distinct participant rows (only twoway sessions ever have any). */
+  participantCount: number;
+}
+
+export interface SessionModeMetrics {
+  total: number;
+  /** Sessions where no guest entered. */
+  abandoned: number;
+}
+
+export interface SessionMetrics {
+  byMode: {
+    oneway: SessionModeMetrics;
+    twoway: SessionModeMetrics;
+    /** Legacy rows; abandonment is not classified. */
+    unknown: { total: number };
+  };
+  /** Participant rows (host included) in twoway sessions of the period. */
+  twowayParticipants: { total: number; average: number; max: number };
+  /** Average of closed sessions; null when none closed. */
+  averageDurationSeconds: number | null;
+  /** Completed transfers divided by sessions in the period. */
+  averageTransfersPerSession: number;
 }
 
 export interface TimeseriesPoint {
@@ -132,6 +161,8 @@ export interface AdminSummary {
   topExtensions: Array<{ extension: string; count: number; volumeBytes: number }>;
   topPhoneIps: Array<{ ip: string; count: number }>;
   refusedPairings: number;
+  /** Compression savings on completed transfers; rows without originalSize ignored. */
+  trafficSaved: { originalBytes: number; savedBytes: number };
 }
 
 export interface SessionTimelineItemBase {

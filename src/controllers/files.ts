@@ -6,6 +6,7 @@ import { authorize } from "./sessions.js";
 import { startUpload, endUpload } from "../session/auth.js";
 import { canDelete, canDownload, canUpload, sessionMode } from "../session/permissions.js";
 import { itemAddedEvent } from "../session/twoway.js";
+import { parseOriginalSize } from "../utils/original-size.js";
 
 export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }): Promise<void> {
   const { ctx } = opts;
@@ -74,9 +75,13 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
         size: number;
         kind?: "file" | "text";
       }> = [];
+      let rawOriginalSize: unknown;
 
       for await (const part of parts) {
-        if (part.type !== "file") continue;
+        if (part.type === "field") {
+          if (part.fieldname === "originalSize") rawOriginalSize = part.value;
+          continue;
+        }
 
         try {
           const result = await ctx.fileService.handleFileUpload(
@@ -87,6 +92,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             undefined,
             abortController.signal,
             kind,
+            parseOriginalSize(rawOriginalSize),
           );
 
           result.file.senderId = auth.participant.id;
@@ -163,8 +169,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       );
 
       try {
+        let rawOriginalSize: unknown;
         for await (const part of request.parts()) {
-          if (part.type !== "file") continue;
+          if (part.type === "field") {
+            if (part.fieldname === "originalSize") rawOriginalSize = part.value;
+            continue;
+          }
 
           try {
             const result = await ctx.fileService.replaceFile(
@@ -174,6 +184,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               part.mimetype,
               part.file,
               abortController.signal,
+              parseOriginalSize(rawOriginalSize),
             );
 
             return reply.status(200).send({

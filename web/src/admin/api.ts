@@ -5,6 +5,7 @@ import type {
   AdminSummary,
   Paginated,
   SessionDetail,
+  SessionMetrics,
   SessionRow,
   TimeseriesResponse,
   TransferDetail,
@@ -28,6 +29,7 @@ export interface AdminApi {
   timeseries(filters: AdminFilters, signal: AbortSignal): Promise<TimeseriesResponse>;
   transfers(query: ListQuery, signal: AbortSignal): Promise<Paginated<TransferRow>>;
   sessions(query: ListQuery, signal: AbortSignal): Promise<Paginated<SessionRow>>;
+  sessionMetrics(filters: AdminFilters, signal: AbortSignal): Promise<SessionMetrics>;
   sessionDetail(id: string, signal: AbortSignal): Promise<SessionDetail>;
   transferDetail(id: string, signal: AbortSignal): Promise<TransferDetail>;
 }
@@ -51,6 +53,7 @@ export function createAdminApi(onUnauthorized: () => void): AdminApi {
     timeseries: (filters, signal) => client.timeseries(filters, signal),
     transfers: (query, signal) => list("/admin/api/transfers", query, signal),
     sessions: (query, signal) => list("/admin/api/sessions", query, signal),
+    sessionMetrics: (filters, signal) => client.sessionMetrics(filters, signal),
     sessionDetail: (id, signal) => client.sessionDetail(id, signal),
     transferDetail: (id, signal) => client.transferDetail(id, signal),
   };

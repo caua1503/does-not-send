@@ -15,6 +15,20 @@
       "when": 1794400000000,
       "tag": "0001_transfer_version",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794917173368,
+      "tag": "0002_talented_mentor",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794917888967,
+      "tag": "0003_strong_gamora",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,17 @@ export interface SessionCreated {
   sessionId: string;
   visualId: string;
   computerIp?: string;
+  /** Absent means the row predates the mode column. */
+  mode?: "oneway" | "twoway";
+}
+
+/** One row per participant membership; reconnects never emit this again. */
+export interface ParticipantJoined {
+  type: "participant_joined";
+  at: Date;
+  sessionId: string;
+  participantId: string;
+  role: "host" | "guest";
 }
 
 export interface SessionPaired {
@@ -36,6 +47,8 @@ export interface TransferStarted {
   mime: string;
   category: Category;
   size: number;
+  /** Client-declared pre-compression size; absent when unknown/invalid. */
+  originalSize?: number | null;
 }
 
 export interface TransferFinished {
@@ -44,6 +57,8 @@ export interface TransferFinished {
   id: string;
   status: TransferStatus;
   size: number;
+  /** Present only on edits/replacements, which emit no transfer_started. */
+  originalSize?: number | null;
 }
 
 export interface PairingRefused {
@@ -55,6 +70,7 @@ export interface PairingRefused {
 
 export type DomainEvent =
   | SessionCreated
+  | ParticipantJoined
   | SessionPaired
   | SessionClosed
   | TransferStarted

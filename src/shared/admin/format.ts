@@ -35,6 +35,30 @@ export function formatNumber(value: number): string {
   return INTEGER.format(value);
 }
 
+/** One decimal place ("2,5"). */
+export function formatDecimal(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return ONE_DECIMAL.format(value);
+}
+
+/** Seconds as "1 h 05 min" / "12 min 30 s" / "45 s". */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours} h ${String(minutes).padStart(2, "0")} min`;
+  if (minutes > 0) return `${minutes} min ${String(secs).padStart(2, "0")} s`;
+  return `${secs} s`;
+}
+
+/** Bytes saved by client compression; never negative (a bigger result counts as 0). */
+export function savingsBytes(original: number | null | undefined, received: number): number {
+  if (original === null || original === undefined || !Number.isFinite(original)) return 0;
+  return Math.max(0, original - received);
+}
+
 /**
  * Canonical ISO-8601 UTC string for the admin contract ("YYYY-MM-DDTHH:mm:ss.sssZ").
  * Accepts Date and the strings Postgres/Bun.SQL return ("2026-01-02 03:04:05+00"),

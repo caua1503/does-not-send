@@ -90,6 +90,11 @@ export function Dashboard(props: DashboardProps) {
   );
 
   const data = summary.data;
+  const saved = data?.trafficSaved;
+  const savedPercent =
+    saved && saved.originalBytes > 0
+      ? Math.round((saved.savedBytes / saved.originalBytes) * 100)
+      : 0;
 
   return (
     <section aria-labelledby="dash-title" className="space-y-4">
@@ -116,9 +121,18 @@ export function Dashboard(props: DashboardProps) {
 
       {data && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <MetricCard label="Arquivos enviados" value={formatNumber(data.totals.files)} hint="somente concluídos" />
             <MetricCard label="Volume total" value={formatBytes(data.totals.volumeBytes)} hint="somente concluídos" />
+            <MetricCard
+              label="Tráfego economizado"
+              value={formatBytes(saved?.savedBytes ?? 0)}
+              hint={
+                saved && saved.originalBytes > 0
+                  ? `${savedPercent}% do original (${formatBytes(saved.originalBytes)})`
+                  : "sem dados de compressão"
+              }
+            />
             <MetricCard label="Sessões" value={formatNumber(data.totals.sessions)} hint="no período" />
             <MetricCard
               label="Transferências"
