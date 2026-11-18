@@ -37,7 +37,7 @@ export interface ImageEditorController {
   readonly closed: boolean;
 }
 
-export function createImageEditor(input: File, decoded: DecodedImage): ImageEditorController {
+export function createImageEditor(input: File, decoded: DecodedImage, resumeHistory?: History): ImageEditorController {
   if (!(decoded.size.width > 0) || !(decoded.size.height > 0)) {
     throw new Error("Image has no pixels");
   }
@@ -45,11 +45,18 @@ export function createImageEditor(input: File, decoded: DecodedImage): ImageEdit
     throw new Error(`Not an image: ${input.type || "unknown"}`);
   }
 
-  let history = createHistory(decoded.size.width, decoded.size.height);
+  let history = resumeHistory ?? createHistory(decoded.size.width, decoded.size.height);
+  let disposed = false;
   let closed = false;
 
   function assertOpen(): void {
     if (closed) throw new Error("Image editor is closed");
+  }
+
+  function releaseSource(): void {
+    if (disposed) return;
+    disposed = true;
+    decoded.source.close?.();
   }
 
   const controller: ImageEditorController = {
@@ -104,13 +111,13 @@ export function createImageEditor(input: File, decoded: DecodedImage): ImageEdit
     close() {
       if (closed) return;
       closed = true;
-      decoded.source.close?.();
+      releaseSource();
       history = createHistory(1, 1);
     },
 
     dispose() {
       if (closed) return;
-      decoded.source.close?.();
+      releaseSource();
     },
   };
 
