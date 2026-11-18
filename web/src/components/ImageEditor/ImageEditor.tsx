@@ -210,7 +210,6 @@ export function ImageEditor({ file, onSave, onCancel }: ImageEditorProps) {
             editor={editor}
             version={version}
             tool={tool}
-            onToolChange={setTool}
             onCommit={change}
           />
         )}
