@@ -18,7 +18,7 @@ function generateRawVisualId(): string {
  * Generates an unbiased 6-character visual ID using randomInt(0, 31).
  * Optionally checks against existing active visual IDs, retrying up to 10 times.
  */
-export function generateVisualId(existingActiveIds?: Set<string>): string {
+export function generateVisualId(existingActiveIds?: ReadonlySet<string>): string {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const candidate = generateRawVisualId();
     if (!existingActiveIds || !existingActiveIds.has(candidate)) {

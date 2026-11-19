@@ -646,3 +646,43 @@ it("keeps a lone host upload alive and expires guest presence independently", as
     await cleanupTestApp(ctx);
   }
 });
+
+it("keeps a closed room briefly for 410 while freeing its visual ID for reuse", async () => {
+  const clock = new FakeClock(1000);
+  const ctx = await createTestApp(undefined, { clock });
+  try {
+    const original = await createTwoway(ctx);
+    const store = getAppContext(ctx.app).sessionStore;
+    const active = store.getById(original.id)!;
+    await store.closeSession(original.id);
+    const endpoint = `/api/sessions/${original.id}/participants`;
+    const joinRoom = () => ctx.app.inject({
+      method: "POST", url: endpoint,
+      payload: { qrToken: original.qrToken, name: "Guest", device: "phone" },
+    });
+    expect((await joinRoom()).statusCode).toBe(410);
+    const replacement = { ...active, id: "replacement", state: "PAIRED" as const };
+    store.create(replacement);
+    expect(store.getAll().map((session) => session.id)).toEqual(["replacement"]);
+    expect(store.getByNormalizedVisualId(original.visualId)).toBe(replacement);
+    clock.advance(60_001);
+    await store.tick();
+    expect((await joinRoom()).statusCode).toBe(404);
+    expect(store.getByNormalizedVisualId(original.visualId)).toBe(replacement);
+  } finally {
+    await cleanupTestApp(ctx);
+  }
+});
+
+it("coalesces simultaneous sweeps while cleanup is pending", async () => {
+  const ctx = await createTestApp();
+  try {
+    const store = getAppContext(ctx.app).sessionStore;
+    const first = store.tick();
+    expect(store.tick()).toBe(first);
+    await first;
+    expect(store.tick()).not.toBe(first);
+  } finally {
+    await cleanupTestApp(ctx);
+  }
+});

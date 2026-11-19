@@ -77,7 +77,7 @@ export class LoginGuard {
   }
 
   /** Drops idle IP entries and counters of sessions that no longer exist. */
-  sweep(liveSessionIds: ReadonlySet<string>): void {
+  sweep(liveSessionIds: Pick<ReadonlySet<string>, "has">): void {
     const now = this.deps.clock.now();
 
     for (const [ip, entry] of this.ips) {

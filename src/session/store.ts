@@ -68,6 +68,17 @@ export const DEFAULT_CLEANUP_RETRY: CleanupRetryOptions = {
   maxDelayMs: 5_000,
 };
 
+const CLOSED_SESSION_TTL_MS = 60_000;
+
+interface ClosedSession {
+  id: string;
+  visualId: string;
+  shortId: string;
+  mode: Session["mode"];
+  reason: Session["closedReason"];
+  expiresAt: number;
+}
+
 export class SessionStore {
   readonly clock: Clock;
   readonly timingConfig: SessionTimingConfig;
@@ -77,6 +88,11 @@ export class SessionStore {
   private recorder?: SessionRecorder;
 
   private sessions = new Map<string, Session>();
+  private activeVisualIds = new Set<string>();
+  private activeByVisualId = new Map<string, Session>();
+  private closedSessions = new Map<string, ClosedSession>();
+  private closedByVisualId = new Map<string, ClosedSession>();
+  private runningTick: Promise<void> | null = null;
   private pendingCleanups = new Map<string, PendingCleanup>();
   private pendingSockets = new Set<PendingWs>();
   private activeSockets = new Map<
@@ -126,20 +142,50 @@ export class SessionStore {
       session.lastSeen = { host: null, guest: null };
     }
     if (session.closedReason === undefined) session.closedReason = null;
+    if (session.state === "CLOSED") {
+      this.rememberClosed(session);
+      return;
+    }
     this.sessions.set(session.id, session);
+    for (const id of [session.visualId, session.shortId]) {
+      if (!id) continue;
+      this.activeVisualIds.add(id);
+      this.activeByVisualId.set(normalizeSessionId(id), session);
+    }
+  }
+
+  private rememberClosed(session: Session): void {
+    const closed: ClosedSession = {
+      id: session.id,
+      visualId: session.visualId,
+      shortId: session.shortId,
+      mode: session.mode,
+      reason: session.closedReason,
+      expiresAt: this.clock.now() + CLOSED_SESSION_TTL_MS,
+    };
+    this.closedSessions.set(closed.id, closed);
+    this.closedByVisualId.set(normalizeSessionId(closed.visualId), closed);
+  }
+
+  private closedView(closed: ClosedSession | undefined): Session | undefined {
+    if (!closed || closed.expiresAt <= this.clock.now()) return undefined;
+    const closedAt = new Date(closed.expiresAt - CLOSED_SESSION_TTL_MS).toISOString();
+    return {
+      id: closed.id, visualId: closed.visualId, shortId: closed.shortId, mode: closed.mode,
+      closedReason: closed.reason, closedAt, state: "CLOSED",
+      hostTokenHash: "", guestCredentialHash: null, qrTokenHash: null,
+      createdAt: closedAt, lastActivity: closedAt, activeUploads: 0,
+      files: [], participants: [], lastSeen: { host: null, guest: null },
+    };
   }
 
   getById(id: string): Session | undefined {
-    return this.sessions.get(id);
+    return this.sessions.get(id) ?? this.closedView(this.closedSessions.get(id));
   }
 
   getByShortId(shortId: string): Session | undefined {
-    for (const session of this.sessions.values()) {
-      if (session.shortId === shortId || session.visualId === shortId) {
-        return session;
-      }
-    }
-    return undefined;
+    const session = this.activeByVisualId.get(normalizeSessionId(shortId));
+    return session?.shortId === shortId || session?.visualId === shortId ? session : undefined;
   }
 
   getByVisualId(visualId: string): Session | undefined {
@@ -149,30 +195,40 @@ export class SessionStore {
   /** Lookup by visual id ignoring case, spaces and hyphens (manual login). */
   getByNormalizedVisualId(id: string): Session | undefined {
     const target = normalizeSessionId(id);
-    for (const session of this.sessions.values()) {
-      if (normalizeSessionId(session.visualId) === target) return session;
-    }
-    return undefined;
+    return this.activeByVisualId.get(target) ?? this.closedView(this.closedByVisualId.get(target));
   }
 
-  getActiveVisualIds(): Set<string> {
-    const set = new Set<string>();
-    for (const session of this.getAllActive()) {
-      if (session.visualId) set.add(session.visualId);
-      if (session.shortId) set.add(session.shortId);
-    }
-    return set;
+  getActiveVisualIds(): ReadonlySet<string> {
+    return this.activeVisualIds;
   }
 
   update(session: Session): void {
+    // In-flight requests can finish after close has detached the active record.
+    if (session.state === "CLOSED") return;
     if (!this.sessions.has(session.id)) {
       throw new Error(`Session not found: ${session.id}`);
     }
     this.sessions.set(session.id, session);
+    for (const id of [session.visualId, session.shortId]) {
+      if (id) this.activeByVisualId.set(normalizeSessionId(id), session);
+    }
   }
 
   delete(id: string): boolean {
-    return this.sessions.delete(id);
+    const active = this.sessions.get(id);
+    if (active) {
+      for (const visualId of [active.visualId, active.shortId]) {
+        this.activeVisualIds.delete(visualId);
+        const key = normalizeSessionId(visualId);
+        if (this.activeByVisualId.get(key)?.id === id) this.activeByVisualId.delete(key);
+      }
+      return this.sessions.delete(id);
+    }
+    const closed = this.closedSessions.get(id);
+    if (!closed) return false;
+    const key = normalizeSessionId(closed.visualId);
+    if (this.closedByVisualId.get(key) === closed) this.closedByVisualId.delete(key);
+    return this.closedSessions.delete(id);
   }
 
   getAll(): Session[] {
@@ -180,15 +236,19 @@ export class SessionStore {
   }
 
   getAllActive(): Session[] {
-    return this.getAll().filter((s) => s.state !== "CLOSED");
+    return this.getAll();
   }
 
   getActiveIds(): Set<string> {
-    return new Set(this.getAllActive().map((s) => s.id));
+    return new Set(this.sessions.keys());
   }
 
   clear(): void {
     this.sessions.clear();
+    this.activeVisualIds.clear();
+    this.activeByVisualId.clear();
+    this.closedSessions.clear();
+    this.closedByVisualId.clear();
     this.invites.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
@@ -497,10 +557,12 @@ export class SessionStore {
     this.hostDisconnectedAt.delete(sessionId);
 
     // 1. Transition to CLOSED
-    const closedAt = new Date();
+    const closedAt = new Date(this.clock.now());
     transition(session, "CLOSED");
     session.closedReason = reason;
     session.closedAt = closedAt.toISOString();
+    this.delete(sessionId);
+    this.rememberClosed(session);
 
     // 2. Abort active uploads and forget the login code
     this.abortUploads(sessionId);
@@ -532,7 +594,6 @@ export class SessionStore {
     session.hostId = undefined;
     this.participantSockets.delete(sessionId);
     this.participantPresence.delete(sessionId);
-    this.update(session);
 
     // 7. Emit session_closed event AFTER domain action is complete
     if (this.recorder && this.log) {
@@ -610,10 +671,20 @@ export class SessionStore {
   }
 
   // Sweeper tick()
-  async tick(): Promise<void> {
+  tick(): Promise<void> {
+    this.runningTick ??= this.runTick().finally(() => { this.runningTick = null; });
+    return this.runningTick;
+  }
+
+  private async runTick(): Promise<void> {
     await this.retryPendingCleanups();
 
     const now = this.clock.now();
+    // All tombstones have the same TTL and are stored in insertion order.
+    for (const closed of this.closedSessions.values()) {
+      if (closed.expiresAt > now) break;
+      this.delete(closed.id);
+    }
 
     // 1. Check pending WS for 5s timeout
     for (const pending of Array.from(this.pendingSockets)) {
@@ -627,10 +698,19 @@ export class SessionStore {
       }
     }
 
-    // 2. Check each active session
-    for (const session of this.getAllActive()) {
+    const closing: Promise<void>[] = [];
+    for (const session of this.sessions.values()) {
+      const hostDisconnectedAt = this.hostDisconnectedAt.get(session.id);
+      if (hostDisconnectedAt !== undefined && now - hostDisconnectedAt >= this.timingConfig.heartbeatTimeoutMs) {
+        closing.push(this.closeSession(session.id, "host_disconnected"));
+        continue;
+      }
       if (session.mode === "twoway") {
-        this.expireParticipantPresence(session.id, now);
+        if (this.twowayIdleTimeoutMs > 0 && now - Date.parse(session.lastActivity) >= this.twowayIdleTimeoutMs) {
+          closing.push(this.closeSession(session.id, "inactivity"));
+        } else {
+          this.expireParticipantPresence(session.id, now);
+        }
         continue;
       }
       // Guest checks
@@ -652,43 +732,15 @@ export class SessionStore {
       }
     }
 
-    // 3. Expire idle twoway sessions
-    if (this.twowayIdleTimeoutMs > 0) {
-      for (const session of this.getAllActive()) {
-        if (session.mode !== "twoway") continue;
-        const lastActivity = Date.parse(session.lastActivity);
-        if (
-          Number.isFinite(lastActivity) &&
-          now - lastActivity >= this.twowayIdleTimeoutMs
-        ) {
-          await this.closeSession(session.id, "inactivity");
-        }
-      }
-    }
-
-    // 4. Hosts that never came back inside the reconnect window close the
-    // session with the full cleanup, instead of leaving it half-alive.
-    for (const [sessionId, disconnectedAt] of Array.from(this.hostDisconnectedAt)) {
-      const session = this.getById(sessionId);
-      if (!session || session.state === "CLOSED") {
-        this.hostDisconnectedAt.delete(sessionId);
-        continue;
-      }
-      if (now - disconnectedAt >= this.timingConfig.heartbeatTimeoutMs) {
-        await this.closeSession(sessionId, "host_disconnected");
-      }
-    }
-
-    // 5. Drop expired login codes; new ones are issued on demand
-    const active = this.getAllActive();
     this.loginCodes.tick();
-    this.loginGuard.sweep(new Set(active.map((session) => session.id)));
+    this.loginGuard.sweep(this.sessions);
+    await Promise.all(closing);
   }
 
   startSweeper(intervalMs = 1000): void {
     if (this.sweeperTimer) return;
     this.sweeperTimer = setInterval(() => {
-      void this.tick();
+      void this.tick().catch(() => this.log?.error("session sweep failed"));
     }, intervalMs);
     if (this.sweeperTimer.unref) {
       this.sweeperTimer.unref();
