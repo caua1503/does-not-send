@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import imageCompression from "browser-image-compression";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { runImageWorker } from "../../lib/imageWorker.ts";
 import {
   compressPhoto,
   isCompressiblePhoto,
@@ -7,18 +7,21 @@ import {
   COMPRESSION_THRESHOLD_BYTES,
 } from "../../lib/compressPhoto.ts";
 
-vi.mock("browser-image-compression", () => {
+vi.mock("../../lib/imageWorker.ts", () => {
   return {
-    default: vi.fn(),
+    runImageWorker: vi.fn(),
   };
 });
 
 describe("compressPhoto", () => {
-  const mockImageCompression = vi.mocked(imageCompression);
+  const mockImageCompression = vi.mocked(runImageWorker);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("Worker", class {});
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   const createFakeFile = (
     name: string,
@@ -74,17 +77,17 @@ describe("compressPhoto", () => {
     const result = await compressPhoto(originalPhoto);
 
     expect(mockImageCompression).toHaveBeenCalledTimes(1);
-    const [calledFile, calledOptions] = mockImageCompression.mock.calls[0];
+    const [, input] = mockImageCompression.mock.calls[0]!;
+    const { file: calledFile, options: calledOptions } = input as { file: File; options: object };
     expect(calledFile).toBe(originalPhoto);
     expect(calledOptions).toMatchObject({
       maxSizeMB: 1,
       maxWidthOrHeight: 2560,
       initialQuality: 0.85,
-      useWebWorker: true,
       fileType: "image/jpeg",
       preserveExif: false,
     });
-    expect(result).toBe(compressedPhoto);
+    expect(result).toMatchObject({ size: compressedPhoto.size, name: originalPhoto.name, type: originalPhoto.type });
   });
 
   it("se o resultado for maior ou igual ao original, retorna o original", async () => {
@@ -146,20 +149,9 @@ describe("compressPhoto", () => {
       "image/jpeg"
     );
 
-    mockImageCompression.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve(
-                createFakeFile("foto.jpg", 800 * 1024, "image/jpeg")
-              ),
-            200
-          );
-        })
-    );
-
+    mockImageCompression.mockRejectedValueOnce(new Error("Image processing timed out"));
     const result = await compressPhoto(originalPhoto, { timeoutMs: 30 });
+    expect(mockImageCompression.mock.calls.at(-1)?.[2]).toBe(30);
 
     expect(result).toBe(originalPhoto);
   });
@@ -169,7 +161,8 @@ describe("compressPhoto", () => {
     let active = 0;
     let maxActive = 0;
 
-    mockImageCompression.mockImplementation(async (file: File) => {
+    mockImageCompression.mockImplementation(async (_worker, input) => {
+      const { file } = input as { file: File };
       active++;
       maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setTimeout(resolve, 30));

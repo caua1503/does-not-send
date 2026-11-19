@@ -1,3 +1,5 @@
+import { runImageWorker } from "./imageWorker.ts";
+
 const HEIC_MIME_TYPES = ["image/heic", "image/heif"];
 const HEIC_EXTENSIONS = [".heic", ".heif"];
 
@@ -19,14 +21,12 @@ export async function convertHeicToJpeg(file: File): Promise<File> {
     return file;
   }
 
-  const { default: heic2any } = await import("heic2any");
-  const result = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
-  const blob = Array.isArray(result) ? result[0] : result;
-  if (!blob) {
-    throw new Error("HEIC conversion produced no image");
-  }
+  const worker = new Worker(new URL("./convertHeic.worker.ts", import.meta.url), { type: "module" });
+  const blob = await runImageWorker(worker, file, 60_000);
 
-  const name = file.name.replace(/\.(heic|heif)$/i, ".jpg");
+  const name = /\.(heic|heif)$/i.test(file.name)
+    ? file.name.replace(/\.(heic|heif)$/i, ".jpg")
+    : `${file.name}.jpg`;
   return new File([blob], name, {
     type: "image/jpeg",
     lastModified: file.lastModified,

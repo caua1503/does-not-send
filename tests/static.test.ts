@@ -20,6 +20,7 @@ describe("Static routes and SPA fallback", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("text/html");
     expect(res.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(res.headers["content-security-policy"]).toContain("worker-src 'self'");
     expect(res.headers["content-security-policy"]).toContain("connect-src 'self' ws: wss:");
   });
 

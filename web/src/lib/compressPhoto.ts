@@ -1,4 +1,5 @@
-import imageCompression, { type Options } from "browser-image-compression";
+import type { Options } from "browser-image-compression";
+import { runImageWorker } from "./imageWorker.ts";
 
 /**
  * 1.2 MB threshold in bytes (1.2 * 1024 * 1024 = 1,258,291.2 bytes).
@@ -67,7 +68,6 @@ export interface CompressPhotoOptions {
   maxSizeMB?: number;
   maxWidthOrHeight?: number;
   initialQuality?: number;
-  useWebWorker?: boolean;
   preserveExif?: boolean;
 }
 
@@ -78,7 +78,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  *
  * Rules:
  * - Only compresses if file is an image and > 1.2 MB.
- * - Options: maxSizeMB 1, maxWidthOrHeight 2560, initialQuality 0.85, useWebWorker true, fileType = file.type, preserveExif false.
+ * - Options: maxSizeMB 1, maxWidthOrHeight 2560, initialQuality 0.85, fileType = file.type, preserveExif false.
  * - If result is not smaller or MIME type changes, returns original file.
  * - If compression fails or times out, returns original file.
  * - Runs through a queue with at most 2 concurrent compressions.
@@ -96,53 +96,28 @@ export async function compressPhoto(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return queue.run(async () => {
-    const controller = new AbortController();
-    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-
     try {
       const compressionOptions: Options = {
         maxSizeMB: options?.maxSizeMB ?? 1,
         maxWidthOrHeight: options?.maxWidthOrHeight ?? 2560,
         initialQuality: options?.initialQuality ?? 0.85,
-        useWebWorker: options?.useWebWorker ?? true,
         fileType: file.type,
         preserveExif: options?.preserveExif ?? false,
-        signal: controller.signal,
       };
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutTimer = setTimeout(() => {
-          controller.abort(new Error("Compression timeout"));
-          reject(new Error("Compression timeout"));
-        }, timeoutMs);
-      });
-
-      const compressed = await Promise.race([
-        imageCompression(file, compressionOptions),
-        timeoutPromise,
-      ]);
+      const worker = new Worker(new URL("./compressPhoto.worker.ts", import.meta.url), { type: "module" });
+      const compressed = await runImageWorker(worker, { file, options: compressionOptions }, timeoutMs);
 
       // 2. Never return larger or equal: must be strictly smaller and same MIME type
       if (compressed.size >= file.size || compressed.type !== file.type) {
         return file;
       }
 
-      // Ensure original filename is preserved if the library renamed it
-      if (compressed.name !== file.name) {
-        return new File([compressed], file.name, {
-          type: file.type,
-          lastModified: file.lastModified,
-        });
-      }
-
-      return compressed;
+      return new File([compressed], file.name, {
+        type: file.type,
+        lastModified: file.lastModified,
+      });
     } catch {
-      // 3. On failure or timeout: return original file and keep workflow going
       return file;
-    } finally {
-      if (timeoutTimer !== undefined) {
-        clearTimeout(timeoutTimer);
-      }
     }
   });
 }
