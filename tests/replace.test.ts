@@ -232,3 +232,38 @@ describe("replace file", () => {
     expect(sha256(download.rawPayload)).toBe(sha256(v2));
   });
 });
+
+describe("multipart file size boundary", () => {
+  it("accepts exactly the limit and rejects truncated uploads and replacements", async () => {
+    const ctx = await createTestApp({ maxFileSize: 4 });
+    try {
+      const session = await createSession(ctx.app);
+      const original = await uploadFile(ctx.app, session, "1234", "file.txt");
+      const { body, contentType } = createMultipartPayload([
+        { name: "file", content: Buffer.from("12345"), filename: "large.txt" },
+      ]);
+      const post = await ctx.app.inject({
+        method: "POST",
+        url: `/api/sessions/${session.id}/files`,
+        headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
+        body,
+      });
+      const put = await replaceFile(ctx, session, original.id, "abcde", "file.txt");
+      const download = await ctx.app.inject({
+        method: "GET",
+        url: `/api/sessions/${session.id}/files/${original.id}`,
+        headers: { authorization: `Bearer ${session.ownerToken}` },
+      });
+      const files = appCtx(ctx).sessionStore.getById(session.id)!.files;
+      expect({
+        post: post.statusCode, put: put.statusCode, content: download.body,
+        completed: files.filter((file) => file.state === "completed").map((file) => file.version),
+      }).toEqual({ post: 413, put: 413, content: "1234", completed: [1] });
+      const exact = await replaceFile(ctx, session, original.id, "abcd", "file.txt");
+      expect(exact.statusCode).toBe(200);
+      expect(exact.json().file.version).toBe(2);
+    } finally {
+      await cleanupTestApp(ctx);
+    }
+  });
+});

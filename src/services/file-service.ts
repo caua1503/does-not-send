@@ -73,6 +73,12 @@ function readStream(stream: Readable, maxBytes: number): Promise<Buffer> {
   });
 }
 
+function checkFileSize(stream: Readable & { truncated?: boolean }, size: number, limit: number): void {
+  if (stream.truncated || size > limit) {
+    throw Object.assign(new Error("File too large"), { statusCode: 413 });
+  }
+}
+
 export interface UploadResult {
   file: SessionFile;
 }
@@ -117,6 +123,7 @@ export class FileService {
     let uploadSize = declaredSize;
     if (kind === "text") {
       const raw = await readStream(stream, TEXT_MAX_BYTES);
+      checkFileSize(stream, raw.length, this.config.maxFileSize);
       const text = raw.toString("utf8").trim();
       if (text.length === 0) {
         throw Object.assign(new Error("Texto não pode ser vazio"), { statusCode: 400 });
@@ -501,7 +508,14 @@ export class FileService {
       });
 
       stream.on("end", () => {
-        ws.end(() => resolve());
+        ws.end(() => {
+          try {
+            checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
       });
 
       stream.on("error", (err) => {

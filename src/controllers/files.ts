@@ -13,7 +13,8 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
   await app.register(multipart, {
     limits: {
-      fileSize: ctx.config.maxFileSize,
+      // Busboy flags a part as truncated as soon as it reaches this threshold.
+      fileSize: ctx.config.maxFileSize + 1,
       files: ctx.config.maxFilesPerSession,
     },
   });
