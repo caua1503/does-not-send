@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { request } from "node:http";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
   createTestApp,
@@ -263,6 +266,42 @@ describe("multipart file size boundary", () => {
       expect(exact.statusCode).toBe(200);
       expect(exact.json().file.version).toBe(2);
     } finally {
+      await cleanupTestApp(ctx);
+    }
+  });
+});
+
+describe("premature HTTP disconnect", () => {
+  it.each(["file", "text", "replacement"])("cleans up an interrupted %s", async (kind) => {
+    const ctx = await createTestApp();
+    const session = await createSession(ctx.app);
+    const liveSession = appCtx(ctx).sessionStore.getById(session.id)!;
+    const original = await uploadFile(ctx.app, session, "original", "file.txt");
+    const directory = join(ctx.tempDir, session.id);
+    const address = await ctx.app.listen({ host: "127.0.0.1", port: 0 });
+    const endpoint = `${address}/api/sessions/${session.id}/files`;
+    const req = request(kind === "replacement" ? `${endpoint}/${original.id}` : `${endpoint}?kind=${kind}`, {
+      method: kind === "replacement" ? "PUT" : "POST",
+      headers: {
+        authorization: `Bearer ${session.uploadToken}`,
+        "content-type": "multipart/form-data; boundary=interrupted",
+      },
+    });
+    req.on("error", () => {});
+    try {
+      req.write('--interrupted\r\nContent-Disposition: form-data; name="file"; filename="file.txt"\r\n\r\npartial content');
+      await expect.poll(() => liveSession.activeUploads).toBe(1);
+      if (kind !== "text") {
+        await expect.poll(async () => (await readdir(directory)).length).toBe(2);
+      }
+      req.destroy();
+
+      await expect.poll(() => liveSession.activeUploads).toBe(0);
+      expect(await readdir(directory)).toEqual([original.id]);
+      expect(await readFile(join(directory, original.id), "utf8")).toBe("original");
+      expect(liveSession.files.filter((file) => file.state === "completed").map((file) => file.version)).toEqual([1]);
+    } finally {
+      req.destroy();
       await cleanupTestApp(ctx);
     }
   });

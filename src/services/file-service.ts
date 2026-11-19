@@ -55,21 +55,48 @@ function uniqueTextName(files: SessionFile[], name: string): string {
   return `${base} (${counter})${ext}`;
 }
 
-function readStream(stream: Readable, maxBytes: number): Promise<Buffer> {
+function uploadAborted(): Error {
+  return Object.assign(new Error("Upload aborted"), { statusCode: 499 });
+}
+
+function readStream(stream: Readable, maxBytes: number, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
-    stream.on("data", (chunk: Buffer) => {
+
+    function cleanup() {
+      stream.off("data", onData).off("end", onEnd).off("error", fail).off("close", onAbort);
+      signal?.removeEventListener("abort", onAbort);
+    }
+
+    function fail(err: Error) {
+      cleanup();
+      stream.destroy();
+      reject(err);
+    }
+
+    function onAbort() {
+      fail(uploadAborted());
+    }
+
+    function onEnd() {
+      cleanup();
+      resolve(Buffer.concat(chunks, total));
+    }
+
+    function onData(chunk: Buffer) {
       total += chunk.length;
       if (total > maxBytes) {
-        stream.destroy();
-        reject(Object.assign(new Error("Texto excede o limite de 10000 caracteres"), { statusCode: 400 }));
+        fail(Object.assign(new Error("Texto excede o limite de 10000 caracteres"), { statusCode: 400 }));
         return;
       }
       chunks.push(chunk);
-    });
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    }
+
+    stream.once("end", onEnd).once("error", fail).once("close", onAbort);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted || stream.destroyed) onAbort();
+    else stream.on("data", onData);
   });
 }
 
@@ -111,7 +138,7 @@ export class FileService {
     originalSize?: number | null,
   ): Promise<UploadResult> {
     if (signal?.aborted) {
-      throw Object.assign(new Error("Upload aborted"), { statusCode: 499 });
+      throw uploadAborted();
     }
 
     const session = this.repository.getById(sessionId);
@@ -122,7 +149,7 @@ export class FileService {
     let uploadStream = stream;
     let uploadSize = declaredSize;
     if (kind === "text") {
-      const raw = await readStream(stream, TEXT_MAX_BYTES);
+      const raw = await readStream(stream, TEXT_MAX_BYTES, signal);
       checkFileSize(stream, raw.length, this.config.maxFileSize);
       const text = raw.toString("utf8").trim();
       if (text.length === 0) {
@@ -236,6 +263,7 @@ export class FileService {
 
       // Get actual file size from disk
       const fileStat = await stat(filePath);
+      if (signal?.aborted) throw uploadAborted();
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.size = fileStat.size;
       fileRecord.state = "completed";
@@ -382,6 +410,7 @@ export class FileService {
       }
 
       const fileStat = await stat(tempPath);
+      if (signal?.aborted) throw uploadAborted();
       await rename(tempPath, finalPath);
 
       fileRecord.originalName = finalName;
@@ -454,45 +483,49 @@ export class FileService {
       : 0;
 
     return new Promise<void>((resolve, reject) => {
-      const onAbort = () => {
+      let bytesReceived = 0;
+      let failure: Error | undefined;
+
+      const cleanup = () => {
+        stream.off("data", onData).off("end", onEnd).off("error", fail).off("close", onInputClose);
+        ws.off("error", fail).off("drain", onDrain).off("close", onOutputClose);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const fail = (err: Error) => {
+        failure ??= err;
         stream.destroy();
         ws.destroy();
-        reject(Object.assign(new Error("Upload aborted"), { statusCode: 499 }));
       };
-
-      if (signal) {
-        if (signal.aborted) {
-          onAbort();
-          return;
+      const onAbort = () => fail(uploadAborted());
+      const onInputClose = () => {
+        if (!stream.readableEnded) onAbort();
+      };
+      const onOutputClose = () => {
+        cleanup();
+        if (failure) reject(failure);
+        else if (ws.writableFinished) resolve();
+        else {
+          stream.destroy();
+          reject(uploadAborted());
         }
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-
-      let bytesReceived = 0;
-
-      stream.on("data", (chunk: Buffer) => {
+      };
+      const onDrain = () => stream.resume();
+      const onData = (chunk: Buffer) => {
         bytesReceived += chunk.length;
 
-        if (bytesReceived > this.config.maxFileSize) {
-          stream.destroy();
-          ws.destroy();
-          reject(Object.assign(new Error("File too large"), { statusCode: 413 }));
+        try {
+          checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+        } catch (err) {
+          fail(err as Error);
           return;
         }
 
         if (totalLimit > 0 && existingBytes + bytesReceived > totalLimit) {
-          stream.destroy();
-          ws.destroy();
-          reject(
-            Object.assign(new Error("Session storage limit exceeded"), {
-              statusCode: 413,
-            }),
-          );
+          fail(Object.assign(new Error("Session storage limit exceeded"), { statusCode: 413 }));
           return;
         }
 
         fileRecord.bytesReceived = bytesReceived;
-
         fileEvents.emitFileEvent({
           type: "file:progress",
           sessionId,
@@ -503,30 +536,23 @@ export class FileService {
 
         if (!ws.write(chunk)) {
           stream.pause();
-          ws.once("drain", () => stream.resume());
+          ws.once("drain", onDrain);
         }
-      });
+      };
+      const onEnd = () => {
+        try {
+          checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+          ws.end();
+        } catch (err) {
+          fail(err as Error);
+        }
+      };
 
-      stream.on("end", () => {
-        ws.end(() => {
-          try {
-            checkFileSize(stream, bytesReceived, this.config.maxFileSize);
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      });
-
-      stream.on("error", (err) => {
-        ws.destroy();
-        reject(err);
-      });
-
-      ws.on("error", (err) => {
-        stream.destroy();
-        reject(err);
-      });
+      ws.on("error", fail).once("close", onOutputClose);
+      stream.on("error", fail).once("close", onInputClose).once("end", onEnd);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted || stream.destroyed) onAbort();
+      else stream.on("data", onData);
     });
   }
 

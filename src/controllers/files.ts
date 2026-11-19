@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { rm } from "node:fs/promises";
 import type { AppContext } from "../app.js";
@@ -7,6 +7,16 @@ import { startUpload, endUpload } from "../session/auth.js";
 import { canDelete, canDownload, canUpload, sessionMode } from "../session/permissions.js";
 import { itemAddedEvent } from "../session/twoway.js";
 import { parseOriginalSize } from "../utils/original-size.js";
+
+function abortOnDisconnect(request: FastifyRequest, controller: AbortController): () => void {
+  const raw = request.raw;
+  const onClose = () => {
+    if (!raw.complete) controller.abort();
+  };
+  raw.once("close", onClose);
+  if (raw.destroyed) onClose();
+  return () => raw.off("close", onClose);
+}
 
 export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }): Promise<void> {
   const { ctx } = opts;
@@ -63,6 +73,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       (request.query as { kind?: unknown } | undefined)?.kind === "text" ? "text" : undefined;
 
     const abortController = new AbortController();
+    const removeDisconnectListener = abortOnDisconnect(request, abortController);
     const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
       session.id,
       abortController,
@@ -138,6 +149,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
       return reply.status(201).send({ files: results });
     } finally {
+      removeDisconnectListener();
       unregisterUpload();
       endUpload(session);
       ctx.sessionStore.update(session);
@@ -164,6 +176,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       ctx.sessionService.touchActivity(session.id);
 
       const abortController = new AbortController();
+      const removeDisconnectListener = abortOnDisconnect(request, abortController);
       const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
         session.id,
         abortController,
@@ -224,6 +237,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
         return reply.status(400).send({ error: "Missing file", statusCode: 400 });
       } finally {
+        removeDisconnectListener();
         unregisterUpload();
         endUpload(session);
         ctx.sessionStore.update(session);
