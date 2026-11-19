@@ -84,8 +84,10 @@ O Dockerfile utiliza compilação multi-stage com imagem oficial `oven/bun:1.4.4
 
 ### Iniciar com Docker Compose:
 
+Edite as configurações do serviço `app` diretamente em `docker-compose.yml`. Para acessar pela LAN, ajuste `PUBLIC_BASE_URL` para o IP e a porta publicados pelo host, por exemplo `http://192.168.1.50:3000`. Para trocar a porta externa, edite `ports` e use a mesma porta em `PUBLIC_BASE_URL`.
+
 ```bash
-PUBLIC_BASE_URL=http://192.168.1.50:3000 PORT=3000 docker compose up -d --build
+docker compose up -d --build
 ```
 
 Verificar integridade do contêiner:
@@ -116,7 +118,7 @@ docker compose down
 | `POSTGRES_PASSWORD` | `doesnotsend_dev_password` | Senha do usuário `app`, definida no serviço `postgres` em `docker-compose.yml` |
 | `TEST_DATABASE_URL` | *Opcional* | Banco **dedicado** a testes (nome terminado em `_test`). Sem ela, os testes de integração são pulados |
 
-Credenciais nunca vão para o repositório: copie `.env.example` para `.env` (já no `.gitignore`) e troque a senha.
+Para executar o Bun diretamente, use `.env.example` como referência para seu `.env` local. No Compose, edite os valores no próprio `docker-compose.yml`.
 
 ---
 
