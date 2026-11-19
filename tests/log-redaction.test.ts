@@ -31,6 +31,23 @@ describe("log redaction", () => {
     await cleanupTestApp(ctx);
   });
 
+  it("samples hot-path successes and retains failed requests without query tokens", async () => {
+    const start = lines.length;
+    for (let i = 0; i < 12; i++) {
+      expect((await ctx.app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+    }
+    expect((await ctx.app.inject({
+      method: "POST", url: `/api/sessions/missing/heartbeat?token=${TOKEN_SECRET}`,
+    })).statusCode).toBe(401);
+    const records = lines.slice(start).map((line) => JSON.parse(line));
+    expect(records.filter((entry) => entry.req?.url === "/health").length).toBeLessThan(12);
+    expect(records).toContainEqual(expect.objectContaining({
+      req: { method: "POST", url: "/api/sessions/missing/heartbeat" },
+      statusCode: 401,
+    }));
+    expect(lines.slice(start).join("")).not.toContain(TOKEN_SECRET);
+  });
+
   it("never logs qrToken, token or Authorization", async () => {
     const res = await fetch(
       `${httpUrl}/api/sessions/unknown/pair?qrToken=${QR_SECRET}&token=${TOKEN_SECRET}`,

@@ -29,8 +29,10 @@ export class PostgresRecorder implements SessionRecorder {
   private dropped = 0;
   private failed = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private inFlight = false;
+  private scheduled: ReturnType<typeof setImmediate> | null = null;
+  private inFlight: Promise<void> | null = null;
   private stopping = false;
+  private stopped = false;
   private circuitWasOpen = false;
 
   constructor(
@@ -60,10 +62,7 @@ export class PostgresRecorder implements SessionRecorder {
     const wasDiscarded = this.queue.push(event);
     if (wasDiscarded) this.dropped++;
 
-    // Immediate flush if queue reached batch size
-    if (this.queue.size >= this.maxBatchSize && !this.inFlight) {
-      this.flush();
-    }
+    if (this.queue.size >= this.maxBatchSize) this.requestFlush();
   }
 
   stats(): { queued: number; dropped: number; failed: number } {
@@ -80,6 +79,7 @@ export class PostgresRecorder implements SessionRecorder {
 
     if (!this.isReady()) {
       // Database not ready: discard queue immediately
+      this.stopped = true;
       const remaining = this.queue.size;
       if (remaining > 0) {
         this.dropped += remaining;
@@ -88,11 +88,14 @@ export class PostgresRecorder implements SessionRecorder {
       return;
     }
 
-    // Drain queue with timeout
-    const drainPromise = this.drainQueue();
-    const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
-
-    await Promise.race([drainPromise, timeoutPromise]);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => { timeout = setTimeout(resolve, timeoutMs); });
+    try {
+      await Promise.race([this.drainQueue(), deadline]);
+    } finally {
+      this.stopped = true;
+      clearTimeout(timeout);
+    }
 
     // Discard any remaining items
     const remaining = this.queue.size;
@@ -111,7 +114,7 @@ export class PostgresRecorder implements SessionRecorder {
     this.timer = setTimeout(() => {
       this.timer = null;
       if (!this.inFlight && !this.stopping) {
-        this.flush();
+        void this.flush();
       }
       // Reschedule for next cycle
       if (!this.stopping) {
@@ -122,38 +125,39 @@ export class PostgresRecorder implements SessionRecorder {
     this.timer.unref();
   }
 
-  private stopWorker(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+  private requestFlush(): void {
+    if (this.stopping || this.inFlight || this.scheduled) return;
+    this.scheduled = setImmediate(() => {
+      this.scheduled = null;
+      void this.flush();
+    });
+    this.scheduled.unref();
   }
 
-  private flush(): void {
-    if (this.inFlight || this.stopping || this.queue.size === 0) return;
+  private stopWorker(): void {
+    if (this.timer) clearTimeout(this.timer);
+    if (this.scheduled) clearImmediate(this.scheduled);
+    this.timer = null;
+    this.scheduled = null;
+  }
+
+  private flush(): Promise<void> | undefined {
+    if (this.inFlight || this.stopped || this.queue.size === 0 || !this.isReady()) return;
 
     if (!this.breaker.canAttempt()) {
-      if (this.breaker.getState() === "open" && !this.circuitWasOpen) {
-        this.circuitWasOpen = true;
-      }
+      if (this.breaker.getState() === "open") this.circuitWasOpen = true;
       return;
     }
 
-    if (!this.isReady()) return;
-
-    this.inFlight = true;
-
-    this.processBatch()
+    this.inFlight = this.processBatch()
       .catch(() => {
-        // Errors handled in processBatch
+        // Errors handled in processBatch.
       })
       .finally(() => {
-        this.inFlight = false;
-        // Continue draining if there are more items
-        if (this.queue.size > 0 && !this.stopping) {
-          setImmediate(() => this.flush());
-        }
+        this.inFlight = null;
+        if (this.queue.size > 0) this.requestFlush();
       });
+    return this.inFlight;
   }
 
   private async processBatch(): Promise<void> {
@@ -177,7 +181,7 @@ export class PostgresRecorder implements SessionRecorder {
   private async handleBatchError(batch: DomainEvent[], err: unknown): Promise<void> {
     if (isTransientError(err)) {
       // Transient error: return batch to queue, count for breaker
-      const discarded = this.queue.unshift(batch);
+      const discarded = this.stopped ? batch : this.queue.unshift(batch);
       this.dropped += discarded.length;
       if (discarded.length > 0) {
         this.logDiscardedByType(discarded);
@@ -210,7 +214,7 @@ export class PostgresRecorder implements SessionRecorder {
         if (isTransientError(err)) {
           // Transient error during item-by-item: stop and return rest to queue
           const rest = batch.slice(i);
-          const discarded = this.queue.unshift(rest);
+          const discarded = this.stopped ? rest : this.queue.unshift(rest);
           this.dropped += discarded.length;
           if (discarded.length > 0) {
             this.logDiscardedByType(discarded);
@@ -244,13 +248,10 @@ export class PostgresRecorder implements SessionRecorder {
   }
 
   private async drainQueue(): Promise<void> {
-    while (this.queue.size > 0 && !this.stopping) {
-      if (this.inFlight) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        continue;
-      }
-      this.flush();
-      await new Promise((resolve) => setTimeout(resolve, 5));
+    while (!this.stopped && (this.inFlight || this.queue.size > 0)) {
+      const batch = this.inFlight ?? this.flush();
+      if (batch) await batch;
+      else await new Promise((resolve) => setTimeout(resolve, Math.min(this.flushIntervalMs, 50)));
     }
   }
 

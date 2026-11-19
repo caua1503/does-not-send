@@ -60,24 +60,41 @@ function loggableError(
 }
 
 class RedactedLogController extends LogController {
+  private frequentSuccesses = 0;
+
   override incomingRequest(request: FastifyRequest): void {
-    request.log.info(
-      { req: { method: request.method, url: loggablePath(request) } },
-      "incoming request",
-    );
+    // Upgrade requests bypass the HTTP reply lifecycle.
+    if (request.headers.upgrade?.toLowerCase() === "websocket") {
+      request.log.info(
+        { req: { method: request.method, url: loggablePath(request) } },
+        "websocket upgrade",
+      );
+    }
   }
 
   override requestCompleted(
     error: Error | null | undefined,
     request: FastifyRequest,
-    _reply: FastifyReply,
+    reply: FastifyReply,
   ): void {
-    if (error) {
-      request.log.error({ err: loggableError(error) }, "request errored");
+    const { statusCode } = reply;
+    if (error || statusCode >= 400) {
+      const details = {
+        req: { method: request.method, url: loggablePath(request) },
+        statusCode,
+        ...(error ? { err: loggableError(error) } : {}),
+      };
+      if (error || statusCode >= 500) request.log.error(details, "request failed");
+      else request.log.warn(details, "request failed");
       return;
     }
+
+    const route = request.routeOptions.url;
+    const frequent = route === "/health" || route === "/api/sessions/:id/heartbeat" ||
+      (request.method === "GET" && (route === "/api/sessions/:id" || route === "/api/sessions/:id/files"));
+    if (frequent && (this.frequentSuccesses++ % 100) !== 0) return;
     request.log.info(
-      { req: { method: request.method, url: loggablePath(request) } },
+      { req: { method: request.method, url: loggablePath(request) }, statusCode },
       "request completed",
     );
   }
