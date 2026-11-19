@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { PassThrough } from "node:stream";
+import { fileEvents, type FileEvent } from "../src/utils/events.js";
 import {
   createTestApp,
+  getAppContext,
   cleanupTestApp,
   createSession,
   createMultipartPayload,
@@ -213,17 +216,47 @@ describe("websocket", () => {
     ws2.close();
   });
 
-  it("receives file events in order: receiving → progress → completed", async () => {
+  it("coalesces writes away from the stream callback and never emits progress after completion", async () => {
+    const session = await createSession(ctx.app);
+    const { fileService } = getAppContext(ctx.app);
+    const stream = new PassThrough();
+    const events: FileEvent[] = [];
+    const observe = (event: FileEvent) => events.push(event);
+    fileEvents.onFileEvent("file:progress", session.id, observe);
+    fileEvents.onFileEvent("file:state-changed", session.id, observe);
+    const upload = fileService.handleFileUpload(session.id, "batch.bin", "application/octet-stream", stream);
+    try {
+      await expect.poll(() => stream.listenerCount("data")).toBeGreaterThan(0);
+      stream.write("a");
+      stream.write("b");
+      stream.write("c");
+      expect(events.map((event) => event.type)).toEqual(["file:state-changed"]);
+      await expect.poll(() => events.length).toBe(2);
+      expect(events[1]).toMatchObject({ type: "file:progress", bytesReceived: 3 });
+      stream.end("d");
+      await upload;
+      expect(events.at(-1)).toMatchObject({ type: "file:state-changed", state: "completed", bytesReceived: 4 });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(events).toHaveLength(3);
+    } finally {
+      stream.destroy();
+      await upload.catch(() => {});
+      fileEvents.offFileEvent("file:progress", session.id, observe);
+      fileEvents.offFileEvent("file:state-changed", session.id, observe);
+    }
+  });
+
+  it("receives receiving and completed in order for a fast upload", async () => {
     const session = await createSession(ctx.app);
     const ws = await wsConnectAndAuth(baseUrl, session.id, "computer", session.ownerToken);
 
     // Upload happens after WS is authenticated
-    const msgsPromise = collectMessages(ws, 3, 5000);
+    const msgsPromise = collectMessages(ws, 2, 5000);
     await uploadFile(ctx.app, session, "hello world", "test.txt");
 
     const msgs = (await msgsPromise) as Array<{ type: string; state?: string }>;
 
-    // receiving → (at least one progress) → completed
+    // Fast uploads can finish before the first progress interval.
     expect(msgs[0]).toMatchObject({ type: "file:state-changed", state: "receiving" });
     const last = msgs[msgs.length - 1] as { type: string; state?: string };
     expect(last).toMatchObject({ type: "file:state-changed", state: "completed", version: 1 });

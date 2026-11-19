@@ -115,3 +115,15 @@ describe("sessionReducer", () => {
     expect(s).toBe(empty); // same reference — no mutation
   });
 });
+
+it("ignores stale progress after completion and never moves a receiving item backwards", () => {
+  const file = {
+    id: "file", originalName: "file.txt", mimeType: "text/plain",
+    size: 10, bytesReceived: 10, state: "completed" as const, version: 2, createdAt: "",
+  };
+  const tick = { type: "file:progress" as const, fileId: "file", size: 10, bytesReceived: 8 };
+  const completed = { files: [file] };
+  const receiving = { files: [{ ...file, state: "receiving" as const, bytesReceived: 9 }] };
+  expect(sessionReducer(completed, tick)).toBe(completed);
+  expect(sessionReducer(receiving, tick)).toBe(receiving);
+});

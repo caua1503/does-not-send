@@ -5,7 +5,6 @@ import JoinPage from "../../pages/guest/JoinPage.tsx";
 import type { FileEntry } from "../../lib/api.ts";
 
 vi.mock("browser-image-compression", () => ({ default: vi.fn() }));
-vi.mock("heic2any", () => ({ default: vi.fn() }));
 
 const previewTitle = () => screen.queryByRole("heading", { name: "foto.png", level: 2 });
 

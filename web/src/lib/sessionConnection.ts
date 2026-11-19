@@ -1,6 +1,6 @@
 import { ApiError, getSession, heartbeat, wsUrl, type FileEntry, type SessionInfo } from "./api.ts";
 import { itemToFileEntry, type TwowayItem } from "./twowayReducer.ts";
-import { sessionReducer, type WsEvent } from "./sessionReducer.ts";
+import { applyFileProgress, sessionReducer, type FileProgress, type WsEvent } from "./sessionReducer.ts";
 
 export type SessionRole = "host" | "guest";
 export type SessionEvent = Record<string, unknown>;
@@ -34,6 +34,8 @@ class SessionConnection {
   private pendingRequest: Promise<void> | undefined;
   private generation = 0;
   private disposed = false;
+  private progress = new Map<string, FileProgress>();
+  private progressFrame: number | undefined;
 
   constructor(
     private readonly id: string,
@@ -79,6 +81,7 @@ class SessionConnection {
 
   private stopTimers(): void {
     clearTimeout(this.retry);
+    this.clearProgress();
     clearInterval(this.pulse);
     clearTimeout(this.heartbeatDeadline);
     this.stopFallback();
@@ -141,6 +144,7 @@ class SessionConnection {
       ws.onclose = ({ code }) => {
         if (this.socket !== ws || this.disposed || this.snapshot.closedReason) return;
         this.socket = null;
+        this.clearProgress();
         clearInterval(this.pulse);
         clearTimeout(this.heartbeatDeadline);
         if (code === 4000) {
@@ -166,6 +170,26 @@ class SessionConnection {
     this.heartbeatDeadline = setTimeout(() => {
       if (this.socket === ws) ws.close();
     }, 25_000);
+  }
+
+  private clearProgress(): void {
+    if (this.progressFrame !== undefined) cancelAnimationFrame(this.progressFrame);
+    this.progressFrame = undefined;
+    this.progress.clear();
+  }
+
+  private enqueueProgress(update: FileProgress): void {
+    const previous = this.progress.get(update.fileId);
+    if (!previous || previous.bytesReceived < update.bytesReceived) {
+      this.progress.set(update.fileId, update);
+    }
+    if (this.progressFrame !== undefined) return;
+    this.progressFrame = requestAnimationFrame(() => {
+      this.progressFrame = undefined;
+      const { files } = applyFileProgress(this.snapshot, this.progress);
+      this.progress.clear();
+      if (files !== this.snapshot.files) this.publish({ files });
+    });
   }
 
   private receive(event: SessionEvent, ws: WebSocket): void {
@@ -209,8 +233,11 @@ class SessionConnection {
         this.finish(typeof event.reason === "string" ? event.reason :
           event.type === "session:closed" ? "user_closed" : "closed", event);
         break;
-      case "file:state-changed":
       case "file:progress":
+        this.enqueueProgress(event as unknown as FileProgress);
+        break;
+      case "file:state-changed":
+        this.progress.delete(event.fileId as string);
         this.publish(sessionReducer(this.snapshot, event as unknown as WsEvent));
         break;
       case "item:added": {

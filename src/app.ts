@@ -203,7 +203,7 @@ export async function buildApp(
       } else {
         void reply.header(
           "Content-Security-Policy",
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+          "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         );
       }
     }
@@ -318,6 +318,7 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
+    fileService.shutdown();
     await recorder.close(5000);
     // Runner first: it owns its own connection and must stop opening new ones.
     if (migrationRunner) await migrationRunner.stop();

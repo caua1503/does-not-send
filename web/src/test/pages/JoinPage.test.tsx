@@ -1,20 +1,20 @@
 import { StrictMode } from "react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import imageCompression from "browser-image-compression";
+import { compressPhoto } from "../../lib/compressPhoto.ts";
 import JoinPage from "../../pages/guest/JoinPage.tsx";
 
-vi.mock("browser-image-compression", () => {
-  return {
-    default: vi.fn(),
-  };
-});
+vi.mock("../../lib/compressPhoto.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/compressPhoto.ts")>()),
+  compressPhoto: vi.fn(async (file: File) => file),
+}));
 
-const heic2any = vi.fn();
+const { convertHeicToJpeg } = vi.hoisted(() => ({ convertHeicToJpeg: vi.fn() }));
 
-vi.mock("heic2any", () => {
-  return { default: heic2any };
-});
+vi.mock("../../lib/convertHeic.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/convertHeic.ts")>()),
+  convertHeicToJpeg,
+}));
 
 describe("JoinPage", () => {
   const fetchMock = vi.fn();
@@ -364,9 +364,9 @@ describe("JoinPage", () => {
       { type: "image/jpeg" }
     );
     let resolveCompression: (file: File) => void = () => {};
-    vi.mocked(imageCompression).mockImplementationOnce(
+    vi.mocked(compressPhoto).mockImplementationOnce(
       () =>
-        new Promise((resolve) => {
+        new Promise<File>((resolve) => {
           resolveCompression = resolve;
         })
         .then(() => compressedPhoto)
@@ -408,6 +408,7 @@ describe("JoinPage", () => {
       "/api/sessions/session-test-id/files"
     );
     expect(xhr.send).toHaveBeenCalledTimes(1);
+    expect((xhr.send.mock.calls[0]![0].get("files") as File).size).toBe(compressedPhoto.size);
 
     vi.unstubAllGlobals();
   });
@@ -437,8 +438,8 @@ describe("JoinPage", () => {
     }
 
     vi.stubGlobal("XMLHttpRequest", MockXHR);
-    heic2any.mockReset();
-    heic2any.mockRejectedValue(new Error("libheif error"));
+    convertHeicToJpeg.mockReset();
+    convertHeicToJpeg.mockRejectedValue(new Error("libheif error"));
 
     render(<JoinPage />);
 
@@ -451,7 +452,7 @@ describe("JoinPage", () => {
     });
 
     expect(await screen.findByText("Não foi possível converter a imagem HEIC")).toBeInTheDocument();
-    expect(heic2any).toHaveBeenCalledTimes(1);
+    expect(convertHeicToJpeg).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Otimizando...")).not.toBeInTheDocument();
     // PDF segue direto para o upload
     expect(xhrInstances.length).toBe(1);

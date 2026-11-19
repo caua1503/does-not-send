@@ -216,6 +216,16 @@ bun run seed:admin:demo -- --clean    # remove só os dados DEMO-* e sai
 
 ---
 
+## Retomada de arquivos grandes
+
+A partir de 8 MiB após a otimização, o navegador envia blocos de até 4 MiB. Se a conexão cair,
+use **Tentar novamente** no mesmo item e na mesma aba. O servidor informa o último bloco
+confirmado e descarta o trecho de um bloco interrompido. Se só a resposta final tiver se perdido,
+a tentativa recupera o ID do arquivo já publicado.
+
+Parciais ocupam a cota de armazenamento e expiram após 10 minutos sem atividade da transferência.
+O encerramento da sessão remove seus parciais. Textos, arquivos menores e edições mantêm o fluxo multipart.
+
 ## Testes & Garantia de Qualidade
 
 ### 1. Testes Automatizados (Backend e Front-end)

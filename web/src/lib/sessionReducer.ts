@@ -16,12 +16,27 @@ export type WsEvent =
       version?: number;
       kind?: "file" | "text";
     }
-  | {
-      type: "file:progress";
-      fileId: string;
-      bytesReceived: number;
-      size: number;
-    };
+  | FileProgress;
+
+export interface FileProgress {
+  type: "file:progress";
+  fileId: string;
+  bytesReceived: number;
+  size: number;
+}
+
+export function applyFileProgress(
+  state: SessionState, progress: ReadonlyMap<string, FileProgress>,
+): SessionState {
+  let changed = false;
+  const files = state.files.map((file) => {
+    const update = progress.get(file.id);
+    if (!update || file.state !== "receiving" || update.bytesReceived <= file.bytesReceived) return file;
+    changed = true;
+    return { ...file, bytesReceived: update.bytesReceived, size: update.size };
+  });
+  return changed ? { files } : state;
+}
 
 const initialState: SessionState = { files: [] };
 
@@ -67,12 +82,7 @@ export function sessionReducer(state: SessionState, event: WsEvent): SessionStat
   }
 
   if (event.type === "file:progress") {
-    if (!state.files.find((f) => f.id === event.fileId)) return state;
-    return {
-      files: state.files.map((f) =>
-        f.id === event.fileId ? { ...f, bytesReceived: event.bytesReceived, size: event.size } : f,
-      ),
-    };
+    return applyFileProgress(state, new Map([[event.fileId, event]]));
   }
 
   return state;

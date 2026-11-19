@@ -1,11 +1,11 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { rename, rm, stat, statfs } from "node:fs/promises";
+import { rename, rm, stat, statfs, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { Readable as ReadableStream } from "node:stream";
 import type { Config } from "../utils/config.js";
 import type { SessionStore } from "../session/store.js";
-import type { Session, SessionFile } from "../types.js";
+import type { Participant, Session, SessionFile } from "../types.js";
 import { generateStorageName } from "../utils/crypto.js";
 import { sanitizeFilename } from "../utils/sanitize.js";
 import { fileEvents } from "../utils/events.js";
@@ -13,7 +13,8 @@ import { extractExtension, categorize } from "../recording/normalize.js";
 import type { SessionRecorder } from "../recording/index.js";
 import type { Logger } from "../recording/index.js";
 import { safeRecord } from "../utils/record-event.js";
-import { TWOWAY_DEFAULTS } from "../session/twoway.js";
+import { RESUMABLE_UPLOAD_CHUNK_BYTES, type TransferCheckpoint } from "../shared/resumable-upload.js";
+import { itemAddedEvent, TWOWAY_DEFAULTS } from "../session/twoway.js";
 
 const MIME_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -133,20 +134,54 @@ interface StorageReservation {
   volumeLimit: number;
 }
 
-function completedBytes(session: Session): number {
-  return session.files.reduce((sum, file) => sum + (file.state === "completed" ? file.size : 0), 0);
+const PARTIAL_TRANSFER_TTL_MS = 10 * 60_000;
+const MAX_TRANSFERS_PER_SESSION = 1024;
+
+export interface TransferMetadata {
+  name: string;
+  mimeType: string;
+  size: number;
+  originalSize: number | null;
+}
+
+interface ResumableTransfer {
+  owner: string;
+  metadata: TransferMetadata;
+  file: SessionFile;
+  offset: number;
+  writing: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+function transferError(statusCode: number, message: string): Error {
+  return Object.assign(new Error(message), { statusCode });
 }
 
 export class FileService {
+  private transfers = new WeakMap<Session, Map<string, ResumableTransfer>>();
+  private partialBytes = new WeakMap<SessionFile, number>();
+  private expiryTimers = new Set<ReturnType<typeof setTimeout>>();
   private reservations = new Set<StorageReservation>();
   private itemPublications = new Map<string, Promise<void>>();
+  private stopListeningForClose: () => void;
 
   constructor(
     private config: Config,
     private repository: SessionStore,
     private recorder?: SessionRecorder,
     private log: Logger = { info: () => {}, warn: () => {}, error: () => {} },
-  ) {}
+  ) {
+    this.stopListeningForClose = repository.onSessionClosing((session) => {
+      for (const transfer of this.transfers.get(session)?.values() ?? []) {
+        this.clearExpiry(transfer);
+        this.partialBytes.delete(transfer.file);
+        if (transfer.file.state === "receiving") {
+          this.finishFileUpload(session, transfer.file, "failed", transfer.offset);
+        }
+      }
+      this.transfers.delete(session);
+    });
+  }
 
   async handleFileUpload(
     sessionId: string,
@@ -193,6 +228,45 @@ export class FileService {
       uploadSize = content.length;
     }
 
+    const fileRecord = this.beginFileUpload(session, originalName, mimeType, uploadSize, originalSize, kind);
+    const filePath = this.getFilePath(sessionId, fileRecord.storageName);
+
+    let reservation: StorageReservation | undefined;
+    try {
+      reservation = await this.reserveStorage(sessionId);
+      await this.pipeToFile(uploadStream, createWriteStream(filePath), reservation, fileRecord, signal);
+
+      const { size } = await stat(filePath);
+      this.requireActiveUploadSession(session);
+      if (signal?.aborted) throw uploadAborted();
+      this.reservations.delete(reservation);
+      this.finishFileUpload(session, fileRecord, "completed", size);
+      return { file: fileRecord };
+    } catch (err) {
+      this.finishFileUpload(session, fileRecord, "failed", fileRecord.bytesReceived);
+      // Clean up partial file
+      try {
+        await rm(filePath, { force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+
+      throw storageError(err);
+    } finally {
+      if (reservation) this.reservations.delete(reservation);
+    }
+  }
+
+  private beginFileUpload(
+    session: Session,
+    originalName: string,
+    mimeType: string,
+    uploadSize: number | undefined,
+    originalSize?: number | null,
+    kind?: "text",
+    sender?: Participant,
+  ): SessionFile {
+    const sessionId = session.id;
     // Check file count limit
     const activeFiles = session.files.filter((f) => f.state !== "failed");
     if (activeFiles.length >= this.config.maxFilesPerSession) {
@@ -200,7 +274,7 @@ export class FileService {
     }
 
     // Sanitize filename
-    let safeName = sanitizeFilename(originalName);
+    let safeName = sanitizeFilenameOr400(originalName);
     let effectiveMime = mimeType || "application/octet-stream";
     if (kind === "text") {
       if (!safeName.toLowerCase().endsWith(".txt")) safeName = `${safeName}.txt`;
@@ -208,7 +282,6 @@ export class FileService {
       effectiveMime = TEXT_MIME;
     }
     const storageName = generateStorageName();
-    const filePath = join(this.config.tempDir, sessionId, storageName);
 
     const now = new Date().toISOString();
     const fileRecord: SessionFile = {
@@ -226,6 +299,9 @@ export class FileService {
       extension: extractExtension(safeName),
       category: "", // Will be calculated after extension is set
       ...(kind === "text" ? { kind } : {}),
+      senderId: sender?.id,
+      senderName: sender?.name,
+      origin: sender?.device,
     };
     // Calculate category from extension and mime
     fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
@@ -268,111 +344,213 @@ export class FileService {
       );
     }
 
+    return fileRecord;
+  }
+
+  private requireActiveUploadSession(session: Session): void {
+    if (this.repository.getById(session.id) !== session || session.state === "CLOSED") {
+      throw transferError(410, "Session closed during upload");
+    }
+  }
+
+  private finishFileUpload(
+    session: Session, file: SessionFile, state: "completed" | "failed", bytes: number,
+  ): void {
+    file.state = state;
+    if (state === "completed") {
+      file.size = bytes;
+      file.bytesReceived = bytes;
+    }
+    file.finishedAt = new Date().toISOString();
+    this.repository.update(session);
+    fileEvents.emitFileEvent({
+      type: "file:state-changed",
+      sessionId: session.id,
+      fileId: file.id,
+      state,
+      originalName: file.originalName,
+      size: file.size,
+      bytesReceived: file.bytesReceived,
+      version: file.version,
+      mimeType: file.mimeType,
+      finishedAt: file.finishedAt,
+      extension: file.extension,
+      category: file.category,
+      kind: file.kind,
+    });
+    if (this.recorder) {
+      safeRecord(
+        this.recorder,
+        {
+          type: "transfer_finished",
+          at: new Date(),
+          id: file.id,
+          status: state,
+          size: bytes,
+        },
+        this.log,
+      );
+    }
+  }
+
+  startTransfer(
+    session: Session, transferId: string, owner: string, sender: Participant, metadata: TransferMetadata,
+  ): TransferCheckpoint {
+    this.requireActiveUploadSession(session);
+    let transfers = this.transfers.get(session);
+    const existing = transfers?.get(transferId);
+    if (existing) {
+      if (existing.owner !== owner) throw transferError(404, "Transfer not found");
+      const previous = existing.metadata;
+      if (previous.name !== metadata.name || previous.size !== metadata.size ||
+          previous.mimeType !== metadata.mimeType || previous.originalSize !== metadata.originalSize) {
+        throw transferError(409, "Transfer metadata has changed");
+      }
+      if (existing.file.state === "receiving" && !existing.writing) this.armExpiry(session.id, transferId, existing);
+      return this.checkpoint(existing);
+    }
+    if (session.state !== "PAIRED" && session.state !== "TRANSFERRING") {
+      throw transferError(409, "Session is not ready for uploads");
+    }
+    if (metadata.size > this.config.maxFileSize) throw transferError(413, "File too large");
+    if (!transfers) {
+      transfers = new Map();
+      this.transfers.set(session, transfers);
+    }
+    if (transfers.size >= MAX_TRANSFERS_PER_SESSION) throw transferError(413, "Transfer limit exceeded");
+    const file = this.beginFileUpload(session, metadata.name, metadata.mimeType, metadata.size,
+      metadata.originalSize, undefined, sender);
+    const transfer: ResumableTransfer = { owner, metadata, file, offset: 0, writing: false };
+    transfers.set(transferId, transfer);
+    this.armExpiry(session.id, transferId, transfer);
+    return this.checkpoint(transfer);
+  }
+
+  async appendTransfer(
+    session: Session, transferId: string, owner: string, offset: number, stream: Readable,
+    signal: AbortSignal,
+  ): Promise<TransferCheckpoint> {
+    this.requireActiveUploadSession(session);
+    const transfer = this.transfers.get(session)?.get(transferId);
+    if (!transfer || transfer.owner !== owner) throw transferError(404, "Transfer not found");
+    if (transfer.file.state !== "receiving") return this.checkpoint(transfer);
+    if ((session.state !== "PAIRED" && session.state !== "TRANSFERRING") ||
+        transfer.writing || offset !== transfer.offset) {
+      throw transferError(409, "Transfer is busy or offset is no longer current");
+    }
+
+    const { file } = transfer;
+    const path = this.getFilePath(session.id, file.storageName);
+    const length = Math.min(RESUMABLE_UPLOAD_CHUNK_BYTES, transfer.metadata.size - offset);
+    transfer.writing = true;
+    this.clearExpiry(transfer);
     let reservation: StorageReservation | undefined;
+    let writerOpened = false;
     try {
-      reservation = await this.reserveStorage(sessionId);
-      await this.pipeToFile(uploadStream, createWriteStream(filePath), reservation, fileRecord, signal);
+      reservation = await this.reserveStorage(session.id);
+      this.requireActiveUploadSession(session);
+      if (signal.aborted) throw uploadAborted();
+      const writer = createWriteStream(path, { flags: offset === 0 ? "w" : "r+", start: offset });
+      writerOpened = true;
+      await this.pipeToFile(stream, writer, reservation, file, signal, { offset, length });
+      this.requireActiveUploadSession(session);
+      if (signal.aborted) throw uploadAborted();
 
-      // Reverificar se sessão não foi fechada no meio
-      const currentSession = this.repository.getById(sessionId);
-      if (!currentSession || currentSession.state === "CLOSED") {
-        try {
-          await rm(filePath, { force: true });
-        } catch {
-          // best effort: temp file may already be gone
-        }
-        throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
-      }
-
-      // Get actual file size from disk
-      const fileStat = await stat(filePath);
-      if (signal?.aborted) throw uploadAborted();
-      fileRecord.bytesReceived = fileStat.size;
-      fileRecord.size = fileStat.size;
-      fileRecord.state = "completed";
+      transfer.offset += length;
+      file.bytesReceived = transfer.offset;
       this.reservations.delete(reservation);
-      fileRecord.finishedAt = new Date().toISOString();
-      this.repository.update(session);
-
-      fileEvents.emitFileEvent({
-        type: "file:state-changed",
-        sessionId,
-        fileId: fileRecord.id,
-        state: "completed",
-        originalName: safeName,
-        size: fileStat.size,
-        bytesReceived: fileStat.size,
-        version: fileRecord.version,
-        mimeType: fileRecord.mimeType,
-        finishedAt: fileRecord.finishedAt,
-        extension: fileRecord.extension,
-        category: fileRecord.category,
-        kind: fileRecord.kind,
-      });
-
-      // Emit transfer_finished event
-      if (this.recorder) {
-        safeRecord(
-          this.recorder,
-          {
-            type: "transfer_finished",
-            at: new Date(),
-            id: fileRecord.id,
-            status: "completed" as const,
-            size: fileStat.size,
-          },
-          this.log,
-        );
+      if (transfer.offset === transfer.metadata.size) {
+        this.partialBytes.delete(file);
+        this.finishFileUpload(session, file, "completed", transfer.offset);
+        if (session.mode === "twoway") {
+          const event = itemAddedEvent(file);
+          if (event) this.repository.notifyWs(session.id, event);
+        }
+      } else {
+        this.partialBytes.set(file, transfer.offset);
+        fileEvents.markProgress(session.id, file);
       }
-
-      return { file: fileRecord };
-    } catch (err) {
-      fileRecord.state = "failed";
-      fileRecord.finishedAt = new Date().toISOString();
-      this.repository.update(session);
-
-      fileEvents.emitFileEvent({
-        type: "file:state-changed",
-        sessionId,
-        fileId: fileRecord.id,
-        state: "failed",
-        originalName: safeName,
-        size: fileRecord.size,
-        bytesReceived: fileRecord.bytesReceived,
-        version: fileRecord.version,
-        mimeType: fileRecord.mimeType,
-        finishedAt: fileRecord.finishedAt,
-        extension: fileRecord.extension,
-        category: fileRecord.category,
-        kind: fileRecord.kind,
-      });
-
-      // Emit transfer_finished event with failure
-      if (this.recorder) {
-        safeRecord(
-          this.recorder,
-          {
-            type: "transfer_finished",
-            at: new Date(),
-            id: fileRecord.id,
-            status: "failed" as const,
-            size: fileRecord.bytesReceived,
-          },
-          this.log,
-        );
+      return this.checkpoint(transfer);
+    } catch (error) {
+      if (writerOpened && this.repository.getById(session.id) === session) {
+        try {
+          if (offset === 0) await rm(path, { force: true });
+          else await truncate(path, offset);
+        } catch (rollbackError) {
+          // Retain quota for bytes that may still exist until expiry can remove the file.
+          this.partialBytes.set(file, offset + (reservation?.bytes ?? 0));
+          this.finishFileUpload(session, file, "failed", transfer.offset);
+          this.log.warn(`resumable transfer rollback failed: ${session.id} (${(rollbackError as NodeJS.ErrnoException).code})`);
+        }
       }
-
-      // Clean up partial file
-      try {
-        await rm(filePath, { force: true });
-      } catch {
-        // ignore cleanup errors
-      }
-
-      throw storageError(err);
+      throw storageError(error);
     } finally {
       if (reservation) this.reservations.delete(reservation);
+      transfer.writing = false;
+      if (file.state !== "completed" && this.repository.getById(session.id) === session) {
+        this.armExpiry(session.id, transferId, transfer);
+      }
     }
+  }
+
+  private checkpoint(transfer: ResumableTransfer): TransferCheckpoint {
+    if (transfer.file.state === "failed") throw transferError(409, "Transfer cannot be resumed");
+    return {
+      offset: transfer.offset,
+      fileId: transfer.file.state === "completed" ? transfer.file.id : null,
+      chunkSize: RESUMABLE_UPLOAD_CHUNK_BYTES,
+    };
+  }
+
+  private clearExpiry(transfer: ResumableTransfer): void {
+    if (transfer.timer === undefined) return;
+    clearTimeout(transfer.timer);
+    this.expiryTimers.delete(transfer.timer);
+    transfer.timer = undefined;
+  }
+
+  private armExpiry(sessionId: string, transferId: string, transfer: ResumableTransfer): void {
+    this.clearExpiry(transfer);
+    const timer = setTimeout(() => {
+      this.expiryTimers.delete(timer);
+      void this.expireTransfer(sessionId, transferId);
+    }, PARTIAL_TRANSFER_TTL_MS);
+    transfer.timer = timer;
+    this.expiryTimers.add(timer);
+    timer.unref();
+  }
+
+  private async expireTransfer(sessionId: string, transferId: string): Promise<void> {
+    const session = this.repository.getById(sessionId);
+    if (!session || session.state === "CLOSED") return;
+    const transfers = this.transfers.get(session);
+    const transfer = transfers?.get(transferId);
+    if (!transfer || transfer.writing || transfer.file.state === "completed") return;
+    transfer.writing = true;
+    try {
+      await rm(this.getFilePath(sessionId, transfer.file.storageName), { force: true });
+      if (this.repository.getById(sessionId) !== session) return;
+      this.partialBytes.delete(transfer.file);
+      if (transfer.file.state !== "failed") this.finishFileUpload(session, transfer.file, "failed", transfer.offset);
+      session.files = session.files.filter((file) => file !== transfer.file);
+      transfers?.delete(transferId);
+    } catch (error) {
+      this.log.warn(`partial upload cleanup failed: ${sessionId} (${(error as NodeJS.ErrnoException).code})`);
+      this.armExpiry(session.id, transferId, transfer);
+    } finally {
+      transfer.writing = false;
+    }
+  }
+
+  shutdown(): void {
+    this.stopListeningForClose();
+    for (const timer of this.expiryTimers) clearTimeout(timer);
+    this.expiryTimers.clear();
+  }
+
+  private storedBytes(session: Session): number {
+    return session.files.reduce((sum, file) => sum +
+      (file.state === "completed" ? file.size : this.partialBytes.get(file) ?? 0), 0);
   }
 
   async withItemPublication<T>(
@@ -546,12 +724,12 @@ export class FileService {
 
     if (room?.mode === "twoway") {
       const roomLimit = this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes;
-      if (completedBytes(room) + roomPending > roomLimit) {
+      if (this.storedBytes(room) + roomPending > roomLimit) {
         throw Object.assign(new Error("Session storage limit exceeded"), { statusCode: 413 });
       }
     }
 
-    const stored = this.repository.getAll().reduce((sum, session) => sum + completedBytes(session), 0);
+    const stored = this.repository.getAll().reduce((sum, session) => sum + this.storedBytes(session), 0);
     if (stored + volumePending > reservation.volumeLimit) {
       throw Object.assign(new Error("Insufficient storage space"), { statusCode: 507 });
     }
@@ -565,10 +743,12 @@ export class FileService {
     reservation: StorageReservation,
     fileRecord: SessionFile,
     signal?: AbortSignal,
+    chunkRange?: { offset: number; length: number },
   ): Promise<void> {
     const { sessionId } = reservation;
     return new Promise<void>((resolve, reject) => {
-      let bytesReceived = 0;
+      const offset = chunkRange?.offset ?? 0;
+      let bytesReceived = offset;
       let failure: Error | undefined;
 
       const cleanup = () => {
@@ -577,7 +757,8 @@ export class FileService {
         signal?.removeEventListener("abort", onAbort);
       };
       const fail = (err: Error) => {
-        failure ??= err;
+        const disconnected = (err as NodeJS.ErrnoException).code === "ECONNRESET" && !stream.readableEnded;
+        failure ??= disconnected ? uploadAborted() : err;
         stream.destroy();
         ws.destroy();
       };
@@ -600,20 +781,19 @@ export class FileService {
 
         try {
           checkFileSize(stream, bytesReceived, this.config.maxFileSize);
-          this.growReservation(reservation, bytesReceived);
+          if (chunkRange && bytesReceived - offset > chunkRange.length) {
+            throw transferError(413, "Chunk exceeds its expected length");
+          }
+          this.growReservation(reservation, bytesReceived - offset);
         } catch (err) {
           fail(err as Error);
           return;
         }
 
-        fileRecord.bytesReceived = bytesReceived;
-        fileEvents.emitFileEvent({
-          type: "file:progress",
-          sessionId,
-          fileId: fileRecord.id,
-          bytesReceived,
-          size: fileRecord.size,
-        });
+        if (!chunkRange) {
+          fileRecord.bytesReceived = bytesReceived;
+          if (fileRecord.state === "receiving") fileEvents.markProgress(sessionId, fileRecord);
+        }
 
         if (!ws.write(chunk)) {
           stream.pause();
@@ -623,6 +803,9 @@ export class FileService {
       const onEnd = () => {
         try {
           checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+          if (chunkRange && bytesReceived - offset !== chunkRange.length) {
+            throw transferError(400, "Incomplete chunk");
+          }
           ws.end();
         } catch (err) {
           fail(err as Error);

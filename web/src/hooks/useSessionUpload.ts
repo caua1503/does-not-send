@@ -1,9 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GuestUploadItem } from "../pages/guest/UploadItem.tsx";
 import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../lib/convertHeic.ts";
+import { TaskQueue } from "../lib/taskQueue.ts";
+import { RESUMABLE_UPLOAD_MIN_BYTES } from "../../../src/shared/resumable-upload.ts";
+import { ApiError } from "../lib/api.ts";
+import { newTransferId, resumableUpload } from "../lib/resumableUpload.ts";
 import { BASE_URL } from "../lib/base.ts";
 import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
+
+// Full-resolution decodes are memory-heavy on phones. Keep one in flight;
+// two independent network slots allow the next file to start while one is uploading.
+const decodeQueue = new TaskQueue(1);
+const uploadQueue = new TaskQueue(2);
 
 interface UseSessionUploadOptions {
   sessionId: string;
@@ -36,187 +45,276 @@ export function useSessionUpload({
   const onClosedRef = useRef(onClosed);
   onClosedRef.current = onClosed;
 
-  const uploadSingleFile = (item: GuestUploadItem) => {
-    if (disabledRef.current) return;
+  const scope = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    scope.current = controller;
+    return () => controller.abort();
+  }, [sessionId, credential]);
 
-    setItems((prev) =>
-      prev.map((current) =>
-        current.id === item.id
-          ? { ...current, state: "uploading", progress: 0, error: undefined }
-          : current,
-      ),
-    );
-
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    // Field first: the server streams the file part and reads it before the bytes.
-    formData.append("originalSize", String(item.originalSize ?? item.file.size));
-    formData.append("files", item.file, item.file.name);
-
-    xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-      const progress = event.loaded / event.total;
-      setItems((prev) =>
-        prev.map((current) => (current.id === item.id ? { ...current, progress } : current)),
-      );
-    };
-
-    xhr.onload = () => {
-      if (xhr.status === 201) {
-        let remoteId: string | undefined;
-        try {
-          const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
-          remoteId = body.files?.[0]?.id;
-        } catch {
-          // resposta sem corpo válido: upload concluído, sem id remoto
+  const enqueueUpload = (item: GuestUploadItem, task: (signal: AbortSignal) => Promise<void>) => {
+    const signal = scope.current.signal;
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "pending", error: undefined }
+      : current));
+    void uploadQueue.run(async () => {
+      if (signal.aborted || disabledRef.current) return;
+      try {
+        await task(signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        let message = "Sem conexão com o servidor";
+        if (error instanceof ApiError) {
+          if (error.status === 410) {
+            onClosedRef.current?.();
+            message = "Sessão encerrada";
+          } else if (error.status === 413) {
+            message = "Arquivo muito grande ou limite excedido";
+          } else if (error.status === 507) {
+            message = "Sem espaço para continuar o envio";
+          } else if (error.status === 409) {
+            message = "Envio interrompido. Tente novamente.";
+          } else {
+            message = error.message;
+          }
         }
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "completed", progress: 1, remoteId }
-              : current,
-          ),
-        );
-        if (item.kind === "text") setTextError(null);
-      } else if (xhr.status === 401) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Falha de autorização no envio" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 410) {
-        onClosedRef.current?.();
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Sessão encerrada" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 404) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Sessão não encontrada" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 409) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: conflictMessage(xhr) }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 400 || xhr.status === 429) {
-        let message =
-          xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
-        try {
-          const body = JSON.parse(xhr.responseText) as { error?: unknown };
-          if (typeof body.error === "string") message = body.error;
-        } catch {
-          // resposta sem corpo válido: mantém a mensagem padrão
-        }
-        if (item.kind === "text") setTextError(message);
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id ? { ...current, state: "error", error: message } : current,
-          ),
-        );
-      } else if (xhr.status === 413) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? {
-                  ...current,
-                  state: "error",
-                  error: "Arquivo muito grande ou limite excedido",
-                }
-              : current,
-          ),
-        );
-      } else if (xhr.status >= 500 && xhr.status < 600) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? {
-                  ...current,
-                  state: "error",
-                  error: "Servidor temporariamente indisponível",
-                }
-              : current,
-          ),
-        );
-      } else {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: `Erro ${xhr.status}` }
-              : current,
-          ),
-        );
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, state: "error", error: message }
+          : current));
       }
-    };
+    });
+  };
 
-    xhr.onerror = () => {
+  const enqueueMultipart = (item: GuestUploadItem, configure: (xhr: XMLHttpRequest) => FormData) =>
+    enqueueUpload(item, (signal) => new Promise<void>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", cancel);
+        resolve();
+      };
+      const cancel = () => {
+        finish();
+        xhr.abort?.();
+      };
+      const failed = () => {
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+          : current));
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        const body = configure(xhr);
+        if (signal.aborted) return;
+        const onLoad = xhr.onload;
+        const onError = xhr.onerror;
+        xhr.onload = (event) => {
+          try { if (!settled) onLoad?.call(xhr, event); } finally { finish(); }
+        };
+        xhr.onerror = (event) => {
+          try { if (!settled) onError?.call(xhr, event); } finally { finish(); }
+        };
+        xhr.onabort = xhr.ontimeout = () => {
+          if (!settled) failed();
+          finish();
+        };
+        xhr.send(body);
+      } catch {
+        failed();
+        finish();
+      }
+    }));
+
+  const uploadLargeFile = (item: GuestUploadItem) => enqueueUpload(item, async (signal) => {
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "uploading", progress: 0 }
+      : current));
+    const remoteId = await resumableUpload({
+      url: `${BASE_URL}/api/sessions/${sessionId}/transfers/${item.id}`,
+      credential,
+      file: item.file,
+      originalSize: item.originalSize ?? item.file.size,
+      signal,
+      onProgress: (bytes) => {
+        if (signal.aborted) return;
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, progress: bytes / item.file.size }
+          : current));
+      },
+    });
+    if (signal.aborted) return;
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "completed", progress: 1, remoteId }
+      : current));
+  });
+
+  const uploadSingleFile = (item: GuestUploadItem) => {
+    if (item.kind !== "text" && item.file.size >= RESUMABLE_UPLOAD_MIN_BYTES) {
+      uploadLargeFile(item);
+      return;
+    }
+    enqueueMultipart(item, (xhr) => {
       setItems((prev) =>
         prev.map((current) =>
           current.id === item.id
-            ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+            ? { ...current, state: "uploading", progress: 0, error: undefined }
             : current,
         ),
       );
-    };
 
-    xhr.open(
-      "POST",
-      `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
-    );
-    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
+      const formData = new FormData();
+      // Field first: the server streams the file part and reads it before the bytes.
+      formData.append("originalSize", String(item.originalSize ?? item.file.size));
+      formData.append("files", item.file, item.file.name);
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const progress = event.loaded / event.total;
+        setItems((prev) =>
+          prev.map((current) => (current.id === item.id ? { ...current, progress } : current)),
+        );
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 201) {
+          let remoteId: string | undefined;
+          try {
+            const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
+            remoteId = body.files?.[0]?.id;
+          } catch {
+            // resposta sem corpo válido: upload concluído, sem id remoto
+          }
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "completed", progress: 1, remoteId }
+                : current,
+            ),
+          );
+          if (item.kind === "text") setTextError(null);
+        } else if (xhr.status === 401) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Falha de autorização no envio" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 410) {
+          onClosedRef.current?.();
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Sessão encerrada" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 404) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Sessão não encontrada" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 409) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: conflictMessage(xhr) }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 400 || xhr.status === 429) {
+          let message =
+            xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
+          try {
+            const body = JSON.parse(xhr.responseText) as { error?: unknown };
+            if (typeof body.error === "string") message = body.error;
+          } catch {
+            // resposta sem corpo válido: mantém a mensagem padrão
+          }
+          if (item.kind === "text") setTextError(message);
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id ? { ...current, state: "error", error: message } : current,
+            ),
+          );
+        } else if (xhr.status === 413) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? {
+                    ...current,
+                    state: "error",
+                    error: "Arquivo muito grande ou limite excedido",
+                  }
+                : current,
+            ),
+          );
+        } else if (xhr.status >= 500 && xhr.status < 600) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? {
+                    ...current,
+                    state: "error",
+                    error: "Servidor temporariamente indisponível",
+                  }
+                : current,
+            ),
+          );
+        } else {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: `Erro ${xhr.status}` }
+                : current,
+            ),
+          );
+        }
+      };
+
+      xhr.onerror = () => {
+        setItems((prev) =>
+          prev.map((current) =>
+            current.id === item.id
+              ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+              : current,
+          ),
+        );
+      };
+
+      xhr.open(
+        "POST",
+        `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
+      );
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+      return formData;
+    });
   };
 
-  const processAndUpload = async (id: string, initialFile: File) => {
-    if (disabledRef.current) return;
-
-    let finalFile = initialFile;
+  const processAndUpload = async (item: GuestUploadItem) => {
+    const signal = scope.current.signal;
+    const heic = isHeic(item.file);
     try {
-      finalFile = await compressPhoto(initialFile);
+      const file = await decodeQueue.run(async () => {
+        if (disabledRef.current || signal.aborted) return item.file;
+        return heic ? convertHeicToJpeg(item.file) : compressPhoto(item.file);
+      });
+      if (disabledRef.current || signal.aborted) return;
+      setItems((prev) => prev.map((current) =>
+        current.id === item.id ? { ...current, file } : current,
+      ));
+      uploadSingleFile({ ...item, file });
     } catch {
-      finalFile = initialFile;
+      if (signal.aborted) return;
+      setItems((prev) => prev.map((current) => current.id === item.id
+        ? { ...current, state: "error", error: "Não foi possível converter a imagem HEIC" }
+        : current));
     }
-
-    if (disabledRef.current) return;
-
-    try {
-      finalFile = await convertHeicToJpeg(finalFile);
-    } catch {
-      setItems((prev) =>
-        prev.map((current) =>
-          current.id === id
-            ? {
-                ...current,
-                state: "error",
-                error: "Não foi possível converter a imagem HEIC",
-              }
-            : current,
-        ),
-      );
-      return;
-    }
-
-    setItems((prev) =>
-      prev.map((current) =>
-        current.id === id
-          ? { ...current, file: finalFile, state: "uploading", progress: 0 }
-          : current,
-      ),
-    );
-
-    uploadSingleFile({ id, file: finalFile, progress: 0, state: "uploading" });
   };
 
   const handleFilesChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -225,7 +323,7 @@ export function useSessionUpload({
     const fileList = Array.from(event.target.files);
 
     const newItems: GuestUploadItem[] = fileList.map((file) => ({
-      id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+      id: newTransferId(),
       file,
       originalSize: file.size,
       progress: 0,
@@ -237,7 +335,7 @@ export function useSessionUpload({
 
     newItems.forEach((item) => {
       if (item.state === "optimizing") {
-        void processAndUpload(item.id, item.file);
+        void processAndUpload(item);
       } else {
         uploadSingleFile(item);
       }
@@ -275,7 +373,7 @@ export function useSessionUpload({
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: GuestUploadItem, file: File) => {
+  const replaceEditedImage = (item: GuestUploadItem, file: File) => enqueueMultipart(item, (xhr) => {
     setItems((prev) =>
       prev.map((current) =>
         current.id === item.id
@@ -283,7 +381,6 @@ export function useSessionUpload({
           : current,
       ),
     );
-    const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("originalSize", String(file.size));
     formData.append("files", file, file.name);
@@ -326,8 +423,8 @@ export function useSessionUpload({
     xhr.onerror = () => fail("Sem conexão com o servidor");
     xhr.open("PUT", `${BASE_URL}/api/sessions/${sessionId}/files/${item.remoteId}`);
     xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
-  };
+    return formData;
+  });
 
   const retryUpload = (id: string) => {
     const item = items.find((current) => current.id === id);
@@ -336,7 +433,14 @@ export function useSessionUpload({
       replaceEditedImage(item, item.file);
       return;
     }
-    uploadSingleFile(item);
+    if (isHeic(item.file)) {
+      setItems((prev) => prev.map((current) => current.id === item.id
+        ? { ...current, state: "optimizing", error: undefined }
+        : current));
+      void processAndUpload(item);
+    } else {
+      uploadSingleFile(item);
+    }
   };
 
   const totalFiles = items.length;

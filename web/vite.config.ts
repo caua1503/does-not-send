@@ -18,6 +18,7 @@ export default defineConfig({
       },
     },
   },
+  worker: { format: "es" },
   build: {
     outDir: "dist",
     emptyOutDir: true,
