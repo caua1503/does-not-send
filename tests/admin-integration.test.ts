@@ -5,6 +5,7 @@ import { buildApp } from "../src/app.js";
 import { createDbClient, type DbClient } from "../src/db/client.js";
 import { MigrationRunner } from "../src/db/migrate.js";
 import { events, sessionParticipants, sessions, transfers } from "../src/db/schema.js";
+import { createMultipartPayload, createSession } from "./helpers.js";
 import { loadConfig } from "../src/utils/config.js";
 import type {
   AdminSummary,
@@ -390,6 +391,30 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
     expect(byId.get(SESSION_C)).toMatchObject({ mode: null, participantCount: 0 });
     expect(byId.get(SESSION_D)).toMatchObject({ mode: "twoway", participantCount: 3 });
     expect(byId.get(SESSION_E)).toMatchObject({ mode: "twoway", participantCount: 1 });
+  });
+
+  it("@db contabiliza 5 MiB economizados quando a foto de 6 MiB chega com 1 MiB", async () => {
+    const mib = 1024 * 1024;
+    const session = await createSession(app);
+    const { body, contentType } = createMultipartPayload([
+      { name: "files", filename: "comprimida.jpg", contentType: "image/jpeg", content: Buffer.alloc(mib) },
+    ], [{ name: "originalSize", value: String(6 * mib) }]);
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/sessions/${session.id}/files`,
+      headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
+      body,
+    });
+    expect(upload.statusCode).toBe(201);
+    await expect.poll(async () => get(`/admin/api/summary?session=${session.id}`), { timeout: 5000 })
+      .toMatchObject({
+        totals: { files: 1, volumeBytes: mib },
+        trafficSaved: { originalBytes: 6 * mib, savedBytes: 5 * mib },
+      });
+    await app.inject({
+      method: "DELETE", url: `/api/sessions/${session.id}`,
+      headers: { authorization: `Bearer ${session.ownerToken}` },
+    });
   });
 
   it("@db sem sessão: 401 (painel não vaza dados)", () => {

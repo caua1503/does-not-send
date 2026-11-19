@@ -216,7 +216,7 @@ export function useSessionUpload({
       ),
     );
 
-    uploadSingleFile({ id, file: finalFile, progress: 0, state: "uploading" });
+    uploadSingleFile({ id, file: finalFile, originalSize: initialFile.size, progress: 0, state: "uploading" });
   };
 
   const handleFilesChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
