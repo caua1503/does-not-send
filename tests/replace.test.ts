@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { request } from "node:http";
+import { PassThrough, Readable } from "node:stream";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -303,6 +304,64 @@ describe("premature HTTP disconnect", () => {
     } finally {
       req.destroy();
       await cleanupTestApp(ctx);
+    }
+  });
+});
+
+describe("storage reservations", () => {
+  it("counts both versions against the volume and releases failed writes", async () => {
+    const ctx = await createTestApp({ maxFileSize: 10, maxStorageBytes: 8 });
+    try {
+      const session = await createSession(ctx.app);
+      const original = await uploadFile(ctx.app, session, "12345", "file.txt");
+      const other = await createSession(ctx.app);
+      const otherPayload = createMultipartPayload([
+        { name: "file", content: Buffer.from("abcd"), filename: "other.txt" },
+      ]);
+      const post = await ctx.app.inject({
+        method: "POST",
+        url: `/api/sessions/${other.id}/files`,
+        headers: { authorization: `Bearer ${other.uploadToken}`, "content-type": otherPayload.contentType },
+        body: otherPayload.body,
+      });
+      const put = await replaceFile(ctx, session, original.id, "abcd", "file.txt");
+      const stored = appCtx(ctx).sessionStore.getById(session.id)!.files[0]!;
+      const directory = join(ctx.tempDir, session.id);
+      expect({
+        post: post.statusCode, put: put.statusCode, version: stored.version,
+        content: await readFile(join(directory, original.id), "utf8"), entries: await readdir(directory),
+      }).toEqual({ post: 507, put: 507, version: 1, content: "12345", entries: [original.id] });
+
+      expect((await replaceFile(ctx, session, original.id, "abc", "file.txt")).statusCode).toBe(200);
+      expect(stored.version).toBe(2);
+      expect(await readFile(join(directory, original.id), "utf8")).toBe("abc");
+    } finally {
+      await cleanupTestApp(ctx);
+    }
+  });
+
+  it.each(["room", "volume"])("reserves bytes of unfinished uploads against the %s", async (scope) => {
+    const ctx = await createTestApp(scope === "room" ? { twowayMaxTotalBytes: 6 } : { maxStorageBytes: 6 });
+    const { fileService, sessionStore } = appCtx(ctx);
+    const session = await createSession(ctx.app);
+    if (scope === "room") sessionStore.getById(session.id)!.mode = "twoway";
+    const other = scope === "room" ? session : await createSession(ctx.app);
+    const stream = new PassThrough();
+    const first = fileService.handleFileUpload(session.id, "first.txt", "text/plain", stream);
+    try {
+      stream.write("abcd");
+      await expect.poll(() => sessionStore.getById(session.id)!.files[0]?.bytesReceived).toBe(4);
+      await expect(fileService.handleFileUpload(other.id, "second.txt", "text/plain", Readable.from([Buffer.from("efgh")])))
+        .rejects.toMatchObject({ statusCode: scope === "room" ? 413 : 507 });
+    } finally {
+      stream.end();
+      const { file } = await first;
+      try {
+        expect(file.version).toBe(1);
+        expect(await readFile(join(ctx.tempDir, session.id, file.id), "utf8")).toBe("abcd");
+      } finally {
+        await cleanupTestApp(ctx);
+      }
     }
   });
 });

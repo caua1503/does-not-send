@@ -20,6 +20,7 @@ export interface Config {
   port: number;
   tempDir: string;
   maxFileSize: number;
+  maxStorageBytes?: number;
   maxFilesPerSession: number;
   allowedOrigins: string[];
   publicBaseUrl: string;
@@ -147,6 +148,9 @@ export function loadConfig(): Config {
     port,
     tempDir,
     maxFileSize,
+    maxStorageBytes: process.env.MAX_STORAGE_BYTES
+      ? parsePositiveInt("MAX_STORAGE_BYTES", process.env.MAX_STORAGE_BYTES)
+      : undefined,
     maxFilesPerSession,
     allowedOrigins,
     publicBaseUrl,

@@ -131,10 +131,10 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               statusCode: error.statusCode,
             });
           }
-          if (error.statusCode === 413) {
-            return reply.status(413).send({
+          if (error.statusCode === 413 || error.statusCode === 507) {
+            return reply.status(error.statusCode).send({
               error: error.message,
-              statusCode: 413,
+              statusCode: error.statusCode,
             });
           }
           if (error.statusCode === 410 || error.statusCode === 499) {
@@ -217,6 +217,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             const error = err as Error & { statusCode?: number };
             if (
               error.statusCode === 413 ||
+              error.statusCode === 507 ||
               error.statusCode === 404 ||
               error.statusCode === 400
             ) {

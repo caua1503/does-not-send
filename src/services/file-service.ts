@@ -1,11 +1,11 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { rename, rm, stat } from "node:fs/promises";
+import { rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { Readable as ReadableStream } from "node:stream";
 import type { Config } from "../utils/config.js";
 import type { SessionStore } from "../session/store.js";
-import type { SessionFile } from "../types.js";
+import type { Session, SessionFile } from "../types.js";
 import { generateStorageName } from "../utils/crypto.js";
 import { sanitizeFilename } from "../utils/sanitize.js";
 import { fileEvents } from "../utils/events.js";
@@ -119,7 +119,27 @@ function sanitizeFilenameOr400(name: string): string {
   }
 }
 
+function storageError(err: unknown): unknown {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOSPC" || code === "EDQUOT") {
+    return Object.assign(new Error("Insufficient storage space", { cause: err }), { statusCode: 507 });
+  }
+  return err;
+}
+
+interface StorageReservation {
+  sessionId: string;
+  bytes: number;
+  volumeLimit: number;
+}
+
+function completedBytes(session: Session): number {
+  return session.files.reduce((sum, file) => sum + (file.state === "completed" ? file.size : 0), 0);
+}
+
 export class FileService {
+  private reservations = new Set<StorageReservation>();
+
   constructor(
     private config: Config,
     private repository: SessionStore,
@@ -247,8 +267,10 @@ export class FileService {
       );
     }
 
+    let reservation: StorageReservation | undefined;
     try {
-      await this.pipeToFile(uploadStream, createWriteStream(filePath), sessionId, fileRecord, signal);
+      reservation = await this.reserveStorage(sessionId);
+      await this.pipeToFile(uploadStream, createWriteStream(filePath), reservation, fileRecord, signal);
 
       // Reverificar se sessão não foi fechada no meio
       const currentSession = this.repository.getById(sessionId);
@@ -267,6 +289,7 @@ export class FileService {
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.size = fileStat.size;
       fileRecord.state = "completed";
+      this.reservations.delete(reservation);
       fileRecord.finishedAt = new Date().toISOString();
       this.repository.update(session);
 
@@ -345,7 +368,9 @@ export class FileService {
         // ignore cleanup errors
       }
 
-      throw err;
+      throw storageError(err);
+    } finally {
+      if (reservation) this.reservations.delete(reservation);
     }
   }
 
@@ -400,9 +425,11 @@ export class FileService {
       extension: nextExtension,
     };
 
+    let reservation: StorageReservation | undefined;
     try {
+      reservation = await this.reserveStorage(sessionId);
       const writeStream = createWriteStream(tempPath);
-      await this.pipeToFile(stream, writeStream, sessionId, tempRecord, signal);
+      await this.pipeToFile(stream, writeStream, reservation, tempRecord, signal);
 
       const currentSession = this.repository.getById(sessionId);
       if (!currentSession || currentSession.state === "CLOSED") {
@@ -416,6 +443,7 @@ export class FileService {
       fileRecord.originalName = finalName;
       fileRecord.mimeType = nextMimeType;
       fileRecord.size = fileStat.size;
+      this.reservations.delete(reservation);
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.finishedAt = new Date().toISOString();
       fileRecord.version += 1;
@@ -459,29 +487,56 @@ export class FileService {
       return { file: fileRecord };
     } catch (err) {
       await rm(tempPath, { force: true }).catch(() => {});
-      throw err;
+      throw storageError(err);
+    } finally {
+      if (reservation) this.reservations.delete(reservation);
     }
+  }
+
+  private async reserveStorage(sessionId: string): Promise<StorageReservation> {
+    let volumeLimit = this.config.maxStorageBytes;
+    if (volumeLimit === undefined) {
+      const volume = await statfs(this.config.tempDir);
+      volumeLimit = volume.blocks * volume.bsize;
+    }
+    const reservation = { sessionId, bytes: 0, volumeLimit };
+    this.reservations.add(reservation);
+    return reservation;
+  }
+
+  private growReservation(reservation: StorageReservation, bytes: number): void {
+    const room = this.repository.getById(reservation.sessionId);
+    let roomPending = bytes;
+    let volumePending = bytes;
+    for (const pending of this.reservations) {
+      if (pending === reservation) continue;
+      volumePending += pending.bytes;
+      if (pending.sessionId === reservation.sessionId) roomPending += pending.bytes;
+    }
+
+    if (room?.mode === "twoway") {
+      const roomLimit = this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes;
+      if (completedBytes(room) + roomPending > roomLimit) {
+        throw Object.assign(new Error("Session storage limit exceeded"), { statusCode: 413 });
+      }
+    }
+
+    const stored = this.repository.getAll().reduce((sum, session) => sum + completedBytes(session), 0);
+    if (stored + volumePending > reservation.volumeLimit) {
+      throw Object.assign(new Error("Insufficient storage space"), { statusCode: 507 });
+    }
+    reservation.bytes = bytes;
   }
 
   // Streams to disk with the same abort/size/progress rules for upload and replace.
   private pipeToFile(
     stream: Readable,
     ws: WriteStream,
-    sessionId: string,
+    reservation: StorageReservation,
     fileRecord: SessionFile,
     signal?: AbortSignal,
   ): Promise<void> {
-    const session = this.repository.getById(sessionId);
-    const totalLimit =
-      session?.mode === "twoway"
-        ? this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes
-        : 0;
-    const existingBytes = session
-      ? session.files
-          .filter((f) => f.id !== fileRecord.id && f.state === "completed")
-          .reduce((sum, f) => sum + f.size, 0)
-      : 0;
-
+    const { sessionId } = reservation;
     return new Promise<void>((resolve, reject) => {
       let bytesReceived = 0;
       let failure: Error | undefined;
@@ -515,13 +570,9 @@ export class FileService {
 
         try {
           checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+          this.growReservation(reservation, bytesReceived);
         } catch (err) {
           fail(err as Error);
-          return;
-        }
-
-        if (totalLimit > 0 && existingBytes + bytesReceived > totalLimit) {
-          fail(Object.assign(new Error("Session storage limit exceeded"), { statusCode: 413 }));
           return;
         }
 
