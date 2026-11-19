@@ -41,7 +41,10 @@ export async function websocketRoutes(
       let participant: Participant | null = null;
       let eventHandlers: Array<{ type: FileEventType; handler: (event: FileEvent) => void }> = [];
 
+      let cleanedUp = false;
       function cleanup(): void {
+        if (cleanedUp) return;
+        cleanedUp = true;
         ctx.sessionStore.unregisterWs(sessionId, socket, authenticatedRole);
         for (const { type, handler } of eventHandlers) {
           fileEvents.offFileEvent(type, sessionId, handler);
@@ -117,6 +120,7 @@ export async function websocketRoutes(
             }
 
             if (sessionMode(session) === "twoway") {
+              ctx.sessionStore.recordHeartbeat(sessionId, role, participant.id);
               ctx.sessionStore.registerParticipantSocket(
                 sessionId,
                 participant.id,
@@ -144,7 +148,7 @@ export async function websocketRoutes(
 
           // 2. Authenticated messages
           if (msg.type === "heartbeat") {
-            ctx.sessionStore.recordHeartbeat(sessionId, authenticatedRole);
+            ctx.sessionStore.recordHeartbeat(sessionId, authenticatedRole, participant?.id);
             if (socket.readyState === socket.OPEN) {
               socket.send(JSON.stringify({ type: "heartbeat_ack" }));
             }

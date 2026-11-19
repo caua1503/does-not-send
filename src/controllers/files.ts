@@ -77,6 +77,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
       session.id,
       abortController,
+      auth.participant.id,
     );
 
     try {
@@ -138,9 +139,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             });
           }
           if (error.statusCode === 410 || error.statusCode === 499) {
-            return reply.status(410).send({
-              error: "Session closed during upload",
-              statusCode: 410,
+            const closed = error.statusCode === 410 || ctx.sessionStore.getById(session.id)?.state === "CLOSED";
+            const statusCode = closed ? 410 : 409;
+            return reply.status(statusCode).send({
+              error: closed ? "Session closed during upload" : "Upload interrupted",
+              code: closed ? "SESSION_CLOSED" : "UPLOAD_INTERRUPTED",
+              statusCode,
             });
           }
           throw err;
@@ -180,6 +184,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
         session.id,
         abortController,
+        auth.participant.id,
       );
 
       try {
@@ -228,9 +233,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               });
             }
             if (error.statusCode === 410 || error.statusCode === 499) {
-              return reply.status(410).send({
-                error: "Session closed during upload",
-                statusCode: 410,
+              const closed = error.statusCode === 410 || ctx.sessionStore.getById(session.id)?.state === "CLOSED";
+              const statusCode = closed ? 410 : 409;
+              return reply.status(statusCode).send({
+                error: closed ? "Session closed during upload" : "Upload interrupted",
+                code: closed ? "SESSION_CLOSED" : "UPLOAD_INTERRUPTED",
+                statusCode,
               });
             }
             throw err;

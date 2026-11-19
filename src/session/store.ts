@@ -86,7 +86,8 @@ export class SessionStore {
   private participantSockets = new Map<string, Map<string, Set<WebSocketLike>>>();
   private twowayIdleTimeoutMs: number;
   private hostDisconnectedAt = new Map<string, number>();
-  private activeUploadControllers = new Map<string, Set<AbortController>>();
+  private participantPresence = new Map<string, Map<string, { seenAt: number; offline: boolean }>>();
+  private activeUploadControllers = new Map<string, Map<AbortController, string | undefined>>();
   private textUploadTimes = new Map<string, number[]>();
   private sweeperTimer: ReturnType<typeof setInterval> | null = null;
   readonly loginCodes: LoginCodeManager;
@@ -192,6 +193,7 @@ export class SessionStore {
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.participantSockets.clear();
+    this.participantPresence.clear();
     this.hostDisconnectedAt.clear();
     this.activeUploadControllers.clear();
     this.textUploadTimes.clear();
@@ -211,16 +213,24 @@ export class SessionStore {
   }
 
   // Heartbeat handler
-  recordHeartbeat(sessionId: string, role: "computer" | "phone"): boolean {
+  recordHeartbeat(sessionId: string, role: "computer" | "phone", participantId?: string): boolean {
     const session = this.getById(sessionId);
     if (!session || session.state === "CLOSED") return false;
 
     const now = this.clock.now();
+    if (session.mode === "twoway" && participantId) {
+      let presence = this.participantPresence.get(sessionId);
+      if (!presence) {
+        presence = new Map();
+        this.participantPresence.set(sessionId, presence);
+      }
+      presence.set(participantId, { seenAt: now, offline: false });
+    }
     session.lastSeen[roleSlot(role)] = now;
     session.lastActivity = new Date(now).toISOString();
     if (role === "computer") this.hostDisconnectedAt.delete(sessionId);
 
-    if (role === "phone" && session.state === "DISCONNECTED") {
+    if (session.mode !== "twoway" && role === "phone" && session.state === "DISCONNECTED") {
       transition(session, "PAIRED");
     }
 
@@ -229,13 +239,13 @@ export class SessionStore {
   }
 
   // Upload AbortController registry
-  registerUploadAbortController(sessionId: string, controller: AbortController): () => void {
+  registerUploadAbortController(sessionId: string, controller: AbortController, participantId?: string): () => void {
     let set = this.activeUploadControllers.get(sessionId);
     if (!set) {
-      set = new Set();
+      set = new Map();
       this.activeUploadControllers.set(sessionId, set);
     }
-    set.add(controller);
+    set.set(controller, participantId);
 
     return () => {
       const current = this.activeUploadControllers.get(sessionId);
@@ -248,14 +258,32 @@ export class SessionStore {
     };
   }
 
-  abortUploads(sessionId: string): void {
+  abortUploads(sessionId: string, participantId?: string): void {
     const controllers = this.activeUploadControllers.get(sessionId);
-    if (controllers) {
-      for (const ctrl of controllers) {
-        ctrl.abort();
-      }
-      this.activeUploadControllers.delete(sessionId);
+    if (!controllers) return;
+    for (const [controller, senderId] of controllers) {
+      if (participantId !== undefined && senderId !== participantId) continue;
+      controllers.delete(controller);
+      controller.abort();
     }
+    if (controllers.size === 0) this.activeUploadControllers.delete(sessionId);
+  }
+
+  private expireParticipantPresence(sessionId: string, now: number): void {
+    const presence = this.participantPresence.get(sessionId);
+    if (!presence) return;
+    for (const [id, participant] of presence) {
+      if (now - participant.seenAt <= this.timingConfig.heartbeatTimeoutMs) continue;
+      presence.delete(id);
+      this.abortUploads(sessionId, id);
+      const sockets = this.participantSockets.get(sessionId)?.get(id);
+      if (sockets?.size) {
+        for (const socket of sockets) socket.close(4002, "Heartbeat timeout");
+      } else if (!participant.offline) {
+        this.notifyWs(sessionId, { type: "participant:left", id });
+      }
+    }
+    if (presence.size === 0) this.participantPresence.delete(sessionId);
   }
 
   /** 10 text uploads per 10s per session. */
@@ -422,6 +450,8 @@ export class SessionStore {
     sockets.delete(socket);
     if (sockets.size > 0) return false;
     byParticipant.delete(participantId);
+    const presence = this.participantPresence.get(sessionId)?.get(participantId);
+    if (presence) presence.offline = true;
     if (byParticipant.size === 0) this.participantSockets.delete(sessionId);
     return true;
   }
@@ -501,6 +531,7 @@ export class SessionStore {
     session.participants = [];
     session.hostId = undefined;
     this.participantSockets.delete(sessionId);
+    this.participantPresence.delete(sessionId);
     this.update(session);
 
     // 7. Emit session_closed event AFTER domain action is complete
@@ -598,6 +629,10 @@ export class SessionStore {
 
     // 2. Check each active session
     for (const session of this.getAllActive()) {
+      if (session.mode === "twoway") {
+        this.expireParticipantPresence(session.id, now);
+        continue;
+      }
       // Guest checks
       const guestPresent =
         session.lastSeen.guest !== null &&
@@ -673,6 +708,7 @@ export class SessionStore {
     this.pendingSockets.clear();
     this.activeSockets.clear();
     this.participantSockets.clear();
+    this.participantPresence.clear();
     this.hostDisconnectedAt.clear();
     this.activeUploadControllers.clear();
     this.textUploadTimes.clear();
