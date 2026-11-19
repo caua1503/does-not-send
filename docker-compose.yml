@@ -4,7 +4,8 @@ services:
     environment:
       POSTGRES_DB: doesnotsend
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doesnotsend_dev_password}
+      # Ao trocar a senha, atualize também DATABASE_URL no serviço app.
+      POSTGRES_PASSWORD: doesnotsend_dev_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -38,10 +39,10 @@ services:
       - HEARTBEAT_TIMEOUT_MS=${HEARTBEAT_TIMEOUT_MS:-25000}
       - WS_AUTH_TIMEOUT_MS=${WS_AUTH_TIMEOUT_MS:-5000}
       # Database
-      - DATABASE_URL=${DATABASE_URL:-postgres://app:${POSTGRES_PASSWORD:-doesnotsend_dev_password}@postgres:5432/doesnotsend}
-      # Painel /admin (senha padrão de dev; em produção defina ADMIN_PASSWORD com 12+ caracteres)
+      - DATABASE_URL=postgres://app:doesnotsend_dev_password@postgres:5432/doesnotsend
+      # Painel /admin (edite ADMIN_PASSWORD aqui para trocar a senha)
       - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - ADMIN_PASSWORD=admin
       - ADMIN_TZ=${ADMIN_TZ:-America/Sao_Paulo}
     # Armazenamento em RAM volátil (tmpfs) dedicado para arquivos temporários
     tmpfs:

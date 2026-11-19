@@ -113,7 +113,7 @@ docker compose down
 | `MAX_FILES_PER_SESSION`| `50` | Limite de arquivos por sessão |
 | `ALLOWED_ORIGINS` | `*` | Origens aceitas pelo CORS (separadas por vírgula) |
 | `DATABASE_URL` | *Opcional* | URL do Postgres (`postgres://usuario:senha@host:5432/banco`). Sem ela o banco fica desligado e o app funciona igual |
-| `POSTGRES_PASSWORD` | — | Senha do usuário `app` no serviço `postgres` do Compose (somente ambiente/.env) |
+| `POSTGRES_PASSWORD` | `doesnotsend_dev_password` | Senha do usuário `app`, definida no serviço `postgres` em `docker-compose.yml` |
 | `TEST_DATABASE_URL` | *Opcional* | Banco **dedicado** a testes (nome terminado em `_test`). Sem ela, os testes de integração são pulados |
 
 Credenciais nunca vão para o repositório: copie `.env.example` para `.env` (já no `.gitignore`) e troque a senha.
@@ -129,10 +129,11 @@ consultado por `db.isReady()` no contexto do app. O serviço não publica porta 
 ### Subir apenas o banco
 
 ```bash
-cp .env.example .env        # troque POSTGRES_PASSWORD
 docker compose up -d postgres
 docker compose ps           # aguarde o status (healthy)
 ```
+
+Para trocar a senha padrão, edite `POSTGRES_PASSWORD` no serviço `postgres` e a senha em `DATABASE_URL` no serviço `app`, ambos em `docker-compose.yml`. Se o volume já foi inicializado, altere também a senha do usuário `app` no PostgreSQL com `\password app` no `psql`.
 
 O banco não é acessível a partir do host (sem porta publicada). Use o próprio contêiner:
 
@@ -161,9 +162,8 @@ docker compose down -v
 bun run db:generate
 
 # 2. Aplique manualmente (fora do app; falha rápido se o banco estiver fora).
-#    DATABASE_URL vem do .env; com o banco só no Docker, rode dentro da rede do compose:
+#    O serviço app já tem DATABASE_URL configurada no Compose:
 docker compose run --rm \
-  -e DATABASE_URL=postgres://app:senha@postgres:5432/doesnotsend \
   -v "$PWD/drizzle:/app/drizzle:ro" \
   app bun run db:migrate
 ```
@@ -198,7 +198,7 @@ próprio, o pool "reader" tem `statement_timeout` de 5s e, sem banco pronto, a A
 | Variável | Padrão | Descrição |
 | :--- | :--- | :--- |
 | `ADMIN_USER` | `admin` | Usuário do painel |
-| `ADMIN_PASSWORD` | — | Senha do painel. Fora de produção, ausente vira `admin/admin` com um aviso no log |
+| `ADMIN_PASSWORD` | `admin` | Senha do painel. Para trocar no Compose, edite o valor no serviço `app` em `docker-compose.yml` |
 | `ADMIN_TZ` | `America/Sao_Paulo` | Fuso (IANA) de filtros, séries por dia/semana e rótulos |
 | `TRUST_PROXY` | `false` | Confie no proxy reverso para `request.ip` e `X-Forwarded-Proto` (cookie `Secure`). Só ative atrás de um proxy |
 
