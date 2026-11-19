@@ -244,6 +244,10 @@ bun run typecheck
 bun run typecheck:web
 ```
 
+Para verificar ZIP64 com o leitor independente do Python 3, rode
+`TEST_ZIP64=1 bun run test tests/zip64.test.ts`. O teste usa arquivos esparsos e percorre
+mais de 8 GiB lógicos para validar tamanhos, offsets, conteúdo e CRC.
+
 ### 2. Teste de Fumaça (End-to-End sem navegador)
 
 O script sobe o servidor real, cria uma sessão, conecta no canal WebSocket, envia arquivos com `FormData`, confere os eventos e estados em tempo real, baixa arquivo e ZIP comparando o hash SHA-256 criptográfico, encerra a sessão e confere a exclusão completa do diretório temporário:

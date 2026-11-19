@@ -81,6 +81,18 @@ describe("preview", () => {
     expect(res.headers["accept-ranges"]).toBe("bytes");
   });
 
+  it("uses the same range bounds for media previews", async () => {
+    const session = await createSession(ctx.app);
+    const file = await uploadFile(ctx.app, session, WEBM_BYTES, "video.webm", "video/webm");
+    const suffix = await previewRequest(ctx, session.id, file.id, session.ownerToken, { range: "bytes=-5" });
+    expect(suffix.statusCode).toBe(206);
+    expect(suffix.rawPayload.equals(WEBM_BYTES.subarray(-5))).toBe(true);
+    const invalid = await previewRequest(ctx, session.id, file.id, session.ownerToken,
+      { range: `bytes=${WEBM_BYTES.length}-` });
+    expect(invalid.statusCode).toBe(416);
+    expect(invalid.headers["content-range"]).toBe(`bytes */${WEBM_BYTES.length}`);
+  });
+
   it("serves audio inline", async () => {
     const session = await createSession(ctx.app);
     const file = await uploadFile(ctx.app, session, MP3_BYTES, "sound.mp3", "audio/mpeg");

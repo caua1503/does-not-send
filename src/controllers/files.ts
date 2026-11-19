@@ -407,42 +407,6 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
     return { files: sessionFilesView(session) };
   });
-  app.get<{ Params: { id: string; fileId: string } }>(
-    "/sessions/:id/files/:fileId",
-    async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, [
-        "owner",
-        "computer",
-        "phone",
-      ]);
-      if (!auth) return;
-
-      const session = ctx.sessionStore.getById(auth.sessionId)!;
-      if (!canDownload(session, auth.participant)) {
-        const status = sessionMode(session) === "oneway" ? 401 : 403;
-        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
-      }
-
-      const file = session.files.find((f) => f.id === request.params.fileId);
-
-      if (!file || file.state !== "completed") {
-        return reply.status(404).send({ error: "File not found", statusCode: 404 });
-      }
-
-      const filePath = ctx.fileService.getFilePath(auth.sessionId, file.storageName);
-      const { createReadStream } = await import("node:fs");
-      const stream = createReadStream(filePath);
-
-      return reply
-        .header("Content-Type", file.mimeType)
-        .header(
-          "Content-Disposition",
-          `attachment; filename="${encodeURIComponent(file.originalName)}"`,
-        )
-        .header("Content-Length", file.size)
-        .send(stream);
-    },
-  );
 
   // Delete an item (author or host in twoway)
   app.delete<{ Params: { id: string; fileId: string } }>(

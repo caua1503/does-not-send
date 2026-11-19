@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { get } from "node:http";
+import { truncate } from "node:fs/promises";
+import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { unzipSync } from "fflate";
 import {
   createTestApp,
+  getAppContext,
   cleanupTestApp,
   createSession,
   uploadFile,
@@ -171,6 +175,43 @@ describe("zip download", () => {
       await new Promise((r) => setTimeout(r, 200));
     } finally {
       await cleanupTestApp(bigCtx);
+    }
+  });
+
+  it("bounds the ZIP output queue with a paused HTTP client", async () => {
+    const slowCtx = await createTestApp();
+    try {
+      const session = await createSession(slowCtx.app);
+      const file = await uploadFile(slowCtx.app, session, "x", "slow.bin");
+      const { fileService } = getAppContext(slowCtx.app);
+      await truncate(fileService.getFilePath(session.id, file.id), 32 * 1024 * 1024);
+      const address = await slowCtx.app.listen({ host: "127.0.0.1", port: 0 });
+      const write = PassThrough.prototype.write;
+      let peak = 0;
+      const spy = vi.spyOn(PassThrough.prototype, "write").mockImplementation(function (this: PassThrough, ...args: Parameters<typeof write>) {
+        const result = write.apply(this, args);
+        peak = Math.max(peak, this.writableLength);
+        return result;
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req = get(`${address}/api/sessions/${session.id}/download.zip`, {
+            headers: { authorization: `Bearer ${session.ownerToken}` },
+          }, (response) => {
+            response.pause();
+            response.once("error", reject);
+            response.once("end", resolve);
+            setTimeout(() => response.resume(), 200);
+          });
+          req.once("error", reject);
+        });
+        expect(peak).toBeGreaterThan(0);
+        expect(peak).toBeLessThanOrEqual(128 * 1024);
+      } finally {
+        spy.mockRestore();
+      }
+    } finally {
+      await cleanupTestApp(slowCtx);
     }
   });
 
