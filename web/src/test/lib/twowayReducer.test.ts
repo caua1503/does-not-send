@@ -4,6 +4,7 @@ import {
   canDeleteItem,
   canDownloadItem,
   initialTwowayState,
+  itemToFileEntry,
   twowayReducer,
   type TwowayItem,
 } from "../../lib/twowayReducer.ts";
@@ -63,13 +64,14 @@ describe("twowayReducer", () => {
     expect(state.items).toHaveLength(0);
   });
 
-  it("combina histórico com item que chegou antes da resposta HTTP", () => {
+  it("substitui itens locais após reconexão, inclusive exclusões perdidas", () => {
     const live = item({ id: "live" });
-    const history = item({ id: "history" });
+    const history = item({ id: "history", version: 4 });
     let state = twowayReducer(initialTwowayState, { type: "item:added", ...live });
-    state = twowayReducer(state, { type: "items:loaded", items: [history] });
+    state = twowayReducer(state, { type: "items:snapshot", items: [history] });
 
-    expect(state.items.map((entry) => entry.id)).toEqual(["history", "live"]);
+    expect(state.items.map((entry) => entry.id)).toEqual(["history"]);
+    expect(itemToFileEntry(state.items[0]!).version).toBe(4);
   });
 
   it("session:closed limpa itens e participantes", () => {

@@ -1,110 +1,16 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { wsUrl, getSession, ApiError } from "../lib/api.ts";
+import { useEffect, useState, useCallback } from "react";
+import { emptyLoginCode, subscribeSession } from "../lib/sessionConnection.ts";
 import { remainingSeconds } from "../lib/loginCode.ts";
 
-export interface LoginCodeState {
-  code: string | null;
-  /** Deadline of the current code (local clock), for the countdown. */
-  deadline: number | null;
-}
-
-interface LoginCodeMessage {
-  type: "login_code";
-  sessionId: string;
-  code: string;
-  expiresInMs: number;
-}
-
-/**
- * Keeps the host's current manual login code, delivered over the same
- * session WebSocket the file events use. Authenticates, then waits for
- * `login_code` pushes and `login_code_cleared` notices; reconnects on its own.
- */
-export function useLoginCode(
-  sessionId: string | null,
-  token: string | null,
-): LoginCodeState {
-  const [state, setState] = useState<LoginCodeState>({ code: null, deadline: null });
-  const mountedRef = useRef(true);
-
+export function useLoginCode(sessionId: string | null, token: string | null) {
+  const [state, setState] = useState(emptyLoginCode);
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionId || !token) {
-      setState({ code: null, deadline: null });
-      return;
-    }
-
-    let stopped = false;
-    let ws: WebSocket | null = null;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-
-    function connect() {
-      if (stopped || !mountedRef.current) return;
-      ws = new WebSocket(wsUrl(sessionId!, token!));
-
-      ws.onopen = () => {
-        if (stopped) return;
-        ws!.send(JSON.stringify({ type: "auth", role: "host", secret: token }));
-      };
-
-      ws.onmessage = (event) => {
-        if (stopped) return;
-        try {
-          const data = JSON.parse(event.data as string) as { type?: string };
-          if (data.type === "login_code_cleared") {
-            setState({ code: null, deadline: null });
-            return;
-          }
-          if (data.type !== "login_code") return;
-          const message = data as LoginCodeMessage;
-          // The same code may arrive twice (issue + reconnect resend)
-          setState((prev) => (prev?.code === message.code ? prev : { code: message.code, deadline: Date.now() + message.expiresInMs }));
-        } catch {
-          // Malformed message — ignore
-        }
-      };
-
-      ws.onclose = (event) => {
-        if (stopped || event.code === 4000) return;
-        // 4001 with a gone session must not retry forever (GET decides)
-        if (event.code === 4001) {
-          getSession(sessionId!, token!).then(
-            () => { retry = setTimeout(connect, 2000); },
-            (err: unknown) => {
-              if (stopped) return;
-              // 401/404 = session gone: stop retrying; other errors retry
-              if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
-                stopped = true;
-                return;
-              }
-              retry = setTimeout(connect, 2000);
-            },
-          );
-          return;
-        }
-        retry = setTimeout(connect, 2000);
-      };
-    }
-
-    connect();
-
-    return () => {
-      stopped = true;
-      if (retry) clearTimeout(retry);
-      if (ws) {
-        try {
-          ws.close();
-        } catch {}
-      }
-    };
+    setState(emptyLoginCode);
+    if (!sessionId || !token) return;
+    return subscribeSession(sessionId, token, "host", 2000, (snapshot) => {
+      setState(snapshot.loginCode);
+    }).unsubscribe;
   }, [sessionId, token]);
-
   return state;
 }
 

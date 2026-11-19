@@ -9,6 +9,8 @@ export interface TwowayItem {
   senderName: string;
   origin: DeviceKind;
   createdAt: string;
+  version?: number;
+  mimeType?: string;
 }
 
 export interface TwowayState {
@@ -33,9 +35,9 @@ export type TwowayEvent =
     }
   | { type: "item:deleted"; id: string }
   | { type: "session:closed" }
-  | { type: "items:loaded"; items: TwowayItem[] };
+  | { type: "items:snapshot"; items: TwowayItem[] };
 
-export type TwowayServerEvent = Exclude<TwowayEvent, { type: "items:loaded" }>;
+export type TwowayServerEvent = Exclude<TwowayEvent, { type: "items:snapshot" }>;
 
 export const initialTwowayState: TwowayState = { participants: [], items: [] };
 
@@ -92,14 +94,8 @@ export function twowayReducer(state: TwowayState, event: TwowayEvent): TwowaySta
       return { ...state, items: state.items.filter((item) => item.id !== event.id) };
     case "session:closed":
       return initialTwowayState;
-    case "items:loaded": {
-      // History may resolve after a live event: keep what only arrived by WS.
-      const historyIds = new Set(event.items.map((item) => item.id));
-      return {
-        ...state,
-        items: [...event.items, ...state.items.filter((item) => !historyIds.has(item.id))],
-      };
-    }
+    case "items:snapshot":
+      return { ...state, items: event.items };
   }
 }
 
@@ -137,11 +133,11 @@ export function itemToFileEntry(item: TwowayItem): FileEntry {
   return {
     id: item.id,
     originalName: item.name,
-    mimeType: mimeTypeFor(item.name, item.kind),
+    mimeType: item.mimeType ?? mimeTypeFor(item.name, item.kind),
     size: item.size,
     bytesReceived: item.size,
     state: "completed",
-    version: 1,
+    version: item.version ?? 1,
     createdAt: item.createdAt,
     kind: item.kind,
     senderId: item.senderId,
@@ -160,5 +156,7 @@ export function fileEntryToTwowayItem(file: FileEntry): TwowayItem {
     senderName: file.senderName ?? "",
     origin: file.origin ?? "phone",
     createdAt: file.createdAt,
+    version: file.version,
+    mimeType: file.mimeType,
   };
 }

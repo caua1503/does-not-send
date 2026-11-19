@@ -159,7 +159,9 @@ describe("POST /api/sessions/join", () => {
     sockets.push(ws);
     inbox.set(ws, []);
     ws.addEventListener("message", (event) => {
-      inbox.get(ws)!.push(JSON.parse(String(event.data)));
+      const message = JSON.parse(String(event.data));
+      if (message.type === "session:status") return;
+      inbox.get(ws)!.push(message);
       waiters.get(ws)?.();
     });
     await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve()));

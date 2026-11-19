@@ -13,6 +13,15 @@ interface UseSessionUploadOptions {
 }
 
 /** Upload pipeline shared by the oneway guest page and the twoway room. */
+function conflictMessage(xhr: XMLHttpRequest): string {
+  try {
+    if (JSON.parse(xhr.responseText).code === "UPLOAD_INTERRUPTED") return "Envio interrompido. Tente novamente.";
+  } catch {
+    // Some proxies return a non-JSON response.
+  }
+  return "Sessão não aceita envios";
+}
+
 export function useSessionUpload({
   sessionId,
   credential,
@@ -98,7 +107,7 @@ export function useSessionUpload({
         setItems((prev) =>
           prev.map((current) =>
             current.id === item.id
-              ? { ...current, state: "error", error: "Sessão não aceita envios" }
+              ? { ...current, state: "error", error: conflictMessage(xhr) }
               : current,
           ),
         );
@@ -292,7 +301,7 @@ export function useSessionUpload({
         if (xhr.status === 401) fail("Falha de autorização na edição");
         else if (xhr.status === 410) fail("Sessão encerrada");
         else if (xhr.status === 404) fail("Arquivo não encontrado");
-        else if (xhr.status === 409) fail("Sessão não aceita envios");
+        else if (xhr.status === 409) fail(conflictMessage(xhr));
         else if (xhr.status === 413) fail("Arquivo muito grande ou limite excedido");
         else if (xhr.status >= 500) fail("Servidor temporariamente indisponível");
         else fail(`Erro ${xhr.status}`);

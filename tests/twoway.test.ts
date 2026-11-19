@@ -87,13 +87,13 @@ async function connect(
   sessionId: string,
   role: string,
   secret: string,
-): Promise<{ ws: WebSocket; stream: ReturnType<typeof streams> }> {
+): Promise<{ ws: WebSocket; stream: ReturnType<typeof streams>; auth: Message }> {
   const ws = new WebSocket(`${baseUrl}/api/sessions/${sessionId}/ws`);
   await waitOpen(ws);
   const stream = streams(ws);
   ws.send(JSON.stringify({ type: "auth", role, secret }));
-  await stream.waitFor((message) => message.type === "auth_ok");
-  return { ws, stream };
+  const auth = await stream.waitFor((message) => message.type === "auth_ok");
+  return { ws, stream, auth };
 }
 
 async function closeSocket(ws: WebSocket): Promise<void> {
@@ -635,6 +635,15 @@ it("keeps a lone host upload alive and expires guest presence independently", as
         req.end("\r\n--host-upload--\r\n");
         expect(await response).toBe(201);
         expect(await readFile(join(ctx.tempDir, session.id, live.files[0]!.id), "utf8")).toBe("hello");
+        const reconnected = await connect(wsUrl, session.id, "phone", guest.credential);
+        try {
+          expect(reconnected.auth).toMatchObject({
+            session: { id: session.id, computerPresent: true },
+            files: [{ id: live.files[0]!.id, version: 1, size: 5 }],
+          });
+        } finally {
+          await closeSocket(reconnected.ws);
+        }
       } finally {
         await closeSocket(guestWs.ws);
       }

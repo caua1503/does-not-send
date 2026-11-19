@@ -347,25 +347,7 @@ export async function sessionRoutes(
     if (!auth) return;
 
     const session = ctx.sessionStore.getById(auth.sessionId)!;
-    return {
-      id: session.id,
-      state: session.state,
-      phonePresent: ctx.sessionStore.isGuestPresent(session.id),
-      computerPresent: ctx.sessionStore.isHostPresent(session.id),
-      activeUploads: session.activeUploads ?? 0,
-      visualId: session.visualId,
-      shortId: session.shortId,
-      createdAt: session.createdAt,
-      lastActivity: session.lastActivity,
-      fileCount: session.files.length,
-      mode: sessionMode(session),
-      hostId: session.hostId,
-      participants: session.participants?.map((participant) => ({
-        id: participant.id,
-        name: participant.name,
-        device: participant.device,
-      })),
-    };
+    return ctx.sessionStore.sessionInfo(session);
   });
 
   // Explicit leave. The server decides by identity: the host closes and

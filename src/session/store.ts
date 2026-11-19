@@ -102,6 +102,7 @@ export class SessionStore {
   private participantSockets = new Map<string, Map<string, Set<WebSocketLike>>>();
   private twowayIdleTimeoutMs: number;
   private hostDisconnectedAt = new Map<string, number>();
+  private publishedStatus = new Map<string, string>();
   private participantPresence = new Map<string, Map<string, { seenAt: number; offline: boolean }>>();
   private activeUploadControllers = new Map<string, Map<AbortController, string | undefined>>();
   private textUploadTimes = new Map<string, number[]>();
@@ -252,6 +253,7 @@ export class SessionStore {
     this.invites.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
+    this.publishedStatus.clear();
     this.participantSockets.clear();
     this.participantPresence.clear();
     this.hostDisconnectedAt.clear();
@@ -270,6 +272,45 @@ export class SessionStore {
     const session = this.getById(sessionId);
     if (!session || session.lastSeen.host === null) return false;
     return this.clock.now() - session.lastSeen.host <= this.timingConfig.heartbeatTimeoutMs;
+  }
+
+  isParticipantPresent(sessionId: string, participantId: string): boolean {
+    const seen = this.participantPresence.get(sessionId)?.get(participantId);
+    if (seen) return !seen.offline && this.clock.now() - seen.seenAt <= this.timingConfig.heartbeatTimeoutMs;
+    return this.sessions.get(sessionId)?.hostId === participantId && this.isHostPresent(sessionId);
+  }
+
+  sessionInfo(session: Session) {
+    return {
+      id: session.id,
+      ...this.sessionStatus(session),
+      visualId: session.visualId,
+      shortId: session.shortId,
+      createdAt: session.createdAt,
+      lastActivity: session.lastActivity,
+      fileCount: session.files.length,
+      mode: session.mode ?? "oneway",
+      hostId: session.hostId,
+      participants: session.participants?.map(({ id, name, device }) => ({ id, name, device })),
+    };
+  }
+
+  private sessionStatus(session: Session) {
+    return {
+      state: session.state,
+      phonePresent: this.isGuestPresent(session.id),
+      computerPresent: this.isHostPresent(session.id),
+      activeUploads: session.activeUploads ?? 0,
+    };
+  }
+
+  private publishStatus(session: Session): void {
+    if (!this.activeSockets.has(session.id)) return;
+    const status = this.sessionStatus(session);
+    const signature = JSON.stringify(status);
+    if (this.publishedStatus.get(session.id) === signature) return;
+    this.publishedStatus.set(session.id, signature);
+    this.notifyWs(session.id, { type: "session:status", status });
   }
 
   // Heartbeat handler
@@ -390,8 +431,7 @@ export class SessionStore {
       }
     }
 
-    // Multiple sockets per role are expected: the host tab keeps one for
-    // file events and another for the login code, and both must stay open.
+    // Multiple tabs or devices may authenticate with the same role.
     const conn = this.activeSockets.get(sessionId) ?? {
       host: new Set<WebSocketLike>(),
       guest: new Set<WebSocketLike>(),
@@ -440,6 +480,7 @@ export class SessionStore {
       }
       if (conn.host.size === 0 && conn.guest.size === 0) {
         this.activeSockets.delete(sessionId);
+        this.publishedStatus.delete(sessionId);
       }
     }
   }
@@ -546,6 +587,7 @@ export class SessionStore {
       }
     }
     this.activeSockets.delete(sessionId);
+    this.publishedStatus.delete(sessionId);
   }
 
   // Idempotent closeSession
@@ -710,6 +752,7 @@ export class SessionStore {
           closing.push(this.closeSession(session.id, "inactivity"));
         } else {
           this.expireParticipantPresence(session.id, now);
+          this.publishStatus(session);
         }
         continue;
       }
@@ -730,6 +773,7 @@ export class SessionStore {
           this.update(session);
         }
       }
+      this.publishStatus(session);
     }
 
     this.loginCodes.tick();
@@ -759,6 +803,7 @@ export class SessionStore {
     this.invites.clear();
     this.pendingSockets.clear();
     this.activeSockets.clear();
+    this.publishedStatus.clear();
     this.participantSockets.clear();
     this.participantPresence.clear();
     this.hostDisconnectedAt.clear();
