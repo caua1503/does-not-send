@@ -162,7 +162,7 @@ export interface AdminSummary {
   topPhoneIps: Array<{ ip: string; count: number }>;
   refusedPairings: number;
   /** Compression savings on completed transfers; rows without originalSize ignored. */
-  trafficSaved: { originalBytes: number; savedBytes: number };
+  trafficSaved: { files: number; originalBytes: number; sentBytes: number; savedBytes: number };
 }
 
 export interface SessionTimelineItemBase {

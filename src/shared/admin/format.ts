@@ -6,6 +6,8 @@
  * so punctuation stays stable across ICU versions.
  */
 
+import type { AdminSummary } from "./types.js";
+
 export const DEFAULT_TZ = "America/Sao_Paulo";
 export const LOCALE = "pt-BR";
 
@@ -28,6 +30,18 @@ export function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${ONE_DECIMAL.format(value)} ${UNITS[unit]}`;
+}
+
+export function formatTrafficSavings({ files, originalBytes, sentBytes, savedBytes }: AdminSummary["trafficSaved"]) {
+  if (!(files > 0 && originalBytes > 0)) return { value: "Ainda sem dados" };
+
+  const percent = Math.round((savedBytes / originalBytes) * 100);
+  const before = formatBytes(Math.round(originalBytes / files));
+  const after = formatBytes(Math.round(sentBytes / files));
+  return {
+    value: `${formatBytes(savedBytes)} (${percent}% menos dados)`,
+    example: `Em média, cada arquivo ${sentBytes < originalBytes ? "caiu" : "passou"} de ${before} para ${after}.`,
+  };
 }
 
 export function formatNumber(value: number): string {

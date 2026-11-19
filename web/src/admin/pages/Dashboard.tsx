@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDate,
   formatNumber,
+  formatTrafficSavings,
 } from "../../../../src/shared/admin/format.ts";
 import {
   CATEGORY_LABELS,
@@ -90,11 +91,7 @@ export function Dashboard(props: DashboardProps) {
   );
 
   const data = summary.data;
-  const saved = data?.trafficSaved;
-  const savedPercent =
-    saved && saved.originalBytes > 0
-      ? Math.round((saved.savedBytes / saved.originalBytes) * 100)
-      : 0;
+  const savings = data && formatTrafficSavings(data.trafficSaved);
 
   return (
     <section aria-labelledby="dash-title" className="space-y-4">
@@ -124,15 +121,12 @@ export function Dashboard(props: DashboardProps) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <MetricCard label="Arquivos enviados" value={formatNumber(data.totals.files)} hint="somente concluídos" />
             <MetricCard label="Volume total" value={formatBytes(data.totals.volumeBytes)} hint="somente concluídos" />
-            <MetricCard
-              label="Tráfego economizado"
-              value={formatBytes(saved?.savedBytes ?? 0)}
-              hint={
-                saved && saved.originalBytes > 0
-                  ? `${savedPercent}% do original (${formatBytes(saved.originalBytes)})`
-                  : "sem dados de compressão"
-              }
-            />
+            {savings && (
+              <Card className="p-4">
+                <p className="font-semibold tabular">Tráfego economizado: {savings.value}</p>
+                {savings.example && <p className="mt-1 text-xs text-[var(--color-text-muted)]">{savings.example}</p>}
+              </Card>
+            )}
             <MetricCard label="Sessões" value={formatNumber(data.totals.sessions)} hint="no período" />
             <MetricCard
               label="Transferências"

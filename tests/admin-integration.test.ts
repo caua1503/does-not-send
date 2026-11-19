@@ -5,7 +5,7 @@ import { buildApp } from "../src/app.js";
 import { createDbClient, type DbClient } from "../src/db/client.js";
 import { MigrationRunner } from "../src/db/migrate.js";
 import { events, sessionParticipants, sessions, transfers } from "../src/db/schema.js";
-import { createMultipartPayload, createSession } from "./helpers.js";
+import { createMultipartPayload, createSession, uploadFile } from "./helpers.js";
 import { loadConfig } from "../src/utils/config.js";
 import type {
   AdminSummary,
@@ -406,10 +406,11 @@ describe.skipIf(!isDedicatedTestDb)("admin API @db", () => {
       body,
     });
     expect(upload.statusCode).toBe(201);
+    await uploadFile(app, session, "sem tamanho original", "legado.txt");
     await expect.poll(async () => get(`/admin/api/summary?session=${session.id}`), { timeout: 5000 })
       .toMatchObject({
-        totals: { files: 1, volumeBytes: mib },
-        trafficSaved: { originalBytes: 6 * mib, savedBytes: 5 * mib },
+        totals: { files: 2 },
+        trafficSaved: { files: 1, originalBytes: 6 * mib, sentBytes: mib, savedBytes: 5 * mib },
       });
     await app.inject({
       method: "DELETE", url: `/api/sessions/${session.id}`,

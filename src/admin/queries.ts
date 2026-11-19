@@ -5,6 +5,7 @@ import * as schema from "../db/schema.js";
 import { events, sessionParticipants, sessions, transfers } from "../db/schema.js";
 import type {
   AdminFilters,
+  AdminSummary,
   Category,
   CloseReason,
   SessionMetrics,
@@ -203,24 +204,7 @@ const transferColumns = {
   finishedAt: transfers.finishedAt,
 };
 
-export interface SummaryDto {
-  totals: {
-    files: number;
-    volumeBytes: number;
-    sessions: number;
-    transfers: number;
-    avgSize: number;
-    largestSize: number;
-  };
-  byStatus: Array<{ status: TransferStatus; count: number }>;
-  byCategory: Array<{ category: Category; count: number; volumeBytes: number }>;
-  topExtensions: Array<{ extension: string; count: number; volumeBytes: number }>;
-  topPhoneIps: Array<{ ip: string; count: number }>;
-  refusedPairings: number;
-  /** Client-side compression savings over completed transfers; rows without
-   *  original_size_bytes are ignored. */
-  trafficSaved: { originalBytes: number; savedBytes: number };
-}
+export type SummaryDto = Omit<AdminSummary, "period">;
 
 export interface TimelineQueryRow {
   at: string;
@@ -426,6 +410,7 @@ export function createAdminQueries(db: ReaderDb) {
   async function summary(filters: AdminFilters): Promise<SummaryDto> {
     const base = transferWhere(filters);
     const completed = and(eq(transfers.status, "completed"), base);
+    const comparable = sql`filter (where ${transfers.originalSizeBytes} is not null and ${transfers.size} is not null)`;
 
     const [completedRows, scopeRows, statusRows, categoryRows, extensionRows, phoneIpRows, refusedRows] =
       await Promise.all([
@@ -435,10 +420,9 @@ export function createAdminQueries(db: ReaderDb) {
             volume: sum(transfers.size),
             avg: sql<number>`coalesce(avg(${transfers.size}), 0)::float8`,
             largest: sql<number>`coalesce(max(${transfers.size}), 0)::bigint`,
-            original: sum(transfers.originalSizeBytes),
-            // greatest(NULL, 0) is 0 in Postgres: rows without originalSize are
-            // ignored by the SUM without needing a WHERE filter.
-            saved: sql<number>`coalesce(sum(greatest(${transfers.originalSizeBytes} - ${transfers.size}, 0)), 0)::bigint`,
+            comparableFiles: sql<number>`count(*) ${comparable}`,
+            original: sql<string | null>`sum(${transfers.originalSizeBytes}) ${comparable}`,
+            sent: sql<string | null>`sum(${transfers.size}) ${comparable}`,
           })
           .from(transfers)
           .where(completed),
@@ -480,6 +464,8 @@ export function createAdminQueries(db: ReaderDb) {
       ]);
 
     const completedRow = completedRows[0];
+    const originalBytes = Number(completedRow?.original ?? 0);
+    const sentBytes = Number(completedRow?.sent ?? 0);
     const files = Number(completedRow?.files ?? 0);
     const statusCounts = new Map(statusRows.map((r) => [r.status, Number(r.n)]));
     return {
@@ -507,8 +493,10 @@ export function createAdminQueries(db: ReaderDb) {
         .map((r) => ({ ip: r.ip, count: Number(r.n) })),
       refusedPairings: Number(refusedRows[0]?.n ?? 0),
       trafficSaved: {
-        originalBytes: Number(completedRow?.original ?? 0),
-        savedBytes: Number(completedRow?.saved ?? 0),
+        files: Number(completedRow?.comparableFiles ?? 0),
+        originalBytes,
+        sentBytes,
+        savedBytes: Math.max(0, originalBytes - sentBytes),
       },
     };
   }

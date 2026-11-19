@@ -69,7 +69,7 @@ export function TransfersTable({ page, sort, onPage, tz }: ListProps<TransferRow
           <tr>
             <SortHeader label="Arquivo" column="name" state={sort} />
             <SortHeader label="Tamanho" column="size" state={sort} className="text-right" />
-            <th scope="col" className="px-3 py-2 text-right font-medium">Economia</th>
+            <th scope="col" className="px-3 py-2 text-right font-medium">Tráfego economizado</th>
             <SortHeader label="Situação" column="status" state={sort} />
             <SortHeader label="Categoria" column="category" state={sort} />
             <SortHeader label="Início" column="startedAt" state={sort} />
@@ -87,7 +87,7 @@ export function TransfersTable({ page, sort, onPage, tz }: ListProps<TransferRow
               </td>
               <td className="px-3 py-2 text-right tabular">{formatBytes(t.size)}</td>
               <td className="px-3 py-2 text-right tabular">
-                {t.originalSize === null ? "—" : formatBytes(savingsBytes(t.originalSize, t.size))}
+                {t.status !== "completed" || t.originalSize === null ? "—" : formatBytes(savingsBytes(t.originalSize, t.size))}
               </td>
               <td className="px-3 py-2">
                 <Badge label={TRANSFER_STATUS_LABELS[t.status]} variant={statusVariant(t.status)} />
@@ -112,9 +112,9 @@ export function TransfersTable({ page, sort, onPage, tz }: ListProps<TransferRow
               <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
                 <dt>Tamanho</dt>
                 <dd className="text-right text-[var(--color-text)] tabular">{formatBytes(t.size)}</dd>
-                {t.originalSize !== null && (
+                {t.status === "completed" && t.originalSize !== null && (
                   <>
-                    <dt>Economia</dt>
+                    <dt>Tráfego economizado</dt>
                     <dd className="text-right text-[var(--color-text)] tabular">
                       {formatBytes(savingsBytes(t.originalSize, t.size))}
                     </dd>

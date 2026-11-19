@@ -9,6 +9,7 @@ import {
   formatDate,
   formatTime,
   savingsBytes,
+  formatTrafficSavings,
 } from "../src/shared/admin/format.js";
 
 describe("formatBytes (base 1024)", () => {
@@ -103,5 +104,21 @@ describe("formatBucketLabel", () => {
     expect(formatBucketLabel("2026-11-05T00:00:00.000Z", "day", "UTC")).toBe("05 nov");
     expect(formatBucketLabel("2026-03-01T00:00:00.000Z", "month", "UTC")).toBe("mar 26");
     expect(formatBucketLabel("2026-03-01T00:00:00.000Z", "year", "UTC")).toBe("26");
+  });
+});
+
+
+describe("Tráfego economizado", () => {
+  it("exibe porcentagem ao lado da economia e compara as médias", () => {
+    const mib = 1024 ** 2;
+    expect(formatTrafficSavings({ files: 2, originalBytes: 6 * mib, sentBytes: 2 * mib, savedBytes: 4 * mib }))
+      .toEqual({ value: "4,0 MB (67% menos dados)", example: "Em média, cada arquivo caiu de 3,0 MB para 1,0 MB." });
+  });
+
+  it("trata conjunto vazio e denominador zero", () => {
+    for (const files of [0, 1]) {
+      expect(formatTrafficSavings({ files, originalBytes: 0, sentBytes: 0, savedBytes: 0 }))
+        .toEqual({ value: "Ainda sem dados" });
+    }
   });
 });
