@@ -607,13 +607,7 @@ export class FileService {
         }
 
         fileRecord.bytesReceived = bytesReceived;
-        fileEvents.emitFileEvent({
-          type: "file:progress",
-          sessionId,
-          fileId: fileRecord.id,
-          bytesReceived,
-          size: fileRecord.size,
-        });
+        if (fileRecord.state === "receiving") fileEvents.markProgress(sessionId, fileRecord);
 
         if (!ws.write(chunk)) {
           stream.pause();

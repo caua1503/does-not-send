@@ -5,10 +5,12 @@ import type { Participant } from "../types.js";
 import { normalizeSessionRole, type SessionRole } from "../session/auth.js";
 import { guestActor, hostActor } from "../session/participants.js";
 import { sessionMode } from "../session/permissions.js";
-import { fileEvents, type FileEvent, type FileEventType } from "../utils/events.js";
+import { fileEvents, serializeFileEvent, type FileEvent, type FileEventType } from "../utils/events.js";
 
 const WS_CLOSE_SESSION_CLOSED = 4000;
 const WS_CLOSE_UNAUTHORIZED = 4001;
+
+const MAX_QUEUED_PROGRESS_BYTES = 256 * 1024;
 
 const EVENT_TYPES: FileEventType[] = ["file:state-changed", "file:progress"];
 
@@ -106,8 +108,12 @@ export async function websocketRoutes(
             if (authenticatedRole === "computer") {
               eventHandlers = EVENT_TYPES.map((type) => {
                 const handler = (event: FileEvent): void => {
-                  if (socket.readyState === socket.OPEN) {
-                    socket.send(JSON.stringify(event));
+                  if (socket.readyState !== socket.OPEN) return;
+                  if (event.type === "file:progress" && socket.bufferedAmount >= MAX_QUEUED_PROGRESS_BYTES) return;
+                  try {
+                    socket.send(serializeFileEvent(event));
+                  } catch {
+                    socket.terminate();
                   }
                 };
                 fileEvents.onFileEvent(type, sessionId, handler);
