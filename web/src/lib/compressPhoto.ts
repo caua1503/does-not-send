@@ -1,3 +1,5 @@
+import { TaskQueue } from "./taskQueue.ts";
+export { TaskQueue as CompressionQueue } from "./taskQueue.ts";
 import type { Options } from "browser-image-compression";
 import { runImageWorker } from "./imageWorker.ts";
 
@@ -7,48 +9,8 @@ import { runImageWorker } from "./imageWorker.ts";
  */
 export const COMPRESSION_THRESHOLD_BYTES = 1.2 * 1024 * 1024;
 
-/**
- * Simple concurrency queue to limit parallel tasks (e.g. at most 2 photo compressions).
- */
-export class CompressionQueue {
-  private readonly concurrency: number;
-  private running = 0;
-  private readonly queue: Array<() => void> = [];
-
-  constructor(concurrency = 2) {
-    this.concurrency = concurrency;
-  }
-
-  get activeCount(): number {
-    return this.running;
-  }
-
-  get pendingCount(): number {
-    return this.queue.length;
-  }
-
-  async run<T>(task: () => Promise<T>): Promise<T> {
-    if (this.running >= this.concurrency) {
-      await new Promise<void>((resolve) => {
-        this.queue.push(resolve);
-      });
-    }
-
-    this.running++;
-    try {
-      return await task();
-    } finally {
-      this.running--;
-      const next = this.queue.shift();
-      if (next) {
-        next();
-      }
-    }
-  }
-}
-
 /** Global default queue for client photo compression (max 2 parallel). */
-export const defaultCompressionQueue = new CompressionQueue(2);
+export const defaultCompressionQueue = new TaskQueue(2);
 
 /**
  * Check whether a file qualifies for client-side compression:
@@ -63,7 +25,7 @@ export function isCompressiblePhoto(file: File): boolean {
 }
 
 export interface CompressPhotoOptions {
-  queue?: CompressionQueue;
+  queue?: TaskQueue;
   timeoutMs?: number;
   maxSizeMB?: number;
   maxWidthOrHeight?: number;

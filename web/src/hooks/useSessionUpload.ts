@@ -1,9 +1,15 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GuestUploadItem } from "../pages/guest/UploadItem.tsx";
 import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../lib/convertHeic.ts";
+import { TaskQueue } from "../lib/taskQueue.ts";
 import { BASE_URL } from "../lib/base.ts";
 import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
+
+// Full-resolution decodes are memory-heavy on phones. Keep one in flight;
+// two independent network slots allow the next file to start while one is uploading.
+const decodeQueue = new TaskQueue(1);
+const uploadQueue = new TaskQueue(2);
 
 interface UseSessionUploadOptions {
   sessionId: string;
@@ -36,9 +42,65 @@ export function useSessionUpload({
   const onClosedRef = useRef(onClosed);
   onClosedRef.current = onClosed;
 
-  const uploadSingleFile = (item: GuestUploadItem) => {
-    if (disabledRef.current) return;
+  const scope = useRef(new AbortController());
+  useEffect(() => {
+    const controller = new AbortController();
+    scope.current = controller;
+    return () => controller.abort();
+  }, [sessionId, credential]);
 
+  const enqueueUpload = (item: GuestUploadItem, configure: (xhr: XMLHttpRequest) => FormData) => {
+    const signal = scope.current.signal;
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "pending", error: undefined }
+      : current));
+    void uploadQueue.run(() => new Promise<void>((resolve) => {
+      if (signal.aborted || disabledRef.current) {
+        resolve();
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", cancel);
+        resolve();
+      };
+      const cancel = () => {
+        finish();
+        xhr.abort?.();
+      };
+      const failed = () => {
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+          : current));
+      };
+      signal.addEventListener("abort", cancel, { once: true });
+      try {
+        const body = configure(xhr);
+        if (signal.aborted) return;
+        const onLoad = xhr.onload;
+        const onError = xhr.onerror;
+        xhr.onload = (event) => {
+          try { if (!settled) onLoad?.call(xhr, event); } finally { finish(); }
+        };
+        xhr.onerror = (event) => {
+          try { if (!settled) onError?.call(xhr, event); } finally { finish(); }
+        };
+        xhr.onabort = xhr.ontimeout = () => {
+          if (!settled) failed();
+          finish();
+        };
+        xhr.send(body);
+      } catch {
+        failed();
+        finish();
+      }
+    }));
+  };
+
+  const uploadSingleFile = (item: GuestUploadItem) => enqueueUpload(item, (xhr) => {
     setItems((prev) =>
       prev.map((current) =>
         current.id === item.id
@@ -47,7 +109,6 @@ export function useSessionUpload({
       ),
     );
 
-    const xhr = new XMLHttpRequest();
     const formData = new FormData();
     // Field first: the server streams the file part and reads it before the bytes.
     formData.append("originalSize", String(item.originalSize ?? item.file.size));
@@ -176,47 +237,28 @@ export function useSessionUpload({
       `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
     );
     xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
-  };
+    return formData;
+  });
 
-  const processAndUpload = async (id: string, initialFile: File) => {
-    if (disabledRef.current) return;
-
-    let finalFile = initialFile;
+  const processAndUpload = async (item: GuestUploadItem) => {
+    const signal = scope.current.signal;
+    const heic = isHeic(item.file);
     try {
-      finalFile = await compressPhoto(initialFile);
+      const file = await decodeQueue.run(async () => {
+        if (disabledRef.current || signal.aborted) return item.file;
+        return heic ? convertHeicToJpeg(item.file) : compressPhoto(item.file);
+      });
+      if (disabledRef.current || signal.aborted) return;
+      setItems((prev) => prev.map((current) =>
+        current.id === item.id ? { ...current, file } : current,
+      ));
+      uploadSingleFile({ ...item, file });
     } catch {
-      finalFile = initialFile;
+      if (signal.aborted) return;
+      setItems((prev) => prev.map((current) => current.id === item.id
+        ? { ...current, state: "error", error: "Não foi possível converter a imagem HEIC" }
+        : current));
     }
-
-    if (disabledRef.current) return;
-
-    try {
-      finalFile = await convertHeicToJpeg(finalFile);
-    } catch {
-      setItems((prev) =>
-        prev.map((current) =>
-          current.id === id
-            ? {
-                ...current,
-                state: "error",
-                error: "Não foi possível converter a imagem HEIC",
-              }
-            : current,
-        ),
-      );
-      return;
-    }
-
-    setItems((prev) =>
-      prev.map((current) =>
-        current.id === id
-          ? { ...current, file: finalFile, state: "uploading", progress: 0 }
-          : current,
-      ),
-    );
-
-    uploadSingleFile({ id, file: finalFile, originalSize: initialFile.size, progress: 0, state: "uploading" });
   };
 
   const handleFilesChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -237,7 +279,7 @@ export function useSessionUpload({
 
     newItems.forEach((item) => {
       if (item.state === "optimizing") {
-        void processAndUpload(item.id, item.file);
+        void processAndUpload(item);
       } else {
         uploadSingleFile(item);
       }
@@ -275,7 +317,7 @@ export function useSessionUpload({
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: GuestUploadItem, file: File) => {
+  const replaceEditedImage = (item: GuestUploadItem, file: File) => enqueueUpload(item, (xhr) => {
     setItems((prev) =>
       prev.map((current) =>
         current.id === item.id
@@ -283,7 +325,6 @@ export function useSessionUpload({
           : current,
       ),
     );
-    const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("originalSize", String(file.size));
     formData.append("files", file, file.name);
@@ -326,8 +367,8 @@ export function useSessionUpload({
     xhr.onerror = () => fail("Sem conexão com o servidor");
     xhr.open("PUT", `${BASE_URL}/api/sessions/${sessionId}/files/${item.remoteId}`);
     xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    xhr.send(formData);
-  };
+    return formData;
+  });
 
   const retryUpload = (id: string) => {
     const item = items.find((current) => current.id === id);
@@ -336,7 +377,14 @@ export function useSessionUpload({
       replaceEditedImage(item, item.file);
       return;
     }
-    uploadSingleFile(item);
+    if (isHeic(item.file)) {
+      setItems((prev) => prev.map((current) => current.id === item.id
+        ? { ...current, state: "optimizing", error: undefined }
+        : current));
+      void processAndUpload(item);
+    } else {
+      uploadSingleFile(item);
+    }
   };
 
   const totalFiles = items.length;
