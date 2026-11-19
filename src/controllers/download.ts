@@ -1,6 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { extname } from "node:path";
 import { ZipFile } from "yazl";
 import type { AppContext } from "../app.js";
@@ -35,20 +35,6 @@ const INLINE_EXTENSIONS: Record<string, string> = {
   // PDF only (not HTML/SVG)
   ".pdf": "application/pdf",
 };
-
-const VIDEO_AUDIO_EXTENSIONS = new Set([
-  ".mp4",
-  ".webm",
-  ".ogg",
-  ".mov",
-  ".avi",
-  ".mp3",
-  ".wav",
-  ".flac",
-  ".aac",
-  ".opus",
-  ".oga",
-]);
 
 /** Byte-level magic checks for common types (defence-in-depth) */
 function sniffMimeFromBytes(buf: Buffer): string | null {
@@ -92,152 +78,120 @@ export function rfc5987(filename: string): string {
   return `attachment; filename*=UTF-8''${encoded}; filename="${encodeURIComponent(filename)}"`;
 }
 
+type FileParams = { id: string; fileId: string };
+type FileDelivery = "download" | "preview" | "attachment";
+
+function byteRange(value: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
+  if (!match || !size) return null;
+  const [, first, last] = match;
+  if (!first) {
+    const suffix = Number(last);
+    return suffix > 0 ? { start: Math.max(0, size - suffix), end: size - 1 } : null;
+  }
+  const start = Number(first);
+  const end = last ? Math.min(Number(last), size - 1) : size - 1;
+  return start <= end ? { start, end } : null;
+}
+
+async function deliverFile(
+  ctx: AppContext,
+  request: FastifyRequest<{ Params: FileParams }>,
+  reply: FastifyReply,
+  delivery: FileDelivery,
+) {
+  const auth = await authorize(request, reply, ctx, request.params.id, ["owner", "computer", "phone"]);
+  if (!auth) return;
+  const session = ctx.sessionStore.getById(auth.sessionId)!;
+  if (!canDownload(session, auth.participant)) {
+    const status = sessionMode(session) === "oneway" ? 401 : 403;
+    return reply.status(status).send({ error: "Unauthorized", statusCode: status });
+  }
+
+  const { fileId } = request.params;
+  const opened = await ctx.fileService.withItemPublication(session.id, fileId, async () => {
+    if (ctx.sessionStore.getById(session.id) !== session) return;
+    const file = session.files.find((entry) => entry.id === fileId && entry.state === "completed");
+    if (!file) return;
+    const { originalName, mimeType, storageName, version } = file;
+    try {
+      const descriptor = await open(ctx.fileService.getFilePath(session.id, storageName), "r");
+      return { descriptor, originalName, mimeType, version };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  });
+  if (!opened) return reply.status(404).send({ error: "File not found", statusCode: 404 });
+
+  const { descriptor, originalName, mimeType, version } = opened;
+  let handedOff = false;
+  try {
+    const { size } = await descriptor.stat();
+    const etag = `"${fileId}-v${version}"`;
+    reply.header("ETag", etag)
+      .header("Cache-Control", "private, no-cache")
+      .header("Accept-Ranges", "bytes");
+
+    let type = delivery === "attachment" ? mimeType : "application/octet-stream";
+    let disposition = rfc5987(originalName);
+    if (delivery === "preview") {
+      reply.header("X-Content-Type-Options", "nosniff")
+        .header("Content-Security-Policy", "sandbox");
+      const allowedMime = INLINE_EXTENSIONS[extname(originalName).toLowerCase()];
+      if (allowedMime) {
+        const buffer = Buffer.alloc(16);
+        const { bytesRead } = await descriptor.read(buffer, 0, buffer.length, 0);
+        const magicMime = sniffMimeFromBytes(buffer.subarray(0, bytesRead));
+        if (!magicMime || magicMime === allowedMime) {
+          type = allowedMime;
+          disposition = `inline; filename="${encodeURIComponent(originalName)}"`;
+        }
+      }
+    }
+
+    let start = 0;
+    let end = size - 1;
+    const { range, "if-range": ifRange } = request.headers;
+    // The version ETag is strong. A stale/weak tag or date gets the whole current file.
+    if (request.method === "GET" && range !== undefined && (ifRange === undefined || ifRange === etag)) {
+      const interval = byteRange(range, size);
+      if (!interval) {
+        return reply.status(416).header("Content-Range", `bytes */${size}`).send();
+      }
+      ({ start, end } = interval);
+      reply.status(206).header("Content-Range", `bytes ${start}-${end}/${size}`);
+    }
+    reply.header("Content-Type", type)
+      .header("Content-Disposition", disposition)
+      .header("Content-Length", end - start + 1);
+
+    if (request.method === "HEAD" || size === 0) return reply.send();
+    const stream = descriptor.createReadStream({ start, end, autoClose: true });
+    handedOff = true;
+    return reply.send(stream);
+  } finally {
+    if (!handedOff) await descriptor.close();
+  }
+}
+
 export async function downloadRoutes(
   app: FastifyInstance,
   opts: { ctx: AppContext },
 ): Promise<void> {
   const { ctx } = opts;
-
-  // ─── Preview ───────────────────────────────────────────────────────────────
-  app.get<{ Params: { id: string; fileId: string } }>(
-    "/sessions/:id/files/:fileId/preview",
-    async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, [
-        "owner",
-        "computer",
-        "phone",
-      ]);
-      if (!auth) return;
-
-      const session = ctx.sessionStore.getById(auth.sessionId)!;
-      if (!canDownload(session, auth.participant)) {
-        const status = sessionMode(session) === "oneway" ? 401 : 403;
-        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
-      }
-      const file = session.files.find((f) => f.id === request.params.fileId);
-
-      if (!file || file.state !== "completed") {
-        return reply.status(404).send({ error: "File not found", statusCode: 404 });
-      }
-
-      const ext = extname(file.originalName).toLowerCase();
-      const filePath = ctx.fileService.getFilePath(auth.sessionId, file.storageName);
-
-      // Read first 16 bytes for magic-byte sniffing
-      let magicMime: string | null = null;
-      try {
-        const { open } = await import("node:fs/promises");
-        const fd = await open(filePath, "r");
-        const buf = Buffer.alloc(16);
-        await fd.read(buf, 0, 16, 0);
-        await fd.close();
-        magicMime = sniffMimeFromBytes(buf);
-      } catch {
-        // fallback to extension only
-      }
-
-      const allowedMime = INLINE_EXTENSIONS[ext];
-      const isInlineAllowed = Boolean(allowedMime);
-      const isVideoOrAudio = VIDEO_AUDIO_EXTENSIONS.has(ext);
-      const resolvedMime = allowedMime ?? file.mimeType ?? "application/octet-stream";
-
-      // Extra safety: if magic bytes contradict, fall back to non-inline
-      const magicIsCompatible =
-        magicMime === null || (allowedMime !== undefined && magicMime === allowedMime);
-
-      const serveInline = isInlineAllowed && magicIsCompatible;
-
-      const fileStat = await stat(filePath);
-      const fileSize = fileStat.size;
-
-      // Security headers for preview
-      void reply.header("X-Content-Type-Options", "nosniff");
-      void reply.header("Content-Security-Policy", "sandbox");
-
-      if (!serveInline) {
-        // Unsafe type: force download
-        const safeFileName = encodeURIComponent(file.originalName);
-        void reply.header(
-          "Content-Disposition",
-          `attachment; filename*=UTF-8''${safeFileName}; filename="${safeFileName}"`,
-        );
-        void reply.header("Content-Type", "application/octet-stream");
-        void reply.header("Content-Length", fileSize);
-        const rs = createReadStream(filePath);
-        return reply.send(rs);
-      }
-
-      // Range support for video/audio
-      if (isVideoOrAudio) {
-        void reply.header("Accept-Ranges", "bytes");
-        const rangeHeader = request.headers["range"];
-        if (rangeHeader) {
-          const match = /bytes=(\d+)-(\d*)/.exec(rangeHeader);
-          if (match) {
-            const start = parseInt(match[1]!, 10);
-            const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-            const chunkSize = end - start + 1;
-
-            void reply.status(206);
-            void reply.header("Content-Range", `bytes ${start}-${end}/${fileSize}`);
-            void reply.header("Content-Length", chunkSize);
-            void reply.header("Content-Type", resolvedMime);
-            void reply.header(
-              "Content-Disposition",
-              `inline; filename="${encodeURIComponent(file.originalName)}"`,
-            );
-            const rs = createReadStream(filePath, { start, end });
-            return reply.send(rs);
-          }
-        }
-      }
-
-      void reply.header(
-        "Content-Disposition",
-        `inline; filename="${encodeURIComponent(file.originalName)}"`,
-      );
-      void reply.header("Content-Type", resolvedMime);
-      void reply.header("Content-Length", fileSize);
-
-      const rs = createReadStream(filePath);
-      return reply.send(rs);
-    },
-  );
-
-  // ─── Download individual ───────────────────────────────────────────────────
-  app.get<{ Params: { id: string; fileId: string } }>(
-    "/sessions/:id/files/:fileId/download",
-    async (request, reply) => {
-      const auth = await authorize(request, reply, ctx, request.params.id, [
-        "owner",
-        "computer",
-        "phone",
-      ]);
-      if (!auth) return;
-
-      const session = ctx.sessionStore.getById(auth.sessionId)!;
-      if (!canDownload(session, auth.participant)) {
-        const status = sessionMode(session) === "oneway" ? 401 : 403;
-        return reply.status(status).send({ error: "Unauthorized", statusCode: status });
-      }
-      const file = session.files.find((f) => f.id === request.params.fileId);
-
-      if (!file || file.state !== "completed") {
-        return reply.status(404).send({ error: "File not found", statusCode: 404 });
-      }
-
-      const filePath = ctx.fileService.getFilePath(auth.sessionId, file.storageName);
-      const { stat: fsStat } = await import("node:fs/promises");
-      const fileStat = await fsStat(filePath);
-
-      void reply.header("Content-Type", "application/octet-stream");
-      void reply.header("Content-Disposition", rfc5987(file.originalName));
-      void reply.header("Content-Length", fileStat.size);
-
-      const rs = createReadStream(filePath);
-      return reply.send(rs);
-    },
-  );
+  const fileUrl = "/sessions/:id/files/:fileId";
+  for (const [url, delivery] of [
+    [fileUrl, "attachment"],
+    [fileUrl + "/preview", "preview"],
+    [fileUrl + "/download", "download"],
+  ] as const) {
+    // Explicit HEAD preserves the descriptor's size without opening a body stream.
+    app.route<{ Params: FileParams }>({
+      method: ["GET", "HEAD"],
+      url,
+      handler: (request, reply) => deliverFile(ctx, request, reply, delivery),
+    });
+  }
 
   // ─── ZIP download ──────────────────────────────────────────────────────────
   app.get<{ Params: { id: string } }>("/sessions/:id/download.zip", async (request, reply) => {
