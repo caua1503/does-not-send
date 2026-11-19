@@ -1,8 +1,8 @@
-import { once } from "node:events";
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname } from "node:path";
+import { ZipFile } from "yazl";
 import type { AppContext } from "../app.js";
 import { authorize } from "./sessions.js";
 import { canDownload, sessionMode } from "../session/permissions.js";
@@ -262,25 +262,16 @@ export async function downloadRoutes(
     void reply.header("Content-Disposition", rfc5987(zipFilename));
     // No Content-Length — streaming, unknown size
 
-    const { Zip, ZipPassThrough } = await import("fflate");
-    const { PassThrough } = await import("node:stream");
-
-    const passthrough = new PassThrough();
-
-    // Start streaming immediately
-    void reply.send(passthrough);
-
+    const zip = new ZipFile();
+    const output = zip.outputStream as import("node:stream").PassThrough;
     let currentStream: ReturnType<typeof createReadStream> | null = null;
-
-    const controller = new AbortController();
-    const onClientClose = (): void => {
-      controller.abort();
-      passthrough.destroy();
-      currentStream?.destroy();
-    };
-
+    const onClientClose = () => output.destroy();
     reply.raw.once("close", onClientClose);
-    passthrough.once("close", onClientClose);
+    output.once("close", () => {
+      reply.raw.off("close", onClientClose);
+      currentStream?.destroy();
+    });
+    zip.on("error", (error: Error) => output.destroy(error));
 
     // Deduplicate filenames
     const usedNames = new Set<string>();
@@ -303,59 +294,27 @@ export async function downloadRoutes(
       }
     }
 
-    let blocked = false;
-    const zip = new Zip((err, dat, final) => {
-      if (err) {
-        passthrough.destroy(err);
-        return;
-      }
-      if (!passthrough.destroyed) {
-        if (!passthrough.write(dat)) blocked = true;
-        if (final) passthrough.end();
-      }
-    });
-
     try {
       for (const file of completedFiles) {
-        if (passthrough.destroyed) break;
-
         const zipName = dedupeFilename(file.originalName);
         const filePath = ctx.fileService.getFilePath(sessionId, file.storageName);
-
-        const entry = new ZipPassThrough(zipName);
-        zip.add(entry);
-        currentStream = createReadStream(filePath);
-        for await (const chunk of currentStream) {
-          entry.push(chunk, false);
-          if (blocked) {
-            await once(passthrough, "drain", { signal: controller.signal });
-            blocked = false;
-          }
-          if (controller.signal.aborted) break;
-        }
-        currentStream = null;
-        if (!controller.signal.aborted) {
-          entry.push(new Uint8Array(0), true);
-          if (blocked) {
-            await once(passthrough, "drain", { signal: controller.signal });
-            blocked = false;
-          }
-        }
-
-        if (passthrough.destroyed) break;
+        // yazl opens entries one at a time and pipes STORE bytes with backpressure.
+        zip.addReadStreamLazy(zipName, { compress: false }, (ready) => {
+          if (output.destroyed) return;
+          const source = createReadStream(filePath);
+          currentStream = source;
+          source.once("error", (error) => output.destroy(error));
+          source.once("close", () => {
+            if (currentStream === source) currentStream = null;
+          });
+          ready(null, source);
+        });
       }
-
-      if (!passthrough.destroyed) {
-        zip.end();
-      }
-    } catch (err) {
-      if (!passthrough.destroyed) {
-        passthrough.destroy(err as Error);
-      }
-    } finally {
-      reply.raw.off("close", onClientClose);
-      passthrough.off("close", onClientClose);
-      currentStream?.destroy();
+      zip.end();
+    } catch (error) {
+      output.destroy();
+      throw error;
     }
+    return reply.send(output);
   });
 }
