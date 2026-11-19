@@ -219,6 +219,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               error.statusCode === 413 ||
               error.statusCode === 507 ||
               error.statusCode === 404 ||
+              error.statusCode === 409 ||
               error.statusCode === 400
             ) {
               return reply.status(error.statusCode).send({
@@ -328,27 +329,29 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       ]);
       if (!auth) return;
 
-      const session = ctx.sessionStore.getById(auth.sessionId)!;
-      const file = session.files.find((f) => f.id === request.params.fileId);
-      if (!file) {
-        return reply.status(404).send({ error: "File not found", statusCode: 404 });
-      }
+      return ctx.fileService.withItemPublication(auth.sessionId, request.params.fileId, async () => {
+        const session = ctx.sessionStore.getById(auth.sessionId);
+        const file = session?.files.find((f) => f.id === request.params.fileId);
+        if (!session || session.state === "CLOSED" || !file) {
+          return reply.status(404).send({ error: "File not found", statusCode: 404 });
+        }
 
-      if (!canDelete(session, auth.participant, file)) {
-        return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
-      }
+        if (!canDelete(session, auth.participant, file)) {
+          return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+        }
 
-      await rm(ctx.fileService.getFilePath(session.id, file.storageName), {
-        force: true,
+        await rm(ctx.fileService.getFilePath(session.id, file.storageName), {
+          force: true,
+        });
+        session.files = session.files.filter((f) => f.id !== file.id);
+        ctx.sessionStore.update(session);
+
+        if (sessionMode(session) === "twoway") {
+          ctx.sessionStore.notifyWs(session.id, { type: "item:deleted", id: file.id });
+        }
+
+        return reply.status(204).send();
       });
-      session.files = session.files.filter((f) => f.id !== file.id);
-      ctx.sessionStore.update(session);
-
-      if (sessionMode(session) === "twoway") {
-        ctx.sessionStore.notifyWs(session.id, { type: "item:deleted", id: file.id });
-      }
-
-      return reply.status(204).send();
     },
   );
 }

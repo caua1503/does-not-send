@@ -139,6 +139,7 @@ function completedBytes(session: Session): number {
 
 export class FileService {
   private reservations = new Set<StorageReservation>();
+  private itemPublications = new Map<string, Promise<void>>();
 
   constructor(
     private config: Config,
@@ -374,6 +375,25 @@ export class FileService {
     }
   }
 
+  async withItemPublication<T>(
+    sessionId: string,
+    fileId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${sessionId}/${fileId}`;
+    const previous = this.itemPublications.get(key);
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.itemPublications.set(key, current);
+    try {
+      await previous;
+      return await operation();
+    } finally {
+      release();
+      if (this.itemPublications.get(key) === current) this.itemPublications.delete(key);
+    }
+  }
+
   /**
    * Replaces the content of an existing completed file, keeping its id.
    * The new content is written to a temp file in the same folder and renamed
@@ -415,6 +435,7 @@ export class FileService {
     const nextExtension = mimeExtension ?? fileRecord.extension;
     const finalName = `${baseName}${nextExtension ? `.${nextExtension}` : ""}`;
 
+    const expectedVersion = fileRecord.version;
     const finalPath = this.getFilePath(sessionId, fileRecord.storageName);
     // Unique per request: two concurrent replaces must not share a temp file.
     const tempPath = `${finalPath}.${generateStorageName()}.tmp`;
@@ -431,60 +452,69 @@ export class FileService {
       const writeStream = createWriteStream(tempPath);
       await this.pipeToFile(stream, writeStream, reservation, tempRecord, signal);
 
-      const currentSession = this.repository.getById(sessionId);
-      if (!currentSession || currentSession.state === "CLOSED") {
-        throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
-      }
-
       const fileStat = await stat(tempPath);
-      if (signal?.aborted) throw uploadAborted();
-      await rename(tempPath, finalPath);
+      return await this.withItemPublication(sessionId, fileId, async () => {
+        const currentSession = this.repository.getById(sessionId);
+        if (!currentSession || currentSession.state === "CLOSED") {
+          throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
+        }
 
-      fileRecord.originalName = finalName;
-      fileRecord.mimeType = nextMimeType;
-      fileRecord.size = fileStat.size;
-      this.reservations.delete(reservation);
-      fileRecord.bytesReceived = fileStat.size;
-      fileRecord.finishedAt = new Date().toISOString();
-      fileRecord.version += 1;
-      fileRecord.originalSize = originalSize ?? null;
-      if (nextExtension) fileRecord.extension = nextExtension;
-      fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
-      this.repository.update(session);
+        if (signal?.aborted) throw uploadAborted();
+        const currentFile = currentSession.files.find((file) => file.id === fileId);
+        if (!currentFile || currentFile.state !== "completed") {
+          throw Object.assign(new Error("File not found"), { statusCode: 404 });
+        }
+        if (currentFile !== fileRecord || currentFile.version !== expectedVersion) {
+          throw Object.assign(new Error("File changed during upload"), { statusCode: 409 });
+        }
+        await rename(tempPath, finalPath);
 
-      fileEvents.emitFileEvent({
-        type: "file:state-changed",
-        sessionId,
-        fileId: fileRecord.id,
-        state: "completed",
-        originalName: fileRecord.originalName,
-        size: fileRecord.size,
-        bytesReceived: fileRecord.bytesReceived,
-        version: fileRecord.version,
-        mimeType: fileRecord.mimeType,
-        finishedAt: fileRecord.finishedAt,
-        extension: fileRecord.extension,
-        category: fileRecord.category,
+        fileRecord.originalName = finalName;
+        fileRecord.mimeType = nextMimeType;
+        fileRecord.size = fileStat.size;
+        if (reservation) this.reservations.delete(reservation);
+        fileRecord.bytesReceived = fileStat.size;
+        fileRecord.finishedAt = new Date().toISOString();
+        fileRecord.version += 1;
+        fileRecord.originalSize = originalSize ?? null;
+        if (nextExtension) fileRecord.extension = nextExtension;
+        fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
+        this.repository.update(currentSession);
+
+        fileEvents.emitFileEvent({
+          type: "file:state-changed",
+          sessionId,
+          fileId: fileRecord.id,
+          state: "completed",
+          originalName: fileRecord.originalName,
+          size: fileRecord.size,
+          bytesReceived: fileRecord.bytesReceived,
+          version: fileRecord.version,
+          mimeType: fileRecord.mimeType,
+          finishedAt: fileRecord.finishedAt,
+          extension: fileRecord.extension,
+          category: fileRecord.category,
+        });
+
+        // Same recording path as a finished upload, so /admin follows the
+        // replacement instead of diverging from memory.
+        if (this.recorder) {
+          safeRecord(
+            this.recorder,
+            {
+              type: "transfer_finished",
+              at: new Date(),
+              id: fileRecord.id,
+              status: "completed" as const,
+              size: fileStat.size,
+              originalSize: fileRecord.originalSize,
+            },
+            this.log,
+          );
+        }
+
+        return { file: fileRecord };
       });
-
-      // Same recording path as a finished upload, so /admin follows the
-      // replacement instead of diverging from memory.
-      if (this.recorder) {
-        safeRecord(
-          this.recorder,
-          {
-            type: "transfer_finished",
-            at: new Date(),
-            id: fileRecord.id,
-            status: "completed" as const,
-            size: fileStat.size,
-            originalSize: fileRecord.originalSize,
-          },
-          this.log,
-        );
-      }
-
-      return { file: fileRecord };
     } catch (err) {
       await rm(tempPath, { force: true }).catch(() => {});
       throw storageError(err);

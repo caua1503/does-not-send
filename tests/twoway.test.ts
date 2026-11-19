@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
+import { PassThrough } from "node:stream";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { FakeClock } from "../src/session/clock.js";
@@ -547,5 +549,46 @@ describe("expiração por inatividade twoway", () => {
     expect(stored.participants).toHaveLength(0);
     expect(existsSync(join(ctx.config.tempDir, session.id))).toBe(false);
     expect(store.loginCodes.current(session.id)).toBeNull();
+  });
+});
+
+describe("publication of concurrent edits", () => {
+  it("does not recreate an item deleted during PUT or block DELETE behind the upload", async () => {
+    const ctx = await createTestApp();
+    const stream = new PassThrough();
+    try {
+      const session = await createTwoway(ctx);
+      const guest = await joinParticipant(ctx, session, "Guest");
+      const uploaded = await upload(ctx, session, guest.credential, "original", "file.txt");
+      expect(uploaded.statusCode).toBe(201);
+      const { id } = uploaded.json().files[0];
+      const directory = join(ctx.tempDir, session.id);
+      const { fileService, sessionStore } = getAppContext(ctx.app);
+      const record = sessionStore.getById(session.id)!.files[0]!;
+      const edit = fileService.replaceFile(session.id, id, "file.txt", "text/plain", stream)
+        .catch((err: unknown) => err);
+
+      try {
+        stream.write("new");
+        await expect.poll(async () => (await readdir(directory)).length).toBe(2);
+        expect(await readFile(join(directory, id), "utf8")).toBe("original");
+        const response = await ctx.app.inject({
+          method: "DELETE",
+          url: `/api/sessions/${session.id}/files/${id}`,
+          headers: { authorization: `Bearer ${session.ownerToken}` },
+        });
+        expect(response.statusCode).toBe(204);
+      } finally {
+        stream.end();
+      }
+
+      const result = await edit;
+      expect({ status: (result as { statusCode?: number }).statusCode, version: record.version,
+        entries: await readdir(directory), remaining: sessionStore.getById(session.id)!.files.length,
+      }).toEqual({ status: 404, version: 1, entries: [], remaining: 0 });
+    } finally {
+      stream.destroy();
+      await cleanupTestApp(ctx);
+    }
   });
 });
