@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -271,16 +272,15 @@ export async function downloadRoutes(
 
     let currentStream: ReturnType<typeof createReadStream> | null = null;
 
+    const controller = new AbortController();
     const onClientClose = (): void => {
-      if (!passthrough.destroyed) {
-        passthrough.destroy();
-      }
-      if (currentStream && !currentStream.destroyed) {
-        currentStream.destroy();
-      }
+      controller.abort();
+      passthrough.destroy();
+      currentStream?.destroy();
     };
 
-    request.raw.on("close", onClientClose);
+    reply.raw.once("close", onClientClose);
+    passthrough.once("close", onClientClose);
 
     // Deduplicate filenames
     const usedNames = new Set<string>();
@@ -303,13 +303,14 @@ export async function downloadRoutes(
       }
     }
 
+    let blocked = false;
     const zip = new Zip((err, dat, final) => {
       if (err) {
         passthrough.destroy(err);
         return;
       }
       if (!passthrough.destroyed) {
-        passthrough.write(dat);
+        if (!passthrough.write(dat)) blocked = true;
         if (final) passthrough.end();
       }
     });
@@ -321,39 +322,25 @@ export async function downloadRoutes(
         const zipName = dedupeFilename(file.originalName);
         const filePath = ctx.fileService.getFilePath(sessionId, file.storageName);
 
-        await new Promise<void>((resolve, reject) => {
-          const entry = new ZipPassThrough(zipName);
-          zip.add(entry);
-
-          const rs = createReadStream(filePath);
-          currentStream = rs;
-
-          rs.on("data", (chunk: Buffer) => {
-            if (passthrough.destroyed) {
-              rs.destroy();
-              resolve();
-              return;
-            }
-            entry.push(chunk, false);
-          });
-
-          rs.on("end", () => {
-            currentStream = null;
-            entry.push(new Uint8Array(0), true);
-            resolve();
-          });
-
-          rs.on("error", (err) => {
-            currentStream = null;
-            entry.push(new Uint8Array(0), true);
-            reject(err);
-          });
-
-          rs.on("close", () => {
-            currentStream = null;
-            resolve();
-          });
-        });
+        const entry = new ZipPassThrough(zipName);
+        zip.add(entry);
+        currentStream = createReadStream(filePath);
+        for await (const chunk of currentStream) {
+          entry.push(chunk, false);
+          if (blocked) {
+            await once(passthrough, "drain", { signal: controller.signal });
+            blocked = false;
+          }
+          if (controller.signal.aborted) break;
+        }
+        currentStream = null;
+        if (!controller.signal.aborted) {
+          entry.push(new Uint8Array(0), true);
+          if (blocked) {
+            await once(passthrough, "drain", { signal: controller.signal });
+            blocked = false;
+          }
+        }
 
         if (passthrough.destroyed) break;
       }
@@ -366,11 +353,9 @@ export async function downloadRoutes(
         passthrough.destroy(err as Error);
       }
     } finally {
-      request.raw.off("close", onClientClose);
-      const stream = currentStream as ReturnType<typeof createReadStream> | null;
-      if (stream && !stream.destroyed) {
-        stream.destroy();
-      }
+      reply.raw.off("close", onClientClose);
+      passthrough.off("close", onClientClose);
+      currentStream?.destroy();
     }
   });
 }
