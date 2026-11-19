@@ -3,6 +3,9 @@ import type { GuestUploadItem } from "../pages/guest/UploadItem.tsx";
 import { compressPhoto, isCompressiblePhoto } from "../lib/compressPhoto.ts";
 import { convertHeicToJpeg, isHeic } from "../lib/convertHeic.ts";
 import { TaskQueue } from "../lib/taskQueue.ts";
+import { RESUMABLE_UPLOAD_MIN_BYTES } from "../../../src/shared/resumable-upload.ts";
+import { ApiError } from "../lib/api.ts";
+import { newTransferId, resumableUpload } from "../lib/resumableUpload.ts";
 import { BASE_URL } from "../lib/base.ts";
 import { buildTextFile, TEXT_MAX_LENGTH } from "../lib/textFile.ts";
 
@@ -49,16 +52,41 @@ export function useSessionUpload({
     return () => controller.abort();
   }, [sessionId, credential]);
 
-  const enqueueUpload = (item: GuestUploadItem, configure: (xhr: XMLHttpRequest) => FormData) => {
+  const enqueueUpload = (item: GuestUploadItem, task: (signal: AbortSignal) => Promise<void>) => {
     const signal = scope.current.signal;
     setItems((prev) => prev.map((current) => current.id === item.id
       ? { ...current, state: "pending", error: undefined }
       : current));
-    void uploadQueue.run(() => new Promise<void>((resolve) => {
-      if (signal.aborted || disabledRef.current) {
-        resolve();
-        return;
+    void uploadQueue.run(async () => {
+      if (signal.aborted || disabledRef.current) return;
+      try {
+        await task(signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        let message = "Sem conexão com o servidor";
+        if (error instanceof ApiError) {
+          if (error.status === 410) {
+            onClosedRef.current?.();
+            message = "Sessão encerrada";
+          } else if (error.status === 413) {
+            message = "Arquivo muito grande ou limite excedido";
+          } else if (error.status === 507) {
+            message = "Sem espaço para continuar o envio";
+          } else if (error.status === 409) {
+            message = "Envio interrompido. Tente novamente.";
+          } else {
+            message = error.message;
+          }
+        }
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, state: "error", error: message }
+          : current));
       }
+    });
+  };
+
+  const enqueueMultipart = (item: GuestUploadItem, configure: (xhr: XMLHttpRequest) => FormData) =>
+    enqueueUpload(item, (signal) => new Promise<void>((resolve) => {
       const xhr = new XMLHttpRequest();
       let settled = false;
       const finish = () => {
@@ -98,147 +126,175 @@ export function useSessionUpload({
         finish();
       }
     }));
-  };
 
-  const uploadSingleFile = (item: GuestUploadItem) => enqueueUpload(item, (xhr) => {
-    setItems((prev) =>
-      prev.map((current) =>
-        current.id === item.id
-          ? { ...current, state: "uploading", progress: 0, error: undefined }
-          : current,
-      ),
-    );
+  const uploadLargeFile = (item: GuestUploadItem) => enqueueUpload(item, async (signal) => {
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "uploading", progress: 0 }
+      : current));
+    const remoteId = await resumableUpload({
+      url: `${BASE_URL}/api/sessions/${sessionId}/transfers/${item.id}`,
+      credential,
+      file: item.file,
+      originalSize: item.originalSize ?? item.file.size,
+      signal,
+      onProgress: (bytes) => {
+        if (signal.aborted) return;
+        setItems((prev) => prev.map((current) => current.id === item.id
+          ? { ...current, progress: bytes / item.file.size }
+          : current));
+      },
+    });
+    if (signal.aborted) return;
+    setItems((prev) => prev.map((current) => current.id === item.id
+      ? { ...current, state: "completed", progress: 1, remoteId }
+      : current));
+  });
 
-    const formData = new FormData();
-    // Field first: the server streams the file part and reads it before the bytes.
-    formData.append("originalSize", String(item.originalSize ?? item.file.size));
-    formData.append("files", item.file, item.file.name);
-
-    xhr.upload.onprogress = (event) => {
-      if (!event.lengthComputable) return;
-      const progress = event.loaded / event.total;
-      setItems((prev) =>
-        prev.map((current) => (current.id === item.id ? { ...current, progress } : current)),
-      );
-    };
-
-    xhr.onload = () => {
-      if (xhr.status === 201) {
-        let remoteId: string | undefined;
-        try {
-          const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
-          remoteId = body.files?.[0]?.id;
-        } catch {
-          // resposta sem corpo válido: upload concluído, sem id remoto
-        }
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "completed", progress: 1, remoteId }
-              : current,
-          ),
-        );
-        if (item.kind === "text") setTextError(null);
-      } else if (xhr.status === 401) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Falha de autorização no envio" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 410) {
-        onClosedRef.current?.();
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Sessão encerrada" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 404) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: "Sessão não encontrada" }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 409) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: conflictMessage(xhr) }
-              : current,
-          ),
-        );
-      } else if (xhr.status === 400 || xhr.status === 429) {
-        let message =
-          xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
-        try {
-          const body = JSON.parse(xhr.responseText) as { error?: unknown };
-          if (typeof body.error === "string") message = body.error;
-        } catch {
-          // resposta sem corpo válido: mantém a mensagem padrão
-        }
-        if (item.kind === "text") setTextError(message);
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id ? { ...current, state: "error", error: message } : current,
-          ),
-        );
-      } else if (xhr.status === 413) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? {
-                  ...current,
-                  state: "error",
-                  error: "Arquivo muito grande ou limite excedido",
-                }
-              : current,
-          ),
-        );
-      } else if (xhr.status >= 500 && xhr.status < 600) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? {
-                  ...current,
-                  state: "error",
-                  error: "Servidor temporariamente indisponível",
-                }
-              : current,
-          ),
-        );
-      } else {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id
-              ? { ...current, state: "error", error: `Erro ${xhr.status}` }
-              : current,
-          ),
-        );
-      }
-    };
-
-    xhr.onerror = () => {
+  const uploadSingleFile = (item: GuestUploadItem) => {
+    if (item.kind !== "text" && item.file.size >= RESUMABLE_UPLOAD_MIN_BYTES) {
+      uploadLargeFile(item);
+      return;
+    }
+    enqueueMultipart(item, (xhr) => {
       setItems((prev) =>
         prev.map((current) =>
           current.id === item.id
-            ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+            ? { ...current, state: "uploading", progress: 0, error: undefined }
             : current,
         ),
       );
-    };
 
-    xhr.open(
-      "POST",
-      `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
-    );
-    xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
-    return formData;
-  });
+      const formData = new FormData();
+      // Field first: the server streams the file part and reads it before the bytes.
+      formData.append("originalSize", String(item.originalSize ?? item.file.size));
+      formData.append("files", item.file, item.file.name);
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const progress = event.loaded / event.total;
+        setItems((prev) =>
+          prev.map((current) => (current.id === item.id ? { ...current, progress } : current)),
+        );
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 201) {
+          let remoteId: string | undefined;
+          try {
+            const body = JSON.parse(xhr.responseText) as { files?: Array<{ id?: string }> };
+            remoteId = body.files?.[0]?.id;
+          } catch {
+            // resposta sem corpo válido: upload concluído, sem id remoto
+          }
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "completed", progress: 1, remoteId }
+                : current,
+            ),
+          );
+          if (item.kind === "text") setTextError(null);
+        } else if (xhr.status === 401) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Falha de autorização no envio" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 410) {
+          onClosedRef.current?.();
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Sessão encerrada" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 404) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: "Sessão não encontrada" }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 409) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: conflictMessage(xhr) }
+                : current,
+            ),
+          );
+        } else if (xhr.status === 400 || xhr.status === 429) {
+          let message =
+            xhr.status === 429 ? "Muitos textos enviados, aguarde um pouco" : "Texto inválido";
+          try {
+            const body = JSON.parse(xhr.responseText) as { error?: unknown };
+            if (typeof body.error === "string") message = body.error;
+          } catch {
+            // resposta sem corpo válido: mantém a mensagem padrão
+          }
+          if (item.kind === "text") setTextError(message);
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id ? { ...current, state: "error", error: message } : current,
+            ),
+          );
+        } else if (xhr.status === 413) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? {
+                    ...current,
+                    state: "error",
+                    error: "Arquivo muito grande ou limite excedido",
+                  }
+                : current,
+            ),
+          );
+        } else if (xhr.status >= 500 && xhr.status < 600) {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? {
+                    ...current,
+                    state: "error",
+                    error: "Servidor temporariamente indisponível",
+                  }
+                : current,
+            ),
+          );
+        } else {
+          setItems((prev) =>
+            prev.map((current) =>
+              current.id === item.id
+                ? { ...current, state: "error", error: `Erro ${xhr.status}` }
+                : current,
+            ),
+          );
+        }
+      };
+
+      xhr.onerror = () => {
+        setItems((prev) =>
+          prev.map((current) =>
+            current.id === item.id
+              ? { ...current, state: "error", error: "Sem conexão com o servidor" }
+              : current,
+          ),
+        );
+      };
+
+      xhr.open(
+        "POST",
+        `${BASE_URL}/api/sessions/${sessionId}/files${item.kind === "text" ? "?kind=text" : ""}`,
+      );
+      xhr.setRequestHeader("Authorization", `Bearer ${credential}`);
+      return formData;
+    });
+  };
 
   const processAndUpload = async (item: GuestUploadItem) => {
     const signal = scope.current.signal;
@@ -267,7 +323,7 @@ export function useSessionUpload({
     const fileList = Array.from(event.target.files);
 
     const newItems: GuestUploadItem[] = fileList.map((file) => ({
-      id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+      id: newTransferId(),
       file,
       originalSize: file.size,
       progress: 0,
@@ -317,7 +373,7 @@ export function useSessionUpload({
   };
 
   // PUT replaces the file content keeping the same remote id: no new item.
-  const replaceEditedImage = (item: GuestUploadItem, file: File) => enqueueUpload(item, (xhr) => {
+  const replaceEditedImage = (item: GuestUploadItem, file: File) => enqueueMultipart(item, (xhr) => {
     setItems((prev) =>
       prev.map((current) =>
         current.id === item.id

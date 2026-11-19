@@ -1,6 +1,7 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { rm } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import type { Session } from "../types.js";
 import type { AppContext } from "../app.js";
 import { authorize } from "./sessions.js";
@@ -14,9 +15,14 @@ function abortOnDisconnect(request: FastifyRequest, controller: AbortController)
   const onClose = () => {
     if (!raw.complete) controller.abort();
   };
+  const onAbort = () => controller.abort();
   raw.once("close", onClose);
+  raw.once("aborted", onAbort);
   if (raw.destroyed) onClose();
-  return () => raw.off("close", onClose);
+  return () => {
+    raw.off("close", onClose);
+    raw.off("aborted", onAbort);
+  };
 }
 
 export function sessionFilesView(session: Session) {
@@ -49,6 +55,114 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       files: ctx.config.maxFilesPerSession,
     },
   });
+
+  const transferUrl = "/sessions/:id/transfers/:transferId";
+  type TransferParams = { id: string; transferId: string };
+  type TransferRequest = FastifyRequest<{ Params: TransferParams }>;
+
+  async function authorizeTransfer(request: TransferRequest, reply: FastifyReply) {
+    const { id, transferId } = request.params;
+    const session = ctx.sessionStore.getById(id);
+    if (!session || session.state === "CLOSED") {
+      const statusCode = session ? 410 : 404;
+      reply.status(statusCode).send({ error: "Session not available", statusCode });
+      return;
+    }
+
+    const auth = await authorize(request, reply, ctx, id, ["owner", "computer", "phone"]);
+    if (!auth) return;
+    if (!canUpload(session, auth.participant)) {
+      reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+      return;
+    }
+
+    if (!/^[a-f0-9]{32}$/.test(transferId)) {
+      reply.status(400).send({ error: "Invalid transfer ID", statusCode: 400 });
+      return;
+    }
+
+    // A new phone credential in a one-way session must not inherit an old phone's partials.
+    const owner = sessionMode(session) === "oneway" && auth.role === "phone"
+      ? session.guestCredentialHash!
+      : auth.participant.id;
+    return { session, owner, participant: auth.participant };
+  }
+
+  app.addContentTypeParser("application/octet-stream", (_request, payload, done) => {
+    done(null, payload);
+  });
+
+  app.post<{ Params: TransferParams }>(transferUrl, async (request, reply) => {
+    const auth = await authorizeTransfer(request, reply);
+    if (!auth) return;
+    const body = request.body as { name?: unknown; mimeType?: unknown; size?: unknown; originalSize?: unknown } | null;
+    if (!body || typeof body.name !== "string" || body.name.length === 0 || body.name.length > 1024 ||
+        typeof body.size !== "number" || !Number.isSafeInteger(body.size) || body.size <= 0) {
+      return reply.status(400).send({ error: "Invalid file metadata", statusCode: 400 });
+    }
+    const mimeType = body.mimeType === undefined || body.mimeType === ""
+      ? "application/octet-stream"
+      : body.mimeType;
+    if (typeof mimeType !== "string" || mimeType.length > 255 || /[^\x20-\x7e]/.test(mimeType)) {
+      return reply.status(400).send({ error: "Invalid MIME type", statusCode: 400 });
+    }
+    return ctx.fileService.startTransfer(auth.session, request.params.transferId, auth.owner, auth.participant, {
+      name: body.name,
+      mimeType,
+      size: body.size,
+      originalSize: parseOriginalSize(typeof body.originalSize === "number" ? String(body.originalSize) : body.originalSize),
+    });
+  });
+
+  app.put<{ Params: TransferParams; Querystring: { offset?: string }; Body: Readable }>(
+    transferUrl,
+    async (request, reply) => {
+      const stream = request.body;
+      try {
+        const auth = await authorizeTransfer(request, reply);
+        if (!auth) return;
+        if (request.headers["content-type"] !== "application/octet-stream" || typeof stream?.on !== "function") {
+          return reply.status(415).send({ error: "Expected an octet stream", statusCode: 415 });
+        }
+        const rawOffset = request.query.offset;
+        const offset = Number(rawOffset);
+        if (typeof rawOffset !== "string" || !/^\d+$/.test(rawOffset) || !Number.isSafeInteger(offset)) {
+          return reply.status(400).send({ error: "Invalid offset", statusCode: 400 });
+        }
+        const { session, owner, participant } = auth;
+        // Let the service recognize a completed replay even during reconnect.
+        const active = session.state === "PAIRED" || session.state === "TRANSFERRING";
+        if (active) {
+          startUpload(session);
+          ctx.sessionService.touchActivity(session.id);
+        }
+        const controller = new AbortController();
+        const unbind = abortOnDisconnect(request, controller);
+        const unregister = ctx.sessionStore.registerUploadAbortController(session.id, controller, participant.id);
+        try {
+          return await ctx.fileService.appendTransfer(session, request.params.transferId, owner, offset, stream, controller.signal);
+        } catch (error) {
+          const status = (error as { statusCode?: number }).statusCode;
+          if (status === 499) {
+            const closed = ctx.sessionStore.getById(session.id)?.state === "CLOSED";
+            const statusCode = closed ? 410 : 409;
+            return reply.status(statusCode).send({
+              code: closed ? "SESSION_CLOSED" : "UPLOAD_INTERRUPTED",
+              statusCode,
+            });
+          }
+          if (status === 507) return reply.status(507).send({ error: "Insufficient storage space", statusCode: 507 });
+          throw error;
+        } finally {
+          unbind();
+          unregister();
+          if (active) endUpload(session);
+        }
+      } finally {
+        if (typeof stream?.resume === "function" && !stream.destroyed) stream.resume();
+      }
+    },
+  );
 
   // Upload files (guest credential)
   app.post<{ Params: { id: string } }>("/sessions/:id/files", async (request, reply) => {
@@ -350,6 +464,10 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
         if (!canDelete(session, auth.participant, file)) {
           return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+        }
+
+        if (file.state === "receiving") {
+          return reply.status(409).send({ error: "File upload is in progress", statusCode: 409 });
         }
 
         await rm(ctx.fileService.getFilePath(session.id, file.storageName), {

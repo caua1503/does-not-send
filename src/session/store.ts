@@ -93,6 +93,7 @@ export class SessionStore {
   private closedSessions = new Map<string, ClosedSession>();
   private closedByVisualId = new Map<string, ClosedSession>();
   private runningTick: Promise<void> | null = null;
+  private closingListeners = new Set<(session: Session) => void>();
   private pendingCleanups = new Map<string, PendingCleanup>();
   private pendingSockets = new Set<PendingWs>();
   private activeSockets = new Map<
@@ -590,6 +591,11 @@ export class SessionStore {
     this.publishedStatus.delete(sessionId);
   }
 
+  onSessionClosing(listener: (session: Session) => void): () => void {
+    this.closingListeners.add(listener);
+    return () => { this.closingListeners.delete(listener); };
+  }
+
   // Idempotent closeSession
   async closeSession(sessionId: string, reason: CloseReason = "closed"): Promise<void> {
     const session = this.getById(sessionId);
@@ -608,6 +614,7 @@ export class SessionStore {
 
     // 2. Abort active uploads and forget the login code
     this.abortUploads(sessionId);
+    for (const listener of this.closingListeners) listener(session);
     this.loginCodes.drop(sessionId);
     this.invites.dropSession(sessionId);
     this.textUploadTimes.delete(sessionId);

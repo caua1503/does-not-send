@@ -318,6 +318,7 @@ export async function buildApp(
 
   app.addHook("onClose", async () => {
     sessionStore.shutdown();
+    fileService.shutdown();
     await recorder.close(5000);
     // Runner first: it owns its own connection and must stop opening new ones.
     if (migrationRunner) await migrationRunner.stop();
