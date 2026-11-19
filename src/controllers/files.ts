@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { rm } from "node:fs/promises";
 import type { AppContext } from "../app.js";
@@ -8,12 +8,23 @@ import { canDelete, canDownload, canUpload, sessionMode } from "../session/permi
 import { itemAddedEvent } from "../session/twoway.js";
 import { parseOriginalSize } from "../utils/original-size.js";
 
+function abortOnDisconnect(request: FastifyRequest, controller: AbortController): () => void {
+  const raw = request.raw;
+  const onClose = () => {
+    if (!raw.complete) controller.abort();
+  };
+  raw.once("close", onClose);
+  if (raw.destroyed) onClose();
+  return () => raw.off("close", onClose);
+}
+
 export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }): Promise<void> {
   const { ctx } = opts;
 
   await app.register(multipart, {
     limits: {
-      fileSize: ctx.config.maxFileSize,
+      // Busboy flags a part as truncated as soon as it reaches this threshold.
+      fileSize: ctx.config.maxFileSize + 1,
       files: ctx.config.maxFilesPerSession,
     },
   });
@@ -62,6 +73,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       (request.query as { kind?: unknown } | undefined)?.kind === "text" ? "text" : undefined;
 
     const abortController = new AbortController();
+    const removeDisconnectListener = abortOnDisconnect(request, abortController);
     const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
       session.id,
       abortController,
@@ -119,10 +131,10 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               statusCode: error.statusCode,
             });
           }
-          if (error.statusCode === 413) {
-            return reply.status(413).send({
+          if (error.statusCode === 413 || error.statusCode === 507) {
+            return reply.status(error.statusCode).send({
               error: error.message,
-              statusCode: 413,
+              statusCode: error.statusCode,
             });
           }
           if (error.statusCode === 410 || error.statusCode === 499) {
@@ -137,6 +149,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
       return reply.status(201).send({ files: results });
     } finally {
+      removeDisconnectListener();
       unregisterUpload();
       endUpload(session);
       ctx.sessionStore.update(session);
@@ -163,6 +176,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       ctx.sessionService.touchActivity(session.id);
 
       const abortController = new AbortController();
+      const removeDisconnectListener = abortOnDisconnect(request, abortController);
       const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
         session.id,
         abortController,
@@ -203,7 +217,9 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             const error = err as Error & { statusCode?: number };
             if (
               error.statusCode === 413 ||
+              error.statusCode === 507 ||
               error.statusCode === 404 ||
+              error.statusCode === 409 ||
               error.statusCode === 400
             ) {
               return reply.status(error.statusCode).send({
@@ -223,6 +239,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
 
         return reply.status(400).send({ error: "Missing file", statusCode: 400 });
       } finally {
+        removeDisconnectListener();
         unregisterUpload();
         endUpload(session);
         ctx.sessionStore.update(session);
@@ -312,27 +329,29 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       ]);
       if (!auth) return;
 
-      const session = ctx.sessionStore.getById(auth.sessionId)!;
-      const file = session.files.find((f) => f.id === request.params.fileId);
-      if (!file) {
-        return reply.status(404).send({ error: "File not found", statusCode: 404 });
-      }
+      return ctx.fileService.withItemPublication(auth.sessionId, request.params.fileId, async () => {
+        const session = ctx.sessionStore.getById(auth.sessionId);
+        const file = session?.files.find((f) => f.id === request.params.fileId);
+        if (!session || session.state === "CLOSED" || !file) {
+          return reply.status(404).send({ error: "File not found", statusCode: 404 });
+        }
 
-      if (!canDelete(session, auth.participant, file)) {
-        return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
-      }
+        if (!canDelete(session, auth.participant, file)) {
+          return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+        }
 
-      await rm(ctx.fileService.getFilePath(session.id, file.storageName), {
-        force: true,
+        await rm(ctx.fileService.getFilePath(session.id, file.storageName), {
+          force: true,
+        });
+        session.files = session.files.filter((f) => f.id !== file.id);
+        ctx.sessionStore.update(session);
+
+        if (sessionMode(session) === "twoway") {
+          ctx.sessionStore.notifyWs(session.id, { type: "item:deleted", id: file.id });
+        }
+
+        return reply.status(204).send();
       });
-      session.files = session.files.filter((f) => f.id !== file.id);
-      ctx.sessionStore.update(session);
-
-      if (sessionMode(session) === "twoway") {
-        ctx.sessionStore.notifyWs(session.id, { type: "item:deleted", id: file.id });
-      }
-
-      return reply.status(204).send();
     },
   );
 }

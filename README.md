@@ -108,6 +108,7 @@ docker compose down
 | `PORT` | `3000` | Porta TCP do servidor |
 | `HOST` | `0.0.0.0` | Endereço de bind de rede |
 | `TEMP_DIR` | `./tmp/uploads` | Diretório no disco para armazenamento temporário |
+| `MAX_STORAGE_BYTES` | Capacidade do sistema de arquivos | Cota compartilhada de arquivos e gravações em andamento. No Compose, o padrão é 1920 MiB em tmpfs de 2 GiB, com limite de 960 MiB por arquivo para acomodar a versão original e a edição. |
 | `MAX_FILE_SIZE` | `5368709120` | Tamanho máximo por arquivo em bytes (padrão: 5GB) |
 | `MAX_FILES_PER_SESSION`| `50` | Limite de arquivos por sessão |
 | `ALLOWED_ORIGINS` | `*` | Origens aceitas pelo CORS (separadas por vírgula) |

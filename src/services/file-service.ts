@@ -1,11 +1,11 @@
 import { createWriteStream, type WriteStream } from "node:fs";
-import { rename, rm, stat } from "node:fs/promises";
+import { rename, rm, stat, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { Readable as ReadableStream } from "node:stream";
 import type { Config } from "../utils/config.js";
 import type { SessionStore } from "../session/store.js";
-import type { SessionFile } from "../types.js";
+import type { Session, SessionFile } from "../types.js";
 import { generateStorageName } from "../utils/crypto.js";
 import { sanitizeFilename } from "../utils/sanitize.js";
 import { fileEvents } from "../utils/events.js";
@@ -55,22 +55,55 @@ function uniqueTextName(files: SessionFile[], name: string): string {
   return `${base} (${counter})${ext}`;
 }
 
-function readStream(stream: Readable, maxBytes: number): Promise<Buffer> {
+function uploadAborted(): Error {
+  return Object.assign(new Error("Upload aborted"), { statusCode: 499 });
+}
+
+function readStream(stream: Readable, maxBytes: number, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
-    stream.on("data", (chunk: Buffer) => {
+
+    function cleanup() {
+      stream.off("data", onData).off("end", onEnd).off("error", fail).off("close", onAbort);
+      signal?.removeEventListener("abort", onAbort);
+    }
+
+    function fail(err: Error) {
+      cleanup();
+      stream.destroy();
+      reject(err);
+    }
+
+    function onAbort() {
+      fail(uploadAborted());
+    }
+
+    function onEnd() {
+      cleanup();
+      resolve(Buffer.concat(chunks, total));
+    }
+
+    function onData(chunk: Buffer) {
       total += chunk.length;
       if (total > maxBytes) {
-        stream.destroy();
-        reject(Object.assign(new Error("Texto excede o limite de 10000 caracteres"), { statusCode: 400 }));
+        fail(Object.assign(new Error("Texto excede o limite de 10000 caracteres"), { statusCode: 400 }));
         return;
       }
       chunks.push(chunk);
-    });
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    }
+
+    stream.once("end", onEnd).once("error", fail).once("close", onAbort);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted || stream.destroyed) onAbort();
+    else stream.on("data", onData);
   });
+}
+
+function checkFileSize(stream: Readable & { truncated?: boolean }, size: number, limit: number): void {
+  if (stream.truncated || size > limit) {
+    throw Object.assign(new Error("File too large"), { statusCode: 413 });
+  }
 }
 
 export interface UploadResult {
@@ -86,7 +119,28 @@ function sanitizeFilenameOr400(name: string): string {
   }
 }
 
+function storageError(err: unknown): unknown {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOSPC" || code === "EDQUOT") {
+    return Object.assign(new Error("Insufficient storage space", { cause: err }), { statusCode: 507 });
+  }
+  return err;
+}
+
+interface StorageReservation {
+  sessionId: string;
+  bytes: number;
+  volumeLimit: number;
+}
+
+function completedBytes(session: Session): number {
+  return session.files.reduce((sum, file) => sum + (file.state === "completed" ? file.size : 0), 0);
+}
+
 export class FileService {
+  private reservations = new Set<StorageReservation>();
+  private itemPublications = new Map<string, Promise<void>>();
+
   constructor(
     private config: Config,
     private repository: SessionStore,
@@ -105,7 +159,7 @@ export class FileService {
     originalSize?: number | null,
   ): Promise<UploadResult> {
     if (signal?.aborted) {
-      throw Object.assign(new Error("Upload aborted"), { statusCode: 499 });
+      throw uploadAborted();
     }
 
     const session = this.repository.getById(sessionId);
@@ -116,7 +170,8 @@ export class FileService {
     let uploadStream = stream;
     let uploadSize = declaredSize;
     if (kind === "text") {
-      const raw = await readStream(stream, TEXT_MAX_BYTES);
+      const raw = await readStream(stream, TEXT_MAX_BYTES, signal);
+      checkFileSize(stream, raw.length, this.config.maxFileSize);
       const text = raw.toString("utf8").trim();
       if (text.length === 0) {
         throw Object.assign(new Error("Texto não pode ser vazio"), { statusCode: 400 });
@@ -213,8 +268,10 @@ export class FileService {
       );
     }
 
+    let reservation: StorageReservation | undefined;
     try {
-      await this.pipeToFile(uploadStream, createWriteStream(filePath), sessionId, fileRecord, signal);
+      reservation = await this.reserveStorage(sessionId);
+      await this.pipeToFile(uploadStream, createWriteStream(filePath), reservation, fileRecord, signal);
 
       // Reverificar se sessão não foi fechada no meio
       const currentSession = this.repository.getById(sessionId);
@@ -229,9 +286,11 @@ export class FileService {
 
       // Get actual file size from disk
       const fileStat = await stat(filePath);
+      if (signal?.aborted) throw uploadAborted();
       fileRecord.bytesReceived = fileStat.size;
       fileRecord.size = fileStat.size;
       fileRecord.state = "completed";
+      this.reservations.delete(reservation);
       fileRecord.finishedAt = new Date().toISOString();
       this.repository.update(session);
 
@@ -310,7 +369,28 @@ export class FileService {
         // ignore cleanup errors
       }
 
-      throw err;
+      throw storageError(err);
+    } finally {
+      if (reservation) this.reservations.delete(reservation);
+    }
+  }
+
+  async withItemPublication<T>(
+    sessionId: string,
+    fileId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${sessionId}/${fileId}`;
+    const previous = this.itemPublications.get(key);
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    this.itemPublications.set(key, current);
+    try {
+      await previous;
+      return await operation();
+    } finally {
+      release();
+      if (this.itemPublications.get(key) === current) this.itemPublications.delete(key);
     }
   }
 
@@ -355,6 +435,7 @@ export class FileService {
     const nextExtension = mimeExtension ?? fileRecord.extension;
     const finalName = `${baseName}${nextExtension ? `.${nextExtension}` : ""}`;
 
+    const expectedVersion = fileRecord.version;
     const finalPath = this.getFilePath(sessionId, fileRecord.storageName);
     // Unique per request: two concurrent replaces must not share a temp file.
     const tempPath = `${finalPath}.${generateStorageName()}.tmp`;
@@ -365,127 +446,167 @@ export class FileService {
       extension: nextExtension,
     };
 
+    let reservation: StorageReservation | undefined;
     try {
+      reservation = await this.reserveStorage(sessionId);
       const writeStream = createWriteStream(tempPath);
-      await this.pipeToFile(stream, writeStream, sessionId, tempRecord, signal);
-
-      const currentSession = this.repository.getById(sessionId);
-      if (!currentSession || currentSession.state === "CLOSED") {
-        throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
-      }
+      await this.pipeToFile(stream, writeStream, reservation, tempRecord, signal);
 
       const fileStat = await stat(tempPath);
-      await rename(tempPath, finalPath);
+      return await this.withItemPublication(sessionId, fileId, async () => {
+        const currentSession = this.repository.getById(sessionId);
+        if (!currentSession || currentSession.state === "CLOSED") {
+          throw Object.assign(new Error("Session closed during upload"), { statusCode: 410 });
+        }
 
-      fileRecord.originalName = finalName;
-      fileRecord.mimeType = nextMimeType;
-      fileRecord.size = fileStat.size;
-      fileRecord.bytesReceived = fileStat.size;
-      fileRecord.finishedAt = new Date().toISOString();
-      fileRecord.version += 1;
-      fileRecord.originalSize = originalSize ?? null;
-      if (nextExtension) fileRecord.extension = nextExtension;
-      fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
-      this.repository.update(session);
+        if (signal?.aborted) throw uploadAborted();
+        const currentFile = currentSession.files.find((file) => file.id === fileId);
+        if (!currentFile || currentFile.state !== "completed") {
+          throw Object.assign(new Error("File not found"), { statusCode: 404 });
+        }
+        if (currentFile !== fileRecord || currentFile.version !== expectedVersion) {
+          throw Object.assign(new Error("File changed during upload"), { statusCode: 409 });
+        }
+        await rename(tempPath, finalPath);
 
-      fileEvents.emitFileEvent({
-        type: "file:state-changed",
-        sessionId,
-        fileId: fileRecord.id,
-        state: "completed",
-        originalName: fileRecord.originalName,
-        size: fileRecord.size,
-        bytesReceived: fileRecord.bytesReceived,
-        version: fileRecord.version,
-        mimeType: fileRecord.mimeType,
-        finishedAt: fileRecord.finishedAt,
-        extension: fileRecord.extension,
-        category: fileRecord.category,
+        fileRecord.originalName = finalName;
+        fileRecord.mimeType = nextMimeType;
+        fileRecord.size = fileStat.size;
+        if (reservation) this.reservations.delete(reservation);
+        fileRecord.bytesReceived = fileStat.size;
+        fileRecord.finishedAt = new Date().toISOString();
+        fileRecord.version += 1;
+        fileRecord.originalSize = originalSize ?? null;
+        if (nextExtension) fileRecord.extension = nextExtension;
+        fileRecord.category = categorize(fileRecord.extension, fileRecord.mimeType);
+        this.repository.update(currentSession);
+
+        fileEvents.emitFileEvent({
+          type: "file:state-changed",
+          sessionId,
+          fileId: fileRecord.id,
+          state: "completed",
+          originalName: fileRecord.originalName,
+          size: fileRecord.size,
+          bytesReceived: fileRecord.bytesReceived,
+          version: fileRecord.version,
+          mimeType: fileRecord.mimeType,
+          finishedAt: fileRecord.finishedAt,
+          extension: fileRecord.extension,
+          category: fileRecord.category,
+        });
+
+        // Same recording path as a finished upload, so /admin follows the
+        // replacement instead of diverging from memory.
+        if (this.recorder) {
+          safeRecord(
+            this.recorder,
+            {
+              type: "transfer_finished",
+              at: new Date(),
+              id: fileRecord.id,
+              status: "completed" as const,
+              size: fileStat.size,
+              originalSize: fileRecord.originalSize,
+            },
+            this.log,
+          );
+        }
+
+        return { file: fileRecord };
       });
-
-      // Same recording path as a finished upload, so /admin follows the
-      // replacement instead of diverging from memory.
-      if (this.recorder) {
-        safeRecord(
-          this.recorder,
-          {
-            type: "transfer_finished",
-            at: new Date(),
-            id: fileRecord.id,
-            status: "completed" as const,
-            size: fileStat.size,
-            originalSize: fileRecord.originalSize,
-          },
-          this.log,
-        );
-      }
-
-      return { file: fileRecord };
     } catch (err) {
       await rm(tempPath, { force: true }).catch(() => {});
-      throw err;
+      throw storageError(err);
+    } finally {
+      if (reservation) this.reservations.delete(reservation);
     }
+  }
+
+  private async reserveStorage(sessionId: string): Promise<StorageReservation> {
+    let volumeLimit = this.config.maxStorageBytes;
+    if (volumeLimit === undefined) {
+      const volume = await statfs(this.config.tempDir);
+      volumeLimit = volume.blocks * volume.bsize;
+    }
+    const reservation = { sessionId, bytes: 0, volumeLimit };
+    this.reservations.add(reservation);
+    return reservation;
+  }
+
+  private growReservation(reservation: StorageReservation, bytes: number): void {
+    const room = this.repository.getById(reservation.sessionId);
+    let roomPending = bytes;
+    let volumePending = bytes;
+    for (const pending of this.reservations) {
+      if (pending === reservation) continue;
+      volumePending += pending.bytes;
+      if (pending.sessionId === reservation.sessionId) roomPending += pending.bytes;
+    }
+
+    if (room?.mode === "twoway") {
+      const roomLimit = this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes;
+      if (completedBytes(room) + roomPending > roomLimit) {
+        throw Object.assign(new Error("Session storage limit exceeded"), { statusCode: 413 });
+      }
+    }
+
+    const stored = this.repository.getAll().reduce((sum, session) => sum + completedBytes(session), 0);
+    if (stored + volumePending > reservation.volumeLimit) {
+      throw Object.assign(new Error("Insufficient storage space"), { statusCode: 507 });
+    }
+    reservation.bytes = bytes;
   }
 
   // Streams to disk with the same abort/size/progress rules for upload and replace.
   private pipeToFile(
     stream: Readable,
     ws: WriteStream,
-    sessionId: string,
+    reservation: StorageReservation,
     fileRecord: SessionFile,
     signal?: AbortSignal,
   ): Promise<void> {
-    const session = this.repository.getById(sessionId);
-    const totalLimit =
-      session?.mode === "twoway"
-        ? this.config.twowayMaxTotalBytes ?? TWOWAY_DEFAULTS.maxTotalBytes
-        : 0;
-    const existingBytes = session
-      ? session.files
-          .filter((f) => f.id !== fileRecord.id && f.state === "completed")
-          .reduce((sum, f) => sum + f.size, 0)
-      : 0;
-
+    const { sessionId } = reservation;
     return new Promise<void>((resolve, reject) => {
-      const onAbort = () => {
+      let bytesReceived = 0;
+      let failure: Error | undefined;
+
+      const cleanup = () => {
+        stream.off("data", onData).off("end", onEnd).off("error", fail).off("close", onInputClose);
+        ws.off("error", fail).off("drain", onDrain).off("close", onOutputClose);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const fail = (err: Error) => {
+        failure ??= err;
         stream.destroy();
         ws.destroy();
-        reject(Object.assign(new Error("Upload aborted"), { statusCode: 499 }));
       };
-
-      if (signal) {
-        if (signal.aborted) {
-          onAbort();
-          return;
+      const onAbort = () => fail(uploadAborted());
+      const onInputClose = () => {
+        if (!stream.readableEnded) onAbort();
+      };
+      const onOutputClose = () => {
+        cleanup();
+        if (failure) reject(failure);
+        else if (ws.writableFinished) resolve();
+        else {
+          stream.destroy();
+          reject(uploadAborted());
         }
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-
-      let bytesReceived = 0;
-
-      stream.on("data", (chunk: Buffer) => {
+      };
+      const onDrain = () => stream.resume();
+      const onData = (chunk: Buffer) => {
         bytesReceived += chunk.length;
 
-        if (bytesReceived > this.config.maxFileSize) {
-          stream.destroy();
-          ws.destroy();
-          reject(Object.assign(new Error("File too large"), { statusCode: 413 }));
-          return;
-        }
-
-        if (totalLimit > 0 && existingBytes + bytesReceived > totalLimit) {
-          stream.destroy();
-          ws.destroy();
-          reject(
-            Object.assign(new Error("Session storage limit exceeded"), {
-              statusCode: 413,
-            }),
-          );
+        try {
+          checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+          this.growReservation(reservation, bytesReceived);
+        } catch (err) {
+          fail(err as Error);
           return;
         }
 
         fileRecord.bytesReceived = bytesReceived;
-
         fileEvents.emitFileEvent({
           type: "file:progress",
           sessionId,
@@ -496,23 +617,23 @@ export class FileService {
 
         if (!ws.write(chunk)) {
           stream.pause();
-          ws.once("drain", () => stream.resume());
+          ws.once("drain", onDrain);
         }
-      });
+      };
+      const onEnd = () => {
+        try {
+          checkFileSize(stream, bytesReceived, this.config.maxFileSize);
+          ws.end();
+        } catch (err) {
+          fail(err as Error);
+        }
+      };
 
-      stream.on("end", () => {
-        ws.end(() => resolve());
-      });
-
-      stream.on("error", (err) => {
-        ws.destroy();
-        reject(err);
-      });
-
-      ws.on("error", (err) => {
-        stream.destroy();
-        reject(err);
-      });
+      ws.on("error", fail).once("close", onOutputClose);
+      stream.on("error", fail).once("close", onInputClose).once("end", onEnd);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted || stream.destroyed) onAbort();
+      else stream.on("data", onData);
     });
   }
 

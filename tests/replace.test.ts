@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { request } from "node:http";
+import { PassThrough, Readable } from "node:stream";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
   createTestApp,
@@ -230,5 +234,134 @@ describe("replace file", () => {
       headers: { authorization: `Bearer ${session.ownerToken}` },
     });
     expect(sha256(download.rawPayload)).toBe(sha256(v2));
+  });
+});
+
+describe("multipart file size boundary", () => {
+  it("accepts exactly the limit and rejects truncated uploads and replacements", async () => {
+    const ctx = await createTestApp({ maxFileSize: 4 });
+    try {
+      const session = await createSession(ctx.app);
+      const original = await uploadFile(ctx.app, session, "1234", "file.txt");
+      const { body, contentType } = createMultipartPayload([
+        { name: "file", content: Buffer.from("12345"), filename: "large.txt" },
+      ]);
+      const post = await ctx.app.inject({
+        method: "POST",
+        url: `/api/sessions/${session.id}/files`,
+        headers: { authorization: `Bearer ${session.uploadToken}`, "content-type": contentType },
+        body,
+      });
+      const put = await replaceFile(ctx, session, original.id, "abcde", "file.txt");
+      const download = await ctx.app.inject({
+        method: "GET",
+        url: `/api/sessions/${session.id}/files/${original.id}`,
+        headers: { authorization: `Bearer ${session.ownerToken}` },
+      });
+      const files = appCtx(ctx).sessionStore.getById(session.id)!.files;
+      expect({
+        post: post.statusCode, put: put.statusCode, content: download.body,
+        completed: files.filter((file) => file.state === "completed").map((file) => file.version),
+      }).toEqual({ post: 413, put: 413, content: "1234", completed: [1] });
+      const exact = await replaceFile(ctx, session, original.id, "abcd", "file.txt");
+      expect(exact.statusCode).toBe(200);
+      expect(exact.json().file.version).toBe(2);
+    } finally {
+      await cleanupTestApp(ctx);
+    }
+  });
+});
+
+describe("premature HTTP disconnect", () => {
+  it.each(["file", "text", "replacement"])("cleans up an interrupted %s", async (kind) => {
+    const ctx = await createTestApp();
+    const session = await createSession(ctx.app);
+    const liveSession = appCtx(ctx).sessionStore.getById(session.id)!;
+    const original = await uploadFile(ctx.app, session, "original", "file.txt");
+    const directory = join(ctx.tempDir, session.id);
+    const address = await ctx.app.listen({ host: "127.0.0.1", port: 0 });
+    const endpoint = `${address}/api/sessions/${session.id}/files`;
+    const req = request(kind === "replacement" ? `${endpoint}/${original.id}` : `${endpoint}?kind=${kind}`, {
+      method: kind === "replacement" ? "PUT" : "POST",
+      headers: {
+        authorization: `Bearer ${session.uploadToken}`,
+        "content-type": "multipart/form-data; boundary=interrupted",
+      },
+    });
+    req.on("error", () => {});
+    try {
+      req.write('--interrupted\r\nContent-Disposition: form-data; name="file"; filename="file.txt"\r\n\r\npartial content');
+      await expect.poll(() => liveSession.activeUploads).toBe(1);
+      if (kind !== "text") {
+        await expect.poll(async () => (await readdir(directory)).length).toBe(2);
+      }
+      req.destroy();
+
+      await expect.poll(() => liveSession.activeUploads).toBe(0);
+      expect(await readdir(directory)).toEqual([original.id]);
+      expect(await readFile(join(directory, original.id), "utf8")).toBe("original");
+      expect(liveSession.files.filter((file) => file.state === "completed").map((file) => file.version)).toEqual([1]);
+    } finally {
+      req.destroy();
+      await cleanupTestApp(ctx);
+    }
+  });
+});
+
+describe("storage reservations", () => {
+  it("counts both versions against the volume and releases failed writes", async () => {
+    const ctx = await createTestApp({ maxFileSize: 10, maxStorageBytes: 8 });
+    try {
+      const session = await createSession(ctx.app);
+      const original = await uploadFile(ctx.app, session, "12345", "file.txt");
+      const other = await createSession(ctx.app);
+      const otherPayload = createMultipartPayload([
+        { name: "file", content: Buffer.from("abcd"), filename: "other.txt" },
+      ]);
+      const post = await ctx.app.inject({
+        method: "POST",
+        url: `/api/sessions/${other.id}/files`,
+        headers: { authorization: `Bearer ${other.uploadToken}`, "content-type": otherPayload.contentType },
+        body: otherPayload.body,
+      });
+      const put = await replaceFile(ctx, session, original.id, "abcd", "file.txt");
+      const stored = appCtx(ctx).sessionStore.getById(session.id)!.files[0]!;
+      const directory = join(ctx.tempDir, session.id);
+      expect({
+        post: post.statusCode, put: put.statusCode, version: stored.version,
+        content: await readFile(join(directory, original.id), "utf8"), entries: await readdir(directory),
+      }).toEqual({ post: 507, put: 507, version: 1, content: "12345", entries: [original.id] });
+
+      expect((await replaceFile(ctx, session, original.id, "abc", "file.txt")).statusCode).toBe(200);
+      expect(stored.version).toBe(2);
+      expect(await readFile(join(directory, original.id), "utf8")).toBe("abc");
+    } finally {
+      await cleanupTestApp(ctx);
+    }
+  });
+
+  it.each(["room", "volume"])("reserves bytes of unfinished uploads against the %s", async (scope) => {
+    const ctx = await createTestApp(scope === "room" ? { twowayMaxTotalBytes: 6 } : { maxStorageBytes: 6 });
+    const { fileService, sessionStore } = appCtx(ctx);
+    const session = await createSession(ctx.app);
+    if (scope === "room") sessionStore.getById(session.id)!.mode = "twoway";
+    const other = scope === "room" ? session : await createSession(ctx.app);
+    const stream = new PassThrough();
+    const first = fileService.handleFileUpload(session.id, "first.txt", "text/plain", stream);
+    try {
+      stream.write("abcd");
+      await expect.poll(() => sessionStore.getById(session.id)!.files[0]?.bytesReceived).toBe(4);
+      await expect(fileService.handleFileUpload(other.id, "second.txt", "text/plain", Readable.from([Buffer.from("efgh")])))
+        .rejects.toMatchObject({ statusCode: scope === "room" ? 413 : 507 });
+    } finally {
+      stream.end();
+      const { file } = await first;
+      try {
+        expect(file.version).toBe(1);
+        expect(await readFile(join(ctx.tempDir, session.id, file.id), "utf8")).toBe("abcd");
+      } finally {
+        await cleanupTestApp(ctx);
+      }
+    }
   });
 });
