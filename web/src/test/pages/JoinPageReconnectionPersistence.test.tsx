@@ -365,8 +365,8 @@ describe("JoinPageReconnectionPersistence - Cenários de Reconexão e Persistên
 
     await waitFor(() => {
       expect(localStorage.getItem("dns_guest_cred_sess-persist-123")).toBeNull();
+      expect(ws.readyState).toBe(MockWebSocket.CLOSED);
     });
-    expect(ws.readyState).toBe(MockWebSocket.CLOSED);
     expect(screen.queryByText(/escolher arquivos/i)).not.toBeInTheDocument();
     expect(await screen.findByText(/escaneie o qr code novamente/i)).toBeInTheDocument();
   });

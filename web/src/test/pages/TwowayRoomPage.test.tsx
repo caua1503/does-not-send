@@ -13,6 +13,7 @@ vi.mock("qrcode.react", () => ({
 vi.mock("../../hooks/useSessionEvents.ts", () => ({
   useSessionEvents: vi.fn().mockReturnValue({
     files: [],
+      sessionInfo: null,
     connected: true,
     sessionClosed: false,
     closedReason: null,
@@ -70,6 +71,7 @@ describe("TwowayRoomPage", () => {
     vi.mocked(useCountdownSeconds).mockReturnValue(0);
     vi.mocked(useSessionEvents).mockReturnValue({
       files: [],
+      sessionInfo: null,
       connected: true,
       sessionClosed: false,
       closedReason: null,
@@ -179,6 +181,7 @@ describe("TwowayRoomPage", () => {
   it("convidado conta 10s e volta ao início uma única vez", () => {
     vi.mocked(useSessionEvents).mockReturnValue({
       files: [],
+      sessionInfo: null,
       connected: false,
       sessionClosed: true,
       closedReason: "host_left",
@@ -208,6 +211,7 @@ describe("TwowayRoomPage", () => {
   it("botão manual volta na hora e cancela o timer", () => {
     vi.mocked(useSessionEvents).mockReturnValue({
       files: [],
+      sessionInfo: null,
       connected: false,
       sessionClosed: true,
       closedReason: "host_closed",
@@ -237,6 +241,7 @@ describe("TwowayRoomPage", () => {
   ])("convidado entende o fechamento com reason %s", (reason, message) => {
     vi.mocked(useSessionEvents).mockReturnValue({
       files: [],
+      sessionInfo: null,
       connected: false,
       sessionClosed: true,
       closedReason: reason,

@@ -2,6 +2,7 @@ import { it, expect, describe, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 
+import { useLoginCode } from "../../hooks/useLoginCode.ts";
 describe("useSessionEvents", () => {
   it("retorna files vazio e connected false quando sessionId é null", () => {
     const { result } = renderHook(() => useSessionEvents(null, null));
@@ -365,6 +366,39 @@ describe("useSessionEvents", () => {
       });
       expect(mockSockets.length).toBe(1);
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("shares the host transport, restores the snapshot and polls only after losing it", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "shared", state: "PAIRED" }) });
+      vi.stubGlobal("fetch", fetchMock);
+      const card = renderHook(() => useSessionEvents("shared", "token"));
+      const panel = renderHook(() => useSessionEvents("shared", "token"));
+      const code = renderHook(() => useLoginCode("shared", "token"));
+      expect(mockSockets).toHaveLength(1);
+      const first = mockSockets[0]!;
+      const snapshot = { id: "shared", state: "PAIRED", phonePresent: true };
+      act(() => {
+        first.receiveMessage({ type: "auth_ok", session: snapshot, files: [{ id: "existing", version: 2 }] });
+        first.receiveMessage({ type: "login_code", code: "123456", expiresInMs: 60_000 });
+        vi.advanceTimersByTime(9000);
+      });
+      expect(panel.result.current.files).toEqual([{ id: "existing", version: 2 }]);
+      expect(card.result.current.sessionInfo).toEqual(snapshot);
+      expect(code.result.current.code).toBe("123456");
+      expect(fetchMock).not.toHaveBeenCalled();
+      panel.unmount();
+      expect(first.readyState).toBe(MockWebSocket.OPEN);
+      await act(async () => {
+        first.close(1006);
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mockSockets).toHaveLength(2);
+      act(() => {
+        mockSockets[1]!.receiveMessage({ type: "auth_ok", session: snapshot, files: [], loginCodeActive: false });
+      });
+      expect(card.result.current.files).toEqual([]);
+      expect(code.result.current.code).toBeNull();
     });
 
     it("host pode enviar mensagem close via sendClose", () => {

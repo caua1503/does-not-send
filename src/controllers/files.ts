@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { rm } from "node:fs/promises";
+import type { Session } from "../types.js";
 import type { AppContext } from "../app.js";
 import { authorize } from "./sessions.js";
 import { startUpload, endUpload } from "../session/auth.js";
@@ -16,6 +17,26 @@ function abortOnDisconnect(request: FastifyRequest, controller: AbortController)
   raw.once("close", onClose);
   if (raw.destroyed) onClose();
   return () => raw.off("close", onClose);
+}
+
+export function sessionFilesView(session: Session) {
+  const twoway = sessionMode(session) === "twoway";
+  return session.files
+    .filter((file) => !twoway || file.state !== "failed")
+    .map((file) => ({
+      id: file.id,
+      originalName: file.originalName,
+      mimeType: file.mimeType,
+      size: file.size,
+      bytesReceived: file.bytesReceived,
+      state: file.state,
+      version: file.version,
+      createdAt: file.createdAt,
+      kind: file.kind,
+      senderId: file.senderId,
+      senderName: file.senderName,
+      origin: file.origin,
+    }));
 }
 
 export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }): Promise<void> {
@@ -77,6 +98,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
     const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
       session.id,
       abortController,
+      auth.participant.id,
     );
 
     try {
@@ -138,9 +160,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
             });
           }
           if (error.statusCode === 410 || error.statusCode === 499) {
-            return reply.status(410).send({
-              error: "Session closed during upload",
-              statusCode: 410,
+            const closed = error.statusCode === 410 || ctx.sessionStore.getById(session.id)?.state === "CLOSED";
+            const statusCode = closed ? 410 : 409;
+            return reply.status(statusCode).send({
+              error: closed ? "Session closed during upload" : "Upload interrupted",
+              code: closed ? "SESSION_CLOSED" : "UPLOAD_INTERRUPTED",
+              statusCode,
             });
           }
           throw err;
@@ -180,6 +205,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       const unregisterUpload = ctx.sessionStore.registerUploadAbortController(
         session.id,
         abortController,
+        auth.participant.id,
       );
 
       try {
@@ -228,9 +254,12 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
               });
             }
             if (error.statusCode === 410 || error.statusCode === 499) {
-              return reply.status(410).send({
-                error: "Session closed during upload",
-                statusCode: 410,
+              const closed = error.statusCode === 410 || ctx.sessionStore.getById(session.id)?.state === "CLOSED";
+              const statusCode = closed ? 410 : 409;
+              return reply.status(statusCode).send({
+                error: closed ? "Session closed during upload" : "Upload interrupted",
+                code: closed ? "SESSION_CLOSED" : "UPLOAD_INTERRUPTED",
+                statusCode,
               });
             }
             throw err;
@@ -262,24 +291,7 @@ export async function fileRoutes(app: FastifyInstance, opts: { ctx: AppContext }
       return reply.status(status).send({ error: "Unauthorized", statusCode: status });
     }
 
-    return {
-      files: session.files
-        .filter((f) => sessionMode(session) !== "twoway" || f.state !== "failed")
-        .map((f) => ({
-        id: f.id,
-        originalName: f.originalName,
-        mimeType: f.mimeType,
-        size: f.size,
-        bytesReceived: f.bytesReceived,
-        state: f.state,
-        version: f.version,
-        createdAt: f.createdAt,
-        kind: f.kind,
-        senderId: f.senderId,
-        senderName: f.senderName,
-        origin: f.origin,
-      })),
-    };
+    return { files: sessionFilesView(session) };
   });
   app.get<{ Params: { id: string; fileId: string } }>(
     "/sessions/:id/files/:fileId",

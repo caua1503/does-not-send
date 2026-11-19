@@ -23,11 +23,9 @@ import { useSessionUpload } from "../../hooks/useSessionUpload.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
 import { useClosedCountdown } from "../../hooks/useClosedCountdown.ts";
 import {
-  ApiError,
   deleteItem,
-  getSession,
+  type SessionInfo,
   leaveSession,
-  listFiles,
   requestLoginCode,
   type FileEntry,
   type ParticipantInfo,
@@ -96,6 +94,14 @@ export function TwowayRoomPage({
   const activeCode = loginCode && countdown > 0 ? loginCode : null;
 
   const handleServerEvent = (event: Record<string, unknown>) => {
+    if (event.type === "session:snapshot") {
+      const info = event.session as SessionInfo;
+      if (info.visualId) setVisualId(info.visualId);
+      if (info.hostId) setHostId(info.hostId);
+      if (info.participants) dispatch({ type: "participants:list", participants: info.participants });
+      dispatch({ type: "items:snapshot", items: (event.files as FileEntry[]).map(fileEntryToTwowayItem) });
+      return;
+    }
     if (event.type === "invite:used") {
       setInviteRefresh((current) => current + 1);
     }
@@ -125,43 +131,6 @@ export function TwowayRoomPage({
     }
     onSessionClosedRef.current?.();
   }, [isClosed, role, sessionId]);
-
-  useEffect(() => {
-    let active = true;
-    getSession(sessionId, token)
-      .then((info) => {
-        if (!active) return;
-        if (info.visualId) setVisualId(info.visualId);
-        if (info.hostId) setHostId(info.hostId);
-        if (info.participants) {
-          dispatch({ type: "participants:list", participants: info.participants });
-        }
-        if (info.state === "CLOSED") setLocalClosed(true);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        if (error instanceof ApiError && error.status === 410) setLocalClosed(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [sessionId, token]);
-
-  useEffect(() => {
-    let active = true;
-    listFiles(sessionId, token)
-      .then((files) => {
-        if (!active) return;
-        dispatch({ type: "items:loaded", items: files.map(fileEntryToTwowayItem) });
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        if (error instanceof ApiError && error.status === 410) setLocalClosed(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [sessionId, token]);
 
   const upload = useSessionUpload({
     sessionId,

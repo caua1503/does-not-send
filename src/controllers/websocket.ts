@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { sessionFilesView } from "./files.js";
 import type { AppContext } from "../app.js";
 import type { Participant } from "../types.js";
 import { normalizeSessionRole, type SessionRole } from "../session/auth.js";
@@ -41,7 +42,10 @@ export async function websocketRoutes(
       let participant: Participant | null = null;
       let eventHandlers: Array<{ type: FileEventType; handler: (event: FileEvent) => void }> = [];
 
+      let cleanedUp = false;
       function cleanup(): void {
+        if (cleanedUp) return;
+        cleanedUp = true;
         ctx.sessionStore.unregisterWs(sessionId, socket, authenticatedRole);
         for (const { type, handler } of eventHandlers) {
           fileEvents.offFileEvent(type, sessionId, handler);
@@ -111,12 +115,23 @@ export async function websocketRoutes(
               });
             }
 
+            const twoway = sessionMode(session) === "twoway";
+            if (twoway) ctx.sessionStore.recordHeartbeat(sessionId, role, participant.id);
+
             // Acknowledge auth
             if (socket.readyState === socket.OPEN) {
-              socket.send(JSON.stringify({ type: "auth_ok", role: authenticatedRole }));
+              socket.send(JSON.stringify({
+                type: "auth_ok",
+                role: authenticatedRole,
+                loginCodeActive: role === "computer" ? Boolean(ctx.sessionStore.loginCodes.current(sessionId)) : undefined,
+                session: ctx.sessionStore.sessionInfo(session),
+                files: twoway
+                  ? sessionFilesView(session).filter((file) => file.state === "completed")
+                  : role === "computer" ? sessionFilesView(session) : [],
+              }));
             }
 
-            if (sessionMode(session) === "twoway") {
+            if (twoway) {
               ctx.sessionStore.registerParticipantSocket(
                 sessionId,
                 participant.id,
@@ -127,7 +142,9 @@ export async function websocketRoutes(
                 socket.send(
                   JSON.stringify({
                     type: "participants:list",
-                    participants: ctx.participantService.list(session),
+                    participants: ctx.participantService.list(session).filter(({ id }) =>
+                      ctx.sessionStore.isParticipantPresent(sessionId, id),
+                    ),
                   }),
                 );
               }
@@ -144,7 +161,7 @@ export async function websocketRoutes(
 
           // 2. Authenticated messages
           if (msg.type === "heartbeat") {
-            ctx.sessionStore.recordHeartbeat(sessionId, authenticatedRole);
+            ctx.sessionStore.recordHeartbeat(sessionId, authenticatedRole, participant?.id);
             if (socket.readyState === socket.OPEN) {
               socket.send(JSON.stringify({ type: "heartbeat_ack" }));
             }

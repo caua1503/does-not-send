@@ -35,6 +35,7 @@ vi.mock("../../lib/api.ts", () => ({
 function mockClosed(reason: string) {
   vi.mocked(useSessionEvents).mockReturnValue({
     files: [],
+      sessionInfo: null,
     connected: false,
     sessionClosed: true,
     closedReason: reason,

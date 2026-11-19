@@ -4,7 +4,7 @@ import { Button } from "../components/ui/Button.tsx";
 import { Card } from "../components/ui/Card.tsx";
 import { UploadArea } from "../components/UploadArea.tsx";
 import { LeaveSessionModal } from "../components/LeaveSessionModal.tsx";
-import { getSession, leaveSession, type SessionInfo } from "../lib/api.ts";
+import { leaveSession } from "../lib/api.ts";
 import { sessionClosedMessage } from "../lib/sessionClosedMessage.ts";
 import { useSessionEvents } from "../hooks/useSessionEvents.ts";
 import { useSessionUpload } from "../hooks/useSessionUpload.ts";
@@ -75,24 +75,19 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
     sessionClosed: wsSessionClosed,
     closedReason: wsClosedReason,
     reconnecting: wsReconnecting,
+    sessionInfo: remoteSession,
   } = useSessionEvents(sessionId, credential, {
     role: "guest",
     reconnectInterval: 2000,
   });
 
-  const [remoteSession, setRemoteSession] = useState<SessionInfo | null>(null);
+  const [closedOnUpload, setClosedOnUpload] = useState(false);
 
   // Estados derivados
-  const isSessionClosed = wsSessionClosed || remoteSession?.state === "CLOSED";
+  const isSessionClosed = closedOnUpload || wsSessionClosed || remoteSession?.state === "CLOSED";
   const closedCountdown = useClosedCountdown(isSessionClosed, () => onLeave?.());
 
-  const closeFromServer = () => {
-    setRemoteSession((prev) =>
-      prev
-        ? { ...prev, state: "CLOSED" }
-        : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" },
-    );
-  };
+  const closeFromServer = () => setClosedOnUpload(true);
 
   const {
     items,
@@ -124,32 +119,6 @@ function GuestSession({ sessionId, token: credential, visualId, onLeave, onSessi
     if (!isSessionClosed || !sessionId) return;
     onSessionClosedRef.current?.();
   }, [isSessionClosed, sessionId]);
-
-  // Consulta estado remoto (PAIRED, DISCONNECTED, CLOSED, computerPresent)
-  useEffect(() => {
-    if (!sessionId || !credential || isSessionClosed) return;
-
-    let active = true;
-
-    async function check() {
-      try {
-        const data = await getSession(sessionId, credential);
-        if (!active) return;
-        setRemoteSession(data);
-      } catch (err: any) {
-        if (!active) return;
-        if (err?.status === 410) {
-          setRemoteSession((prev) => (prev ? { ...prev, state: "CLOSED" } : { id: sessionId, state: "CLOSED", fileCount: 0, createdAt: "" }));
-        }
-      }
-    }
-
-    const id = setInterval(check, 3000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [sessionId, credential, isSessionClosed]);
 
   const editingItem = editingId ? items.find((i) => i.id === editingId) : undefined;
 

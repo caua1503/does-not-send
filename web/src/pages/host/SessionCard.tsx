@@ -8,11 +8,8 @@ import { InviteLinksPanel } from "../../components/InviteLinksPanel.tsx";
 import { useSessionEvents } from "../../hooks/useSessionEvents.ts";
 import { useCountdownSeconds, useLoginCode } from "../../hooks/useLoginCode.ts";
 import { ManualLoginCode } from "../../components/ManualLoginCode.tsx";
-import { useHeartbeat } from "../../hooks/useHeartbeat.ts";
 import {
-  getSession,
   requestLoginCode,
-  type SessionInfo,
 } from "../../lib/api.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { FileList } from "./FileList.tsx";
@@ -52,7 +49,7 @@ export function SessionCard({
 
   const [inviteRefresh, setInviteRefresh] = useState(0);
 
-  const { files, connected } = useSessionEvents(
+  const { files, connected, sessionInfo } = useSessionEvents(
     session.id,
     session.ownerToken,
     {
@@ -67,9 +64,7 @@ export function SessionCard({
       },
     },
   );
-  useHeartbeat(session.id, session.ownerToken);
 
-  const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const { code: loginCode, deadline } = useLoginCode(session.id, session.ownerToken);
   const countdown = useCountdownSeconds(deadline);
   const [requestingCode, setRequestingCode] = useState(false);
@@ -96,24 +91,6 @@ export function SessionCard({
       setRequestingCode(false);
     }
   }
-
-  useEffect(() => {
-    let active = true;
-    async function check() {
-      try {
-        const info = await getSession(session.id, session.ownerToken);
-        if (active) setSessionInfo(info);
-      } catch {
-        // Ignora erros transitórios
-      }
-    }
-    check();
-    const id = setInterval(check, 3000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [session.id, session.ownerToken]);
 
   const visualId = session.visualId || session.shortId;
   const qrToken = session.qrToken || session.uploadToken || "";

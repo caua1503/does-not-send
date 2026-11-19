@@ -39,7 +39,7 @@ function collectMessages(ws: WebSocket, count: number, timeout = 5000): Promise<
     );
     ws.on("message", (data) => {
       const parsed = JSON.parse(data.toString());
-      if (parsed.type !== "auth_ok") {
+      if (parsed.type !== "auth_ok" && parsed.type !== "session:status") {
         msgs.push(parsed);
       }
       if (msgs.length >= count) {

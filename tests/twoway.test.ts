@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
+import { request } from "node:http";
 import { PassThrough } from "node:stream";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -86,13 +87,13 @@ async function connect(
   sessionId: string,
   role: string,
   secret: string,
-): Promise<{ ws: WebSocket; stream: ReturnType<typeof streams> }> {
+): Promise<{ ws: WebSocket; stream: ReturnType<typeof streams>; auth: Message }> {
   const ws = new WebSocket(`${baseUrl}/api/sessions/${sessionId}/ws`);
   await waitOpen(ws);
   const stream = streams(ws);
   ws.send(JSON.stringify({ type: "auth", role, secret }));
-  await stream.waitFor((message) => message.type === "auth_ok");
-  return { ws, stream };
+  const auth = await stream.waitFor((message) => message.type === "auth_ok");
+  return { ws, stream, auth };
 }
 
 async function closeSocket(ws: WebSocket): Promise<void> {
@@ -591,4 +592,106 @@ describe("publication of concurrent edits", () => {
       await cleanupTestApp(ctx);
     }
   });
+});
+
+it("keeps a lone host upload alive and expires guest presence independently", async () => {
+  const clock = new FakeClock(1000);
+  const ctx = await createTestApp({ heartbeatTimeoutMs: 5000 }, { clock });
+  try {
+    const session = await createTwoway(ctx);
+    const store = getAppContext(ctx.app).sessionStore;
+    const live = store.getById(session.id)!;
+    const address = await ctx.app.listen({ host: "127.0.0.1", port: 0 });
+    const endpoint = `${address}/api/sessions/${session.id}`;
+    const wsUrl = address.replace("http:", "ws:");
+    const host = await connect(wsUrl, session.id, "computer", session.ownerToken);
+    const req = request(endpoint + "/files", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.ownerToken}`,
+        "content-type": "multipart/form-data; boundary=host-upload",
+      },
+    });
+    const response = new Promise<number | undefined>((resolve, reject) => {
+      req.on("response", (res) => { res.resume(); resolve(res.statusCode); });
+      req.on("error", reject);
+    });
+    void response.catch(() => {});
+    try {
+      req.write('--host-upload\r\nContent-Disposition: form-data; name="file"; filename="file.txt"\r\n\r\nhello');
+      await expect.poll(() => live.files[0]?.bytesReceived).toBe(5);
+      await store.tick();
+      expect(live.state).toBe("TRANSFERRING");
+
+      const guest = await joinParticipant(ctx, session, "Guest");
+      const guestWs = await connect(wsUrl, session.id, "phone", guest.credential);
+      try {
+        clock.advance(5001);
+        host.ws.send(JSON.stringify({ type: "heartbeat" }));
+        await host.stream.waitFor((message) => message.type === "heartbeat_ack");
+        await store.tick();
+        await host.stream.waitFor((message) => message.type === "participant:left" && message.id === guest.id);
+        expect(live.state).toBe("TRANSFERRING");
+        req.end("\r\n--host-upload--\r\n");
+        expect(await response).toBe(201);
+        expect(await readFile(join(ctx.tempDir, session.id, live.files[0]!.id), "utf8")).toBe("hello");
+        const reconnected = await connect(wsUrl, session.id, "phone", guest.credential);
+        try {
+          expect(reconnected.auth).toMatchObject({
+            session: { id: session.id, computerPresent: true },
+            files: [{ id: live.files[0]!.id, version: 1, size: 5 }],
+          });
+        } finally {
+          await closeSocket(reconnected.ws);
+        }
+      } finally {
+        await closeSocket(guestWs.ws);
+      }
+    } finally {
+      req.destroy();
+      await closeSocket(host.ws);
+    }
+  } finally {
+    await cleanupTestApp(ctx);
+  }
+});
+
+it("keeps a closed room briefly for 410 while freeing its visual ID for reuse", async () => {
+  const clock = new FakeClock(1000);
+  const ctx = await createTestApp(undefined, { clock });
+  try {
+    const original = await createTwoway(ctx);
+    const store = getAppContext(ctx.app).sessionStore;
+    const active = store.getById(original.id)!;
+    await store.closeSession(original.id);
+    const endpoint = `/api/sessions/${original.id}/participants`;
+    const joinRoom = () => ctx.app.inject({
+      method: "POST", url: endpoint,
+      payload: { qrToken: original.qrToken, name: "Guest", device: "phone" },
+    });
+    expect((await joinRoom()).statusCode).toBe(410);
+    const replacement = { ...active, id: "replacement", state: "PAIRED" as const };
+    store.create(replacement);
+    expect(store.getAll().map((session) => session.id)).toEqual(["replacement"]);
+    expect(store.getByNormalizedVisualId(original.visualId)).toBe(replacement);
+    clock.advance(60_001);
+    await store.tick();
+    expect((await joinRoom()).statusCode).toBe(404);
+    expect(store.getByNormalizedVisualId(original.visualId)).toBe(replacement);
+  } finally {
+    await cleanupTestApp(ctx);
+  }
+});
+
+it("coalesces simultaneous sweeps while cleanup is pending", async () => {
+  const ctx = await createTestApp();
+  try {
+    const store = getAppContext(ctx.app).sessionStore;
+    const first = store.tick();
+    expect(store.tick()).toBe(first);
+    await first;
+    expect(store.tick()).not.toBe(first);
+  } finally {
+    await cleanupTestApp(ctx);
+  }
 });

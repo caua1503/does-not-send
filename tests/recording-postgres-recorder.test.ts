@@ -99,6 +99,17 @@ describe("PostgresRecorder", () => {
     expect(store.calls[0]).toEqual(events);
   }, 2000);
 
+  it("starts a full batch after record() has returned", async () => {
+    for (let i = 0; i < 100; i++) {
+      recorder.record({ type: "session_created", at: new Date(), sessionId: String(i), visualId: String(i) });
+    }
+    expect(store.calls).toHaveLength(0);
+    expect(recorder.stats().queued).toBe(100);
+    await waitFor(() => store.calls.length === 1);
+    expect(store.calls[0]).toHaveLength(100);
+    await recorder.close(100);
+  });
+
   it("record() does not throw when store fails", async () => {
     store.shouldFail = true;
     store.failWithTransient = true;
@@ -209,7 +220,8 @@ describe("PostgresRecorder", () => {
 
     await recorder.close(2000);
 
-    expect(recorder.stats().queued).toBe(0);
+    expect(store.calls.flat()).toHaveLength(200);
+    expect(recorder.stats()).toMatchObject({ queued: 0, dropped: 0 });
   }, 3000);
 
   it("close() respects timeout and discards remaining", async () => {

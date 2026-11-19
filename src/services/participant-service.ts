@@ -64,8 +64,7 @@ export class ParticipantService {
 
     session.participants = participants;
     session.participants.push(participant);
-    session.lastActivity = new Date(this.clock.now()).toISOString();
-    this.store.update(session);
+    this.store.recordHeartbeat(session.id, "phone", participant.id);
     this.store.recordEvent({
       type: "participant_joined",
       at: new Date(this.clock.now()),
